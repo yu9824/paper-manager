@@ -1,0 +1,63 @@
+# https://packaging.python.org/ja/latest/guides/writing-pyproject-toml/
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-template"
+dynamic = ["version"]
+dependencies = ["typing-extensions >= 4.0.0; python_version < '3.9'"]
+requires-python = ">= 3.7"
+authors = [{ name = "yu9824" }]
+maintainers = [{ name = "yu9824" }]
+description = ""
+readme = { file = "README.md", content-type = "text/markdown" }
+license = { file = "LICENSE" }
+keywords = []
+# https://pypi.org/classifiers/
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+] # https://pypi.org/classifiers/
+
+[project.optional-dependencies]
+test = ["pytest"]
+dev = ["twine", "wheel", "build"]
+docs = ["sphinx", "sphinx_rtd_theme", "sphinx-markdown-tables", "recommonmark"]
+gui = ["TkEasyGUI"]
+
+[project.urls]
+Homepage = "https://github.com/yu9824/python-template"
+# Documentation = "https://readthedocs.org"
+PyPI = "https://pypi.org/project/python-template/"
+Source = "https://github.com/yu9824/python-template"
+Tracker = "https://github.com/yu9824/python-template/issues"
+Changelog = "https://github.com/yu9824/python-template/blob/main/CHANGELOG.md"
+
+[project.scripts]
+python-template = "python_template.__main__:entrypoint"
+
+# [project.gui-scripts]
+# python-template-gui = "python_template:main_gui"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "python_template.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src/"]
+
+[tool.ruff]
+line-length = 79
+indent-width = 4
+
+[tool.ruff.lint]
+unfixable = ["F401"]
