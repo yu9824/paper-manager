@@ -24,7 +24,7 @@ jobs:
           pip install .[docs]
       - name: sphinx-apidoc
         run: |
-          sphinx-apidoc -f -o ./docs_src ./src/python_template --module-first
+          sphinx-apidoc -f -o ./docs_src ./src/paper_manager --module-first
       - name: Sphinx build
         run: |
           sphinx-build -b html ./docs_src ./docs

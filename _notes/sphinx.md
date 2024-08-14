@@ -18,7 +18,7 @@ Sphinx 出力用のビルドディレクトリを配置する方法は2つあり
 > ソースディレクトリとビルドディレクトリを分ける（y / n） [n]: n
 
 プロジェクト名は、ビルドされたドキュメントのいくつかの場所にあります。
-> プロジェクト名: python-template
+> プロジェクト名: paper-manager
 > 著者名（複数可）: yu9824
 > プロジェクトのリリース []: 0.0.1
 
@@ -29,14 +29,14 @@ Sphinx 出力用のビルドディレクトリを配置する方法は2つあり
 https://www.sphinx-doc.org/en/master/usage/configuration.html#confval-language を参照してください。
 > プロジェクトの言語 [en]: en
 
-ファイル /Users/yu9824/python-template/docs_src/conf.py を作成しています。
-ファイル /Users/yu9824/python-template/docs_src/index.rst を作成しています。
-ファイル /Users/yu9824/python-template/docs_src/Makefile を作成しています。
-ファイル /Users/yu9824/python-template/docs_src/make.bat を作成しています。
+ファイル /Users/yu9824/paper-manager/docs_src/conf.py を作成しています。
+ファイル /Users/yu9824/paper-manager/docs_src/index.rst を作成しています。
+ファイル /Users/yu9824/paper-manager/docs_src/Makefile を作成しています。
+ファイル /Users/yu9824/paper-manager/docs_src/make.bat を作成しています。
 
 終了：初期ディレクトリ構造が作成されました。
 
-マスターファイル /Users/yu9824/python-template/docs_src/index.rst を作成して
+マスターファイル /Users/yu9824/paper-manager/docs_src/index.rst を作成して
 他のドキュメントソースファイルを作成します。次のように Makefile を使ってドキュメントを作成します。
  make builder
 "builder" はサポートされているビルダーの 1 つです。 例: html, latex, または linkcheck。
@@ -51,7 +51,7 @@ touch docs_src/_static/.gitkeep
 ## docstringから生成
 
 ```bash
-sphinx-apidoc -f -o ./docs_src ./src/python_template --module-first
+sphinx-apidoc -f -o ./docs_src ./src/paper_manager --module-first
 ```
 
 ## build

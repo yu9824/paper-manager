@@ -29,4 +29,4 @@ def entrypoint() -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:], prog="python-template")
+    main(sys.argv[1:], prog="paper-manager")
