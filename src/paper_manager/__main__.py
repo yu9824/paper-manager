@@ -1,5 +1,6 @@
 import argparse
 import sys
+from pathlib import Path
 from typing import Optional
 
 if sys.version_info >= (3, 9):
@@ -7,9 +8,13 @@ if sys.version_info >= (3, 9):
 else:
     from typing import Sequence
 
-from . import __version__
+from streamlit.web import cli
+
+from paper_manager import __version__
 
 __all__ = ["main"]
+
+DIRPATH_ROOT = Path(__file__).parent
 
 
 def main(cli_args: Sequence[str], prog: Optional[str] = None) -> None:
@@ -21,7 +26,12 @@ def main(cli_args: Sequence[str], prog: Optional[str] = None) -> None:
         help="show current version",
         version=f"%(prog)s: {__version__}",
     )
-    parser.parse_args(cli_args)
+
+    st_valid_args = {"-v", "--version", "-h", "--help"}
+    streamlit_args = tuple(set(cli_args) - st_valid_args)
+    parser.parse_args(tuple(set(cli_args) & st_valid_args))
+
+    cli.main_run((str(DIRPATH_ROOT / "app" / "_app.py"),) + streamlit_args)
 
 
 def entrypoint() -> None:
