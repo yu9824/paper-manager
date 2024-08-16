@@ -1,5 +1,7 @@
 # custom
 docs/
+src/paper_manager/app/data/*
+!src/paper_manager/app/data/.gitkeep
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

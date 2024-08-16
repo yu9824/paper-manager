@@ -12,8 +12,10 @@ dependencies = [
     "crossrefapi == 1.6.0",
     "pandas",
     "streamlit",
+    "bibtexparser",
+    "streamlit-pdf-viewer",
 ]
-requires-python = ">= 3.7"
+requires-python = ">= 3.8"
 authors = [{ name = "yu9824" }]
 maintainers = [{ name = "yu9824" }]
 description = ""
@@ -23,7 +25,6 @@ keywords = []
 # https://pypi.org/classifiers/
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -46,11 +47,11 @@ Source = "https://github.com/yu9824/paper-manager"
 Tracker = "https://github.com/yu9824/paper-manager/issues"
 Changelog = "https://github.com/yu9824/paper-manager/blob/main/CHANGELOG.md"
 
-[project.scripts]
-paper-manager = "paper_manager.__main__:entrypoint"
+# [project.scripts]
+# paper-manager = "paper_manager.__main__:entrypoint"
 
-# [project.gui-scripts]
-# paper-manager-gui = "paper_manager:main_gui"
+[project.gui-scripts]
+paper-manager-gui = "paper_manager.__main__:entrypoint"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
