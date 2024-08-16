@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from datetime import date
 from logging import DEBUG
 from pathlib import Path
 
@@ -142,60 +143,92 @@ def main():
 
     st.header("Upload")
 
-    doi = st.text_input(
-        "DOI",
-    )
+    tab1, tab2 = st.tabs(("DOI", "CUSTOM"))
+    # DOI登録
+    with tab1:
+        doi = st.text_input("DOI", key="DOI_DOI")
+    # カスタム登録
+    with tab2:
+        entry = dict(
+            ENTRYTYPE="article",
+            title=st.text_input("title", placeholder="necessary"),
+            author=st.text_input(
+                "author",
+                placeholder="like 'Taro Yamada and Jiro Yamada', necessary",
+            ),
+            journal=st.text_input("journal"),
+            year=str(
+                st.number_input(
+                    "year",
+                    format="%4i",
+                    placeholder="YYYY, necessary",
+                    step=1,
+                    value=None,
+                    min_value=1000,
+                    max_value=date.today().year + 1,
+                )
+            ),
+            volume=st.text_input("volume"),
+            number=st.text_input("issue"),
+            pages=st.text_input("page"),
+            doi=st.text_input("DOI", key="CUSTOM_DOI"),
+        )
+
     uploaded_file = st.file_uploader(
         "paper",
         type="pdf",
         accept_multiple_files=False,
+        label_visibility="hidden",
     )
 
     if st.button("Upload"):
-        works = Works()
-        metadata: dict = works.doi(doi)
+        if doi:
+            works = Works()
+            metadata: dict = works.doi(doi)
 
-        if doi and metadata:
-            entry = {
-                "ENTRYTYPE": "article",
-                "title": metadata["title"][0],
-                "author": " and ".join(
-                    [
-                        author["given"] + " " + author["family"]
-                        for author in metadata["author"]
-                    ]
-                ),
-                "journal": metadata["container-title"][0],
-                "year": str(metadata["published"]["date-parts"][0][0]),
-                "volume": metadata.get("volume", ""),
-                "number": metadata.get("issue", ""),
-                "pages": metadata.get("page", ""),
-                "doi": metadata["DOI"],
-            }
-            entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
-
-            filename_pdf = get_filename_pdf(entry)
-            # pdfのファイル名で重複を確認する (DOIだと、今後DOIがないものが難しくなるため)
-            st_doi: set[str] = {
-                get_filename_pdf(_entry) for _entry in dict_paper_list.values()
-            }
-            if filename_pdf in st_doi:
-                st.error("FAIL: Duplicated")
+            if metadata:
+                entry = {
+                    "ENTRYTYPE": "article",
+                    "title": metadata["title"][0],
+                    "author": " and ".join(
+                        [
+                            author["given"] + " " + author["family"]
+                            for author in metadata["author"]
+                        ]
+                    ),
+                    "journal": metadata["container-title"][0],
+                    "year": str(metadata["published"]["date-parts"][0][0]),
+                    "volume": metadata.get("volume", ""),
+                    "number": metadata.get("issue", ""),
+                    "pages": metadata.get("page", ""),
+                    "doi": metadata["DOI"],
+                }
             else:
-                # ラインナップとして追加して
-                dict_paper_list[get_key(entry, dict_paper_list.keys())] = entry
-                with open(FILEPATH_LIST, mode="w") as f:
-                    json.dump(dict_paper_list, f, indent=4)
+                st.error("FAIL: Invalid DOI")
 
-                # pdfをdataディレクトリ内に保存する
-                if uploaded_file:
-                    with open(DIRPATH_PDF / filename_pdf, mode="wb") as f:
-                        f.write(uploaded_file.getvalue())
+        ## ここから共通
+        entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
 
-                # reload
-                st.rerun()
+        filename_pdf = get_filename_pdf(entry)
+        # pdfのファイル名で重複を確認する (DOIだと、今後DOIがないものが難しくなるため)
+        st_doi: set[str] = {
+            get_filename_pdf(_entry) for _entry in dict_paper_list.values()
+        }
+        if filename_pdf in st_doi:
+            st.error("FAIL: Duplicated")
         else:
-            st.error("FAIL: Invalid DOI")
+            # ラインナップとして追加して
+            dict_paper_list[get_key(entry, dict_paper_list.keys())] = entry
+            with open(FILEPATH_LIST, mode="w") as f:
+                json.dump(dict_paper_list, f, indent=4)
+
+            # pdfをdataディレクトリ内に保存する
+            if uploaded_file:
+                with open(DIRPATH_PDF / filename_pdf, mode="wb") as f:
+                    f.write(uploaded_file.getvalue())
+
+            # reload
+            st.rerun()
 
 
 if __name__ == "__main__":
