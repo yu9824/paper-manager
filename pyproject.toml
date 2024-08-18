@@ -42,7 +42,7 @@ docs = ["sphinx", "sphinx_rtd_theme", "sphinx-markdown-tables", "recommonmark"]
 [project.urls]
 Homepage = "https://github.com/yu9824/paper-manager"
 # Documentation = "https://readthedocs.org"
-PyPI = "https://pypi.org/project/paper-manager/"
+# PyPI = "https://pypi.org/project/paper-manager/"
 Source = "https://github.com/yu9824/paper-manager"
 Tracker = "https://github.com/yu9824/paper-manager/issues"
 Changelog = "https://github.com/yu9824/paper-manager/blob/main/CHANGELOG.md"
