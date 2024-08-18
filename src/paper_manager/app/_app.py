@@ -115,12 +115,17 @@ def main():
 
     st.header("Upload")
 
-    tab1, tab2, tab3 = st.tabs(("DOI", "CUSTOM", "BIB"))
-    # DOI登録
+    tab1, tab2, tab3 = st.tabs(("BIB", "DOI", "CUSTOM"))
+    # BIB登録
     with tab1:
+        uploaded_file_bib = st.file_uploader(
+            "bibtex file (.bib)", type="bib", accept_multiple_files=False
+        )
+    # DOI登録
+    with tab2:
         doi = st.text_input("DOI", key="DOI_DOI")
     # カスタム登録
-    with tab2:
+    with tab3:
         entry = dict(
             ENTRYTYPE="article",
             title=st.text_input("title", placeholder="necessary"),
@@ -144,10 +149,6 @@ def main():
             number=st.text_input("issue"),
             pages=st.text_input("page"),
             doi=st.text_input("DOI", key="CUSTOM_DOI"),
-        )
-    with tab3:
-        uploaded_file_bib = st.file_uploader(
-            "bibtex file (.bib)", type="bib", accept_multiple_files=False
         )
 
     uploaded_file_pdf = st.file_uploader(
