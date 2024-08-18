@@ -18,8 +18,6 @@ def load_bib(
 ) -> "MappingProxyType[str, MappingProxyType[str, str]]":
     bib_parser = bibtex.Parser()
 
-    _logger.debug(type(bibtexfile_or_buffer))
-
     if isinstance(bibtexfile_or_buffer, io.BytesIO):
         bibdata = bib_parser.parse_bytes(bibtexfile_or_buffer.getvalue())
     elif isinstance(bibtexfile_or_buffer, io.StringIO):

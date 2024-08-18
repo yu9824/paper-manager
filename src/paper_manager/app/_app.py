@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from bib2xml.core import bib2xml
 from bibtexparser.bibdatabase import BibDatabase
 from bibtexparser.bwriter import BibTexWriter
 from crossref.restful import Works
+from pybtex.database.input import bibtex
 from streamlit_pdf_viewer import pdf_viewer
 
 from paper_manager.bib import load_bib
@@ -102,18 +104,33 @@ def main():
                 bib_database.entries = [dict_paper_list[key_selected]]
 
                 bib_writer = BibTexWriter()
+                bib_text = bib_writer.write(bib_database)
 
                 st.download_button(
                     "Download",
-                    bib_writer.write(bib_database),
+                    bib_text,
                     file_name=filepath_pdf_selected.with_suffix(".bib").name,
                 )
-                st.text(bib_writer.write(bib_database))
+                st.write(bib_text)
             elif ext == "xml":
-                # HACK
-                st.warning("Now developping")
-                pass
-    # st.download_button("Download pdf", data=DIRPATH_PDF / )
+                bib_database = BibDatabase()
+                bib_database.entries = [dict_paper_list[key_selected]]
+
+                bib_writer = BibTexWriter()
+
+                bib_parser = bibtex.Parser()
+                bibdata = bib_parser.parse_string(
+                    bib_writer.write(bib_database)
+                )
+
+                xml_str = bib2xml(bibdata)
+                st.download_button(
+                    "Download",
+                    data=xml_str.encode("utf-8"),
+                    mime="application/xml",
+                    file_name=filepath_pdf_selected.with_suffix(".xml").name,
+                )
+                st.write(xml_str)
 
     st.header("Register")
 
