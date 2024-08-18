@@ -1,14 +1,8 @@
 import json
 import os
-import sys
 from datetime import date
 from logging import DEBUG
 from pathlib import Path
-
-if sys.version_info >= (3, 9):
-    from collections.abc import Sequence
-else:
-    from typing import Sequence
 
 import pandas as pd
 import streamlit as st
@@ -16,6 +10,7 @@ from bibtexparser.bibdatabase import BibDatabase
 from bibtexparser.bwriter import BibTexWriter
 from crossref.restful import Works
 from paper_manager.bib import load_bib
+from paper_manager.entry import ENTRY, get_filename_pdf, get_key
 from paper_manager.logging import get_child_logger
 from streamlit_pdf_viewer import pdf_viewer
 
@@ -26,30 +21,6 @@ DIRPATH_DATA = DIRPATH_ROOT / "data"
 DIRPATH_PDF = DIRPATH_DATA / "pdf"
 
 FILEPATH_LIST = DIRPATH_DATA / "list.json"
-
-ENTRY = dict[str, str]
-
-
-def get_key(entry: ENTRY, keys: Sequence[str]) -> str:
-    i = 0
-    st_keys = set(keys)
-
-    first_author = entry["author"].split(" and ")[0]
-    if (
-        key := "{0}{1}_{2}".format(
-            first_author.replace(" ", ""), entry["year"], i
-        )
-    ) in st_keys:
-        i += 1
-    else:
-        return key
-
-
-def get_filename_pdf(entry: ENTRY) -> str:
-    first_author = entry["author"].split(" and ")[0]
-    year = entry["year"]
-    title = entry["title"]
-    return "{} - {} - {}.pdf".format(first_author, year, title)
 
 
 def main():
