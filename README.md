@@ -7,7 +7,7 @@ This is my own paper-manager with streamlit.
 
 ## Install
 
-```
+```bash
 pip install git+https://github.com/yu9824/paper-manager.git
 ```
 
@@ -15,6 +15,6 @@ pip install git+https://github.com/yu9824/paper-manager.git
 
 Run streamlit server locally.
 
-```
-paper-manager
+```bash
+paper-manager run   # wrapper of 'streamlit run'
 ```
