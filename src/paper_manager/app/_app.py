@@ -1,5 +1,6 @@
 import json
 import os
+import xml.dom.minidom
 from datetime import date
 from logging import DEBUG
 from pathlib import Path
@@ -43,21 +44,39 @@ def main():
 
     if dict_paper_list:
         paper_selected = st.dataframe(
-            pd.DataFrame.from_dict(dict_paper_list, orient="index", dtype=str)
-            .loc[
-                :,
-                [
-                    "author",
-                    "year",
-                    "title",
-                    "journal",
-                    "volume",
-                    "number",
-                    "pages",
-                    "doi",
-                ],
-            ]
-            .fillna(""),
+            pd.concat(
+                (
+                    pd.Series(
+                        {
+                            _key: "o"
+                            if (
+                                DIRPATH_PDF / get_filename_pdf(_entry)
+                            ).is_file()
+                            else "x"
+                            for _key, _entry in dict_paper_list.items()
+                        },
+                        name="PDF",
+                    ),
+                    pd.DataFrame.from_dict(
+                        dict_paper_list, orient="index", dtype=str
+                    )
+                    .loc[
+                        :,
+                        [
+                            "author",
+                            "year",
+                            "title",
+                            "journal",
+                            "volume",
+                            "number",
+                            "pages",
+                            "DOI",
+                        ],
+                    ]
+                    .fillna(""),
+                ),
+                axis=1,
+            ),
             hide_index=True,
             selection_mode="single-row",
             on_select="rerun",
@@ -68,19 +87,38 @@ def main():
                 index_list_selected[0]
             ]
 
-            if st.button("Delete"):
-                del dict_paper_list[key_selected]
-                with open(FILEPATH_LIST, mode="w") as f:
-                    json.dump(dict_paper_list, f, indent=4)
-                st.rerun()
-
-            options_file_ext = ("bib", "xml")
+            if "url" in dict_paper_list[key_selected]:
+                st.markdown(
+                    "Link: [{0}]({0})".format(
+                        dict_paper_list[key_selected]["url"]
+                    )
+                )
+            elif "DOI" in dict_paper_list[key_selected]:
+                st.markdown(
+                    "Link: [{0}](https://doi.org/{0})".format(
+                        dict_paper_list[key_selected]["DOI"]
+                    )
+                )
 
             filepath_pdf_selected = DIRPATH_PDF / get_filename_pdf(
                 dict_paper_list[key_selected]
             )
+
+            options_file_ext = ("bib", "xml")
+
             if filepath_pdf_selected.is_file():
                 options_file_ext = ("pdf",) + options_file_ext
+
+                flag_delete_pdf = st.checkbox("Delete the pdf file")
+            if st.button("Delete"):
+                if flag_delete_pdf:
+                    os.remove(filepath_pdf_selected)
+
+                del dict_paper_list[key_selected]
+                with open(FILEPATH_LIST, mode="w") as f:
+                    json.dump(dict_paper_list, f, indent=4)
+
+                st.rerun()
 
             ext = st.radio(
                 "ext",
@@ -111,7 +149,7 @@ def main():
                     bib_text,
                     file_name=filepath_pdf_selected.with_suffix(".bib").name,
                 )
-                st.write(bib_text)
+                st.text(bib_text)
             elif ext == "xml":
                 bib_database = BibDatabase()
                 bib_database.entries = [dict_paper_list[key_selected]]
@@ -130,7 +168,7 @@ def main():
                     mime="application/xml",
                     file_name=filepath_pdf_selected.with_suffix(".xml").name,
                 )
-                st.write(xml_str)
+                st.text(xml.dom.minidom.parseString(xml_str).toprettyxml())
 
     st.header("Register")
 
@@ -181,7 +219,8 @@ def main():
                 volume=st.text_input("volume"),
                 number=st.text_input("issue"),
                 pages=st.text_input("page"),
-                doi=st.text_input("DOI", key="CUSTOM_DOI"),
+                url=st.text_input("url"),
+                DOI=st.text_input("DOI", key="CUSTOM_DOI"),
             )
 
         uploaded_file_pdf = st.file_uploader(
@@ -211,7 +250,7 @@ def main():
                         "volume": metadata.get("volume", ""),
                         "number": metadata.get("issue", ""),
                         "pages": metadata.get("page", ""),
-                        "doi": metadata["DOI"],
+                        "DOI": metadata["DOI"],
                     }
                 else:
                     st.error("FAIL: Invalid DOI")
@@ -238,7 +277,7 @@ def main():
             entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
 
             filename_pdf = get_filename_pdf(entry)
-            # pdfのファイル名で重複を確認する (DOIだと、今後DOIがないものが難しくなるため)
+            # pdfのファイル名で重複を確認する (DOIがないものも対応するため)
             st_doi: set[str] = {
                 get_filename_pdf(_entry) for _entry in dict_paper_list.values()
             }
