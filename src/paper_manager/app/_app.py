@@ -15,6 +15,7 @@ import streamlit as st
 from bibtexparser.bibdatabase import BibDatabase
 from bibtexparser.bwriter import BibTexWriter
 from crossref.restful import Works
+from paper_manager.bib import load_bib
 from paper_manager.logging import get_child_logger
 from streamlit_pdf_viewer import pdf_viewer
 
@@ -67,9 +68,8 @@ def main():
 
     if dict_paper_list:
         paper_selected = st.dataframe(
-            pd.DataFrame.from_dict(
-                dict_paper_list, orient="index", dtype=str
-            ).loc[
+            pd.DataFrame.from_dict(dict_paper_list, orient="index", dtype=str)
+            .loc[
                 :,
                 [
                     "author",
@@ -81,7 +81,8 @@ def main():
                     "pages",
                     "doi",
                 ],
-            ],
+            ]
+            .fillna(""),
             hide_index=True,
             selection_mode="single-row",
             on_select="rerun",
@@ -143,7 +144,7 @@ def main():
 
     st.header("Upload")
 
-    tab1, tab2 = st.tabs(("DOI", "CUSTOM"))
+    tab1, tab2, tab3 = st.tabs(("DOI", "CUSTOM", "BIB"))
     # DOI登録
     with tab1:
         doi = st.text_input("DOI", key="DOI_DOI")
@@ -173,8 +174,12 @@ def main():
             pages=st.text_input("page"),
             doi=st.text_input("DOI", key="CUSTOM_DOI"),
         )
+    with tab3:
+        uploaded_file_bib = st.file_uploader(
+            "bibtex file (.bib)", type="bib", accept_multiple_files=False
+        )
 
-    uploaded_file = st.file_uploader(
+    uploaded_file_pdf = st.file_uploader(
         "paper",
         type="pdf",
         accept_multiple_files=False,
@@ -206,6 +211,18 @@ def main():
             else:
                 st.error("FAIL: Invalid DOI")
 
+        if uploaded_file_bib:
+            entries = load_bib(uploaded_file_bib)
+            if len(entries) > 2:
+                st.error(
+                    f"Must be only one entry. (contains {len(entries)} entries)"
+                )
+                exit(1)
+            elif len(entries) == 0:
+                st.error("No entry")
+                exit(1)
+            entry = dict(entries[tuple(entries.keys())[0]])
+
         ## ここから共通
         entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
 
@@ -223,9 +240,9 @@ def main():
                 json.dump(dict_paper_list, f, indent=4)
 
             # pdfをdataディレクトリ内に保存する
-            if uploaded_file:
+            if uploaded_file_pdf:
                 with open(DIRPATH_PDF / filename_pdf, mode="wb") as f:
-                    f.write(uploaded_file.getvalue())
+                    f.write(uploaded_file_pdf.getvalue())
 
             # reload
             st.rerun()
