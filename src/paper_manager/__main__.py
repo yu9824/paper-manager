@@ -31,17 +31,30 @@ def main(cli_args: Sequence[str], prog: Optional[str] = None) -> None:
 
     subparsers = parser.add_subparsers()
     parser_run = subparsers.add_parser(
-        "run", help="'wrapper of 'streamlit run'"
+        "run",
+        help="wrapper of 'streamlit run'",
+        add_help=False,
     )
     parser_run.set_defaults(func=run)
 
-    args = parser.parse_args(cli_args)
+    parser_version = subparsers.add_parser(
+        "version",
+        help="wrapper of 'streamlit version'",
+        add_help=False,
+    )
+    parser_version.set_defaults(func=version)
 
-    args.func(cli_args)
+    args, unknown = parser.parse_known_args(cli_args)
+
+    args.func(unknown)
 
 
 def run(cli_args: Sequence[str]):
     cli.main_run((str(DIRPATH_ROOT / "app" / "_app.py"),) + tuple(cli_args))
+
+
+def version(cli_args: Sequence[str]):
+    cli.main_version(cli_args)
 
 
 def entrypoint() -> None:
