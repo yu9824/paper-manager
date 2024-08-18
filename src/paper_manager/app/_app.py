@@ -9,10 +9,11 @@ import streamlit as st
 from bibtexparser.bibdatabase import BibDatabase
 from bibtexparser.bwriter import BibTexWriter
 from crossref.restful import Works
+from streamlit_pdf_viewer import pdf_viewer
+
 from paper_manager.bib import load_bib
 from paper_manager.entry import ENTRY, get_filename_pdf, get_key
 from paper_manager.logging import get_child_logger
-from streamlit_pdf_viewer import pdf_viewer
 
 _logger = get_child_logger(__name__)
 
@@ -24,6 +25,7 @@ FILEPATH_LIST = DIRPATH_DATA / "list.json"
 
 
 def main():
+    st.title("PAPER MANAGER")
     st.header("List")
 
     os.makedirs(DIRPATH_PDF, exist_ok=True)
@@ -123,22 +125,26 @@ def main():
         )
     # DOI登録
     with tab2:
-        doi = st.text_input("DOI", key="DOI_DOI")
+        doi = st.text_input(
+            "DOI",
+            key="DOI_DOI",
+            placeholder="like 'doi.org/10.1107/S0567739476001551'",
+        )
     # カスタム登録
     with tab3:
         entry = dict(
             ENTRYTYPE="article",
-            title=st.text_input("title", placeholder="necessary"),
+            title=st.text_input("title", placeholder="required"),
             author=st.text_input(
                 "author",
-                placeholder="like 'Taro Yamada and Jiro Yamada', necessary",
+                placeholder="like 'Taro Yamada and Jiro Yamada', required",
             ),
             journal=st.text_input("journal"),
             year=str(
                 st.number_input(
                     "year",
                     format="%4i",
-                    placeholder="YYYY, necessary",
+                    placeholder="YYYY, required",
                     step=1,
                     value=None,
                     min_value=1000,
@@ -152,13 +158,12 @@ def main():
         )
 
     uploaded_file_pdf = st.file_uploader(
-        "paper",
+        "PDF file (.pdf)",
         type="pdf",
         accept_multiple_files=False,
-        label_visibility="hidden",
     )
 
-    if st.button("Upload"):
+    if st.button("Register"):
         if doi:
             works = Works()
             metadata: dict = works.doi(doi)
@@ -183,7 +188,7 @@ def main():
             else:
                 st.error("FAIL: Invalid DOI")
 
-        if uploaded_file_bib:
+        elif uploaded_file_bib:
             entries = load_bib(uploaded_file_bib)
             if len(entries) > 2:
                 st.error(
