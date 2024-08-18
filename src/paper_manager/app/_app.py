@@ -115,24 +115,33 @@ def main():
                 pass
     # st.download_button("Download pdf", data=DIRPATH_PDF / )
 
-    st.header("Upload")
+    st.header("Register")
 
     with st.form("my_form", clear_on_submit=True):
         tab1, tab2, tab3 = st.tabs(("BIB", "DOI", "CUSTOM"))
         # BIB登録
         with tab1:
+            st.subheader("BIB")
+
             uploaded_file_bib = st.file_uploader(
-                "bibtex file (.bib)", type="bib", accept_multiple_files=False
+                "bibtex file (.bib)",
+                type="bib",
+                accept_multiple_files=False,
+                help="bibtex file (.bib), optional",
             )
         # DOI登録
         with tab2:
+            st.subheader("DOI")
+
             doi = st.text_input(
                 "DOI",
                 key="DOI_DOI",
-                placeholder="like 'doi.org/10.1107/S0567739476001551'",
+                help="like 'doi.org/10.1107/S0567739476001551'",
             )
         # カスタム登録
         with tab3:
+            st.subheader("CUSTOM")
+
             entry = dict(
                 ENTRYTYPE="article",
                 title=st.text_input("title", placeholder="required"),
@@ -162,6 +171,7 @@ def main():
             "PDF file (.pdf)",
             type="pdf",
             accept_multiple_files=False,
+            help="PDF file (.pdf), optional",
         )
 
         if st.form_submit_button():
@@ -195,11 +205,17 @@ def main():
                     st.error(
                         f"Must be only one entry. (contains {len(entries)} entries)"
                     )
-                    exit(1)
+                    st.stop()
                 elif len(entries) == 0:
                     st.error("No entry")
-                    exit(1)
+                    st.stop()
                 entry = dict(entries[tuple(entries.keys())[0]])
+            else:
+                if not (entry["author"] and entry["year"] and entry["title"]):
+                    st.error(
+                        "'.bib file', 'DOI' or ('author', 'year' and 'title') is necessary."
+                    )
+                    st.stop()
 
             ## ここから共通
             entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
