@@ -11,6 +11,7 @@ else:
 from streamlit.web import cli
 
 from paper_manager import __version__
+from paper_manager.utils import dummy_func
 
 __all__ = ["main"]
 
@@ -26,12 +27,21 @@ def main(cli_args: Sequence[str], prog: Optional[str] = None) -> None:
         help="show current version",
         version=f"%(prog)s: {__version__}",
     )
+    parser.set_defaults(func=dummy_func)
 
-    st_valid_args = {"-v", "--version", "-h", "--help"}
-    streamlit_args = tuple(set(cli_args) - st_valid_args)
-    parser.parse_args(tuple(set(cli_args) & st_valid_args))
+    subparsers = parser.add_subparsers()
+    parser_run = subparsers.add_parser(
+        "run", help="'wrapper of 'streamlit run'"
+    )
+    parser_run.set_defaults(func=run)
 
-    cli.main_run((str(DIRPATH_ROOT / "app" / "_app.py"),) + streamlit_args)
+    args = parser.parse_args(cli_args)
+
+    args.func(cli_args)
+
+
+def run(cli_args: Sequence[str]):
+    cli.main_run((str(DIRPATH_ROOT / "app" / "_app.py"),) + tuple(cli_args))
 
 
 def entrypoint() -> None:
