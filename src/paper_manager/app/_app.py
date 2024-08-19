@@ -1,5 +1,7 @@
+import io
 import json
 import os
+import re
 import xml.dom.minidom
 from datetime import date
 from logging import DEBUG
@@ -26,6 +28,17 @@ DIRPATH_PDF = DIRPATH_DATA / "pdf"
 
 FILEPATH_LIST = DIRPATH_DATA / "list.json"
 
+COLS_TABLE = (
+    "author",
+    "year",
+    "title",
+    "journal",
+    "volume",
+    "number",
+    "pages",
+    "DOI",
+)
+
 
 def main():
     st.title("PAPER MANAGER")
@@ -43,6 +56,13 @@ def main():
         dict_paper_list = dict()
 
     if dict_paper_list:
+        _df_paper_list = pd.DataFrame.from_dict(
+            dict_paper_list, orient="index", dtype=str
+        )
+        _df_paper_list.loc[
+            :, list(set(COLS_TABLE) - set(_df_paper_list.columns))
+        ] = ""
+
         paper_selected = st.dataframe(
             pd.concat(
                 (
@@ -60,19 +80,7 @@ def main():
                     pd.DataFrame.from_dict(
                         dict_paper_list, orient="index", dtype=str
                     )
-                    .loc[
-                        :,
-                        [
-                            "author",
-                            "year",
-                            "title",
-                            "journal",
-                            "volume",
-                            "number",
-                            "pages",
-                            "DOI",
-                        ],
-                    ]
+                    .loc[:, list(COLS_TABLE)]
                     .fillna(""),
                 ),
                 axis=1,
@@ -93,10 +101,15 @@ def main():
                         dict_paper_list[key_selected]["url"]
                     )
                 )
-            elif "DOI" in dict_paper_list[key_selected]:
+            elif "DOI" in dict_paper_list[key_selected] and (
+                result_doi := re.match(
+                    r"(https?://.*doi\.org/)?(.+)",
+                    dict_paper_list[key_selected]["DOI"],
+                )
+            ):
                 st.markdown(
                     "Link: [{0}](https://doi.org/{0})".format(
-                        dict_paper_list[key_selected]["DOI"]
+                        result_doi.group(2)
                     )
                 )
 
@@ -178,12 +191,16 @@ def main():
         with tab1:
             st.subheader("BIB")
 
-            uploaded_file_bib = st.file_uploader(
-                "bibtex file (.bib)",
-                type="bib",
-                accept_multiple_files=False,
-                help="bibtex file (.bib), optional",
-            )
+            tab1_bib, tab2_bib = st.tabs(("TEXT", "FILE Upload"))
+            with tab1_bib:
+                bib_text_input = st.text_area("bibtex file")
+            with tab2_bib:
+                uploaded_file_bib = st.file_uploader(
+                    "bibtex file (.bib)",
+                    type="bib",
+                    accept_multiple_files=False,
+                    help="bibtex file (.bib), optional",
+                )
         # DOI登録
         with tab2:
             st.subheader("DOI")
@@ -255,8 +272,13 @@ def main():
                 else:
                     st.error("FAIL: Invalid DOI")
 
-            elif uploaded_file_bib:
-                entries = load_bib(uploaded_file_bib)
+            elif uploaded_file_bib or bib_text_input:
+                bibtexfile_or_buffer = (
+                    uploaded_file_bib
+                    if uploaded_file_bib
+                    else io.StringIO(bib_text_input)
+                )
+                entries = load_bib(bibtexfile_or_buffer)
                 if len(entries) > 2:
                     st.error(
                         f"Must be only one entry. (contains {len(entries)} entries)"

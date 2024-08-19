@@ -47,11 +47,11 @@ Source = "https://github.com/yu9824/paper-manager"
 Tracker = "https://github.com/yu9824/paper-manager/issues"
 Changelog = "https://github.com/yu9824/paper-manager/blob/main/CHANGELOG.md"
 
-# [project.scripts]
-# paper-manager = "paper_manager.__main__:entrypoint"
+[project.scripts]
+paper-manager = "paper_manager.__main__:entrypoint"
 
-[project.gui-scripts]
-paper-manager-gui = "paper_manager.__main__:entrypoint"
+# [project.gui-scripts]
+# paper-manager = "paper_manager.__main__:entrypoint"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
