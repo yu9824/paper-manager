@@ -7,7 +7,7 @@ if sys.version_info >= (3, 9):
 else:
     from typing import Sequence
 
-ENTRY = dict[str, str]
+from paper_manager.entry.typing import ENTRY
 
 
 def get_key(entry: ENTRY, keys: Sequence[str]) -> str:

@@ -1,0 +1,1 @@
+ENTRY = dict[str, str]
