@@ -1,0 +1,7 @@
+paper\_manager.bib package
+==========================
+
+.. automodule:: paper_manager.bib
+   :members:
+   :undoc-members:
+   :show-inheritance:

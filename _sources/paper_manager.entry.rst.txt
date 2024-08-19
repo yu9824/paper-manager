@@ -1,0 +1,18 @@
+paper\_manager.entry package
+============================
+
+.. automodule:: paper_manager.entry
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Submodules
+----------
+
+paper\_manager.entry.typing module
+----------------------------------
+
+.. automodule:: paper_manager.entry.typing
+   :members:
+   :undoc-members:
+   :show-inheritance:

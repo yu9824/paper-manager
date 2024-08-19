@@ -1,0 +1,19 @@
+paper\_manager package
+======================
+
+.. automodule:: paper_manager
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Subpackages
+-----------
+
+.. toctree::
+   :maxdepth: 4
+
+   paper_manager.app
+   paper_manager.bib
+   paper_manager.entry
+   paper_manager.logging
+   paper_manager.utils

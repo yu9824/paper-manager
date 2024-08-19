@@ -1,0 +1,7 @@
+paper\_manager.utils package
+============================
+
+.. automodule:: paper_manager.utils
+   :members:
+   :undoc-members:
+   :show-inheritance:
