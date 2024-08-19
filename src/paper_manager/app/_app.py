@@ -48,7 +48,7 @@ def main():
 
     if FILEPATH_LIST.exists():
         try:
-            with open(FILEPATH_LIST, mode="r") as f:
+            with open(FILEPATH_LIST, mode="r", encoding="utf-8") as f:
                 dict_paper_list: dict[str, ENTRY] = json.load(f)
         except json.JSONDecodeError:
             dict_paper_list = dict()
@@ -124,12 +124,12 @@ def main():
 
                 flag_delete_pdf = st.checkbox("Delete the pdf file")
             if st.button("Delete"):
-                if flag_delete_pdf:
+                if filepath_pdf_selected.is_file() and flag_delete_pdf:
                     os.remove(filepath_pdf_selected)
 
                 del dict_paper_list[key_selected]
-                with open(FILEPATH_LIST, mode="w") as f:
-                    json.dump(dict_paper_list, f, indent=4)
+                with open(FILEPATH_LIST, mode="w", encoding="utf-8") as f:
+                    json.dump(dict_paper_list, f, indent=4, ensure_ascii=False)
 
                 st.rerun()
 
@@ -298,6 +298,9 @@ def main():
             ## ここから共通
             entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
 
+            # 前後の空白削除
+            entry = {_key: _value.strip() for _key, _value in entry.items()}
+
             filename_pdf = get_filename_pdf(entry)
             # pdfのファイル名で重複を確認する (DOIがないものも対応するため)
             st_doi: set[str] = {
@@ -308,8 +311,8 @@ def main():
             else:
                 # ラインナップとして追加して
                 dict_paper_list[get_key(entry, dict_paper_list.keys())] = entry
-                with open(FILEPATH_LIST, mode="w") as f:
-                    json.dump(dict_paper_list, f, indent=4)
+                with open(FILEPATH_LIST, mode="w", encoding="utf-8") as f:
+                    json.dump(dict_paper_list, f, indent=4, ensure_ascii=True)
 
                 # pdfをdataディレクトリ内に保存する
                 if uploaded_file_pdf:
