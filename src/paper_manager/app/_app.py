@@ -17,7 +17,8 @@ from pybtex.database.input import bibtex
 from streamlit_pdf_viewer import pdf_viewer
 
 from paper_manager.bib import load_bib
-from paper_manager.entry import ENTRY, get_filename_pdf, get_key
+from paper_manager.entry import get_filename_pdf, get_key
+from paper_manager.entry.typing import ENTRY
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)

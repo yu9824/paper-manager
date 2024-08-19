@@ -16,6 +16,22 @@ _logger = get_child_logger(__name__)
 def load_bib(
     bibtexfile_or_buffer: Union[os.PathLike, str, io.BytesIO, io.StringIO],
 ) -> "MappingProxyType[str, MappingProxyType[str, str]]":
+    """load bibtex file (.bib)
+
+    Parameters
+    ----------
+    bibtexfile_or_buffer : Union[os.PathLike, str, io.BytesIO, io.StringIO]
+
+
+    Returns
+    -------
+    MappingProxyType[str, MappingProxyType[str, str]]
+        Map of entries (`{cite_key: entry}`)
+
+    Examples
+    --------
+    >>> map_entries = load_bib("./path/to/sample.bib")
+    """
     bib_parser = bibtex.Parser()
 
     if isinstance(bibtexfile_or_buffer, io.BytesIO):
