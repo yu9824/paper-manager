@@ -1,3 +1,5 @@
+import platform
+import re
 import sys
 
 if sys.version_info >= (3, 9):
@@ -41,4 +43,19 @@ def get_filename_pdf(entry: ENTRY) -> str:
     first_author = entry["author"].split(" and ")[0]
     year = entry["year"]
     title = entry["title"]
-    return "{} - {} - {}.pdf".format(first_author, year, title)
+    return sanitize_filename(
+        "{} - {} - {}.pdf".format(first_author, year, title)
+    )
+
+
+def sanitize_filename(filename: str) -> str:
+    # OSごとに不適切な文字を定義
+    if platform.system() == "Windows":
+        # Windowsでは \ / : + > " < > | が不適切
+        invalid_chars = r"[\\/:*?<>|]"
+    else:
+        # LinuxとOSXでは / が不適切
+        invalid_chars = r"[/]"
+
+    # 不適切な文字をアンダースコアに置換
+    return re.sub(invalid_chars, "_", filename)
