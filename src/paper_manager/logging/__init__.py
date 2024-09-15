@@ -4,7 +4,6 @@ from logging import CRITICAL, DEBUG, ERROR, INFO, NOTSET, WARNING
 
 from ._logging import (
     catch_default_handler,
-    default_handler,
     disable_default_handler,
     enable_default_handler,
     get_child_logger,
@@ -14,7 +13,6 @@ from ._logging import (
 
 __all__ = (
     "catch_default_handler",
-    "default_handler",
     "disable_default_handler",
     "enable_default_handler",
     "get_child_logger",

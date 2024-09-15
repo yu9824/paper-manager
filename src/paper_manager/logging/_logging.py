@@ -1,4 +1,7 @@
+import importlib.util
+import os
 import re
+import sys
 from logging import (
     INFO,
     NOTSET,
@@ -12,14 +15,61 @@ from types import TracebackType
 from typing import Optional
 
 
+def _color_supported() -> bool:
+    """Detection of color support."""
+    if not importlib.util.find_spec("colorlog"):
+        return False
+
+    # NO_COLOR environment variable:
+    if os.environ.get("NO_COLOR", None):
+        return False
+
+    if not hasattr(sys.stderr, "isatty") or not sys.stderr.isatty():
+        return False
+    else:
+        return True
+
+
+_default_handler: Optional[StreamHandler] = None
+"""default root logger handler
+
+if not configured, None
+"""
+
+
 def _get_root_logger_name() -> str:
+    """get root logger name (library name)
+
+    Returns
+    -------
+    str
+        root logger name (library name)
+    """
     return __name__.split(".")[0]
 
 
-def _get_default_formatter() -> Formatter:
-    return Formatter(
-        "%(asctime)s - %(name)s:%(lineno)d[%(levelname)s] - %(message)s",
-    )
+def create_default_formatter() -> Formatter:
+    """create default formatter
+
+    Returns
+    -------
+    Formatter
+        default formatter
+    """
+    if _color_supported():
+        from colorlog import ColoredFormatter
+
+        return ColoredFormatter(
+            "%(asctime)s - %(name)s:%(lineno)d%(log_color)s[%(levelname)s]%(reset)s - %(message)s"
+        )
+    else:
+        return Formatter(
+            "%(asctime)s - %(name)s:%(lineno)d[%(levelname)s] - %(message)s"
+        )
+
+
+default_formatter: Formatter = create_default_formatter()
+"""default formatter"""
 
 
 def get_handler(
@@ -30,44 +80,55 @@ def get_handler(
     Parameters
     ----------
     handler : Handler
-        _description_
+
     formatter : Optional[Formatter], optional
-        _description_, by default None
+        , by default None
     level : _type_, optional
-        _description_, by default NOTSET
+        , by default NOTSET
 
     Returns
     -------
     Handler
-        _description_
+
     """
     handler.setLevel(level)
-    handler.setFormatter(formatter if formatter else _get_default_formatter())
+    handler.setFormatter(
+        formatter if formatter else create_default_formatter()
+    )
     return handler
 
 
-def _get_default_handler() -> StreamHandler:
+def _create_default_handler() -> StreamHandler:
     return get_handler(StreamHandler())
 
 
-default_handler: StreamHandler = _get_default_handler()
-"""default root logger handler"""
+def _configure_library_root_logger() -> None:
+    global _default_handler
+
+    if _default_handler:
+        # This library has already configured the library root logger.
+        return
+
+    _default_handler = _create_default_handler()
+
+    # Apply our default configuration to the library root logger.
+    library_root_logger = get_root_logger()
+    library_root_logger.addHandler(_default_handler)
+    library_root_logger.setLevel(INFO)
+    library_root_logger.propagate = False
 
 
 def get_root_logger() -> Logger:
-    """get root logger of this package
+    """get library root logger of this package
 
     Returns
     -------
     Logger
-        _description_
+        library root logger
     """
-    root_logger = getLogger(_get_root_logger_name())
+    _configure_library_root_logger()
 
-    root_logger.addHandler(default_handler)
-    root_logger.setLevel(INFO)
-    root_logger.propagate = False
-    return root_logger
+    return getLogger(_get_root_logger_name())
 
 
 def get_child_logger(name: str, propagate: bool = True) -> Logger:
@@ -106,11 +167,19 @@ def get_child_logger(name: str, propagate: bool = True) -> Logger:
 
 
 def enable_default_handler() -> None:
-    get_root_logger().addHandler(default_handler)
+    """enable default handler"""
+    _configure_library_root_logger()
+
+    assert _default_handler is not None
+    get_root_logger().addHandler(_default_handler)
 
 
 def disable_default_handler() -> None:
-    get_root_logger().removeHandler(default_handler)
+    """disable default handler"""
+    _configure_library_root_logger()
+
+    assert _default_handler is not None
+    get_root_logger().removeHandler(_default_handler)
 
 
 class catch_default_handler:

@@ -37,6 +37,7 @@ classifiers = [
 [project.optional-dependencies]
 test = ["pytest"]
 dev = ["build"]
+optional = ["colorlog"]
 docs = ["sphinx", "sphinx_rtd_theme", "sphinx-markdown-tables", "recommonmark"]
 
 [project.urls]
@@ -61,6 +62,9 @@ version = { attr = "paper_manager.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src/"]
+
+[tool.setuptools.package-data]
+"paper_manager" = ["*"]
 
 [tool.ruff]
 line-length = 79

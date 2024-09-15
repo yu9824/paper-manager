@@ -30,8 +30,8 @@ DIRPATH_PDF = DIRPATH_DATA / "pdf"
 FILEPATH_LIST = DIRPATH_DATA / "list.json"
 
 COLS_TABLE = (
-    "author",
     "year",
+    "author",
     "title",
     "journal",
     "volume",

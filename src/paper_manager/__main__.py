@@ -1,5 +1,6 @@
 import argparse
 import sys
+from logging import DEBUG
 from pathlib import Path
 from typing import Optional
 
@@ -11,9 +12,12 @@ else:
 from streamlit.web import cli
 
 from paper_manager import __version__
+from paper_manager.logging import get_root_logger
 from paper_manager.utils import dummy_func
 
-__all__ = ["main"]
+__all__ = ("main",)
+
+root_logger = get_root_logger()
 
 DIRPATH_ROOT = Path(__file__).parent
 
@@ -35,6 +39,7 @@ def main(cli_args: Sequence[str], prog: Optional[str] = None) -> None:
         help="wrapper of 'streamlit run'",
         add_help=False,
     )
+    parser_run.add_argument("--debug", action="store_true", help="debug mode")
     parser_run.set_defaults(func=run)
 
     parser_version = subparsers.add_parser(
@@ -45,6 +50,8 @@ def main(cli_args: Sequence[str], prog: Optional[str] = None) -> None:
     parser_version.set_defaults(func=version)
 
     args, unknown = parser.parse_known_args(cli_args)
+    if getattr(args, "debug", False):
+        root_logger.setLevel(DEBUG)
 
     args.func(unknown)
 
