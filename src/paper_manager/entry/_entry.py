@@ -40,11 +40,11 @@ def get_key(entry: ENTRY, keys: Sequence[str]) -> str:
 
 
 def get_filename_pdf(entry: ENTRY) -> str:
-    first_author = entry["author"].split(" and ")[0]
     year = entry["year"]
+    first_author = entry["author"].split(" and ")[0]
     title = entry["title"]
     return sanitize_filename(
-        "{} - {} - {}.pdf".format(first_author, year, title)
+        "{} - {} - {}.pdf".format(year, first_author, title)
     )
 
 
