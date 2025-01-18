@@ -187,9 +187,11 @@ def main():
     st.header("Register")
 
     with st.form("my_form", clear_on_submit=True):
-        tab1, tab2, tab3 = st.tabs(("BIB", "DOI", "CUSTOM"))
+        tab_from_bib, tab_from_doi, tab_custom_form = st.tabs(
+            ("BIB", "DOI", "CUSTOM")
+        )
         # BIB登録
-        with tab1:
+        with tab_from_bib:
             st.subheader("BIB")
 
             tab1_bib, tab2_bib = st.tabs(("TEXT", "FILE Upload"))
@@ -203,7 +205,7 @@ def main():
                     help="bibtex file (.bib), optional",
                 )
         # DOI登録
-        with tab2:
+        with tab_from_doi:
             st.subheader("DOI")
 
             doi = st.text_input(
@@ -212,7 +214,7 @@ def main():
                 help="like 'doi.org/10.1107/S0567739476001551'",
             )
         # カスタム登録
-        with tab3:
+        with tab_custom_form:
             st.subheader("CUSTOM")
 
             entry_type = st.selectbox(
