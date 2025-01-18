@@ -6,6 +6,7 @@ import xml.dom.minidom
 from datetime import date
 from logging import DEBUG
 from pathlib import Path
+from typing import Union
 
 import pandas as pd
 import streamlit as st
@@ -186,49 +187,99 @@ def main():
 
     st.header("Register")
 
-    with st.form("my_form", clear_on_submit=True):
-        tab_from_bib, tab_from_doi, tab_custom_form = st.tabs(
-            ("BIB", "DOI", "CUSTOM")
-        )
-        # BIB登録
-        with tab_from_bib:
-            st.subheader("BIB")
-
-            tab1_bib, tab2_bib = st.tabs(("TEXT", "FILE Upload"))
-            with tab1_bib:
+    tab_from_bib, tab_from_doi, tab_custom_form = st.tabs(
+        ("BIB", "DOI", "CUSTOM")
+    )
+    # BIB登録
+    with tab_from_bib:
+        st.subheader("BIB")
+        with st.form("bib_form", clear_on_submit=True):
+            tab_from_bib_with_text, tab_from_bib_with_file = st.tabs(
+                ("TEXT", "FILE Upload")
+            )
+            with tab_from_bib_with_text:
                 bib_text_input = st.text_area("bibtex file")
-            with tab2_bib:
+            with tab_from_bib_with_file:
                 uploaded_file_bib = st.file_uploader(
                     "bibtex file (.bib)",
                     type="bib",
                     accept_multiple_files=False,
                     help="bibtex file (.bib), optional",
                 )
-        # DOI登録
-        with tab_from_doi:
-            st.subheader("DOI")
+            uploaded_file_pdf = pdf_upload_form()
 
+            submitted = st.form_submit_button()
+            if submitted and (uploaded_file_bib or bib_text_input):
+                bibtexfile_or_buffer = (
+                    uploaded_file_bib
+                    if uploaded_file_bib
+                    else io.StringIO(bib_text_input)
+                )
+                entries = load_bib(bibtexfile_or_buffer)
+                if len(entries) > 2:
+                    st.error(
+                        f"Must be only one entry. (contains {len(entries)} entries)"
+                    )
+                    st.stop()
+                elif len(entries) == 0:
+                    st.error("No entry")
+                    st.stop()
+                entry = dict(entries[tuple(entries.keys())[0]])
+
+    # DOI登録
+    with tab_from_doi:
+        st.subheader("DOI")
+        with st.form("doi_form", clear_on_submit=True):
             doi = st.text_input(
                 "DOI",
                 key="DOI_DOI",
                 help="like 'doi.org/10.1107/S0567739476001551'",
             )
-        # カスタム登録
-        with tab_custom_form:
-            st.subheader("CUSTOM")
 
-            entry_type = st.selectbox(
-                "Select entry type",
-                options=(
-                    "article",
-                    "proceedings",
-                    "thesis",
-                    "patent",
-                    "report",
-                ),
-            )
-            st.write(entry_type)
+            uploaded_file_pdf = pdf_upload_form()
 
+            submitted = st.form_submit_button()
+            if submitted and doi:
+                works = Works()
+                metadata: dict = works.doi(doi)
+
+                if metadata:
+                    entry = {
+                        "ENTRYTYPE": "article",
+                        "title": metadata["title"][0],
+                        "author": " and ".join(
+                            [
+                                author["given"] + " " + author["family"]
+                                for author in metadata["author"]
+                            ]
+                        ),
+                        "journal": metadata["container-title"][0],
+                        "year": str(metadata["published"]["date-parts"][0][0]),
+                        "volume": metadata.get("volume", ""),
+                        "number": metadata.get("issue", ""),
+                        "pages": metadata.get("page", ""),
+                        "DOI": metadata["DOI"],
+                    }
+                else:
+                    st.error("FAIL: Invalid DOI")
+
+    # カスタム登録
+    with tab_custom_form:
+        st.subheader("CUSTOM")
+
+        entry_type = st.selectbox(
+            "Select entry type",
+            options=(
+                "article",
+                "proceedings",
+                "thesis",
+                "patent",
+                "report",
+            ),
+        )
+        st.write(entry_type)
+
+        with st.form("custom_form", clear_on_submit=True):
             if entry_type == "article":
                 entry = dict(
                     ENTRYTYPE="article",
@@ -374,62 +425,19 @@ def main():
                     url=st.text_input("URL"),
                     ISBN=st.text_input("ISBN"),
                 )
+            # 共通
+            uploaded_file_pdf = pdf_upload_form()
 
-        uploaded_file_pdf = st.file_uploader(
-            "PDF file (.pdf)",
-            type="pdf",
-            accept_multiple_files=False,
-            help="PDF file (.pdf), optional",
-        )
-
-        if st.form_submit_button():
-            if doi:
-                works = Works()
-                metadata: dict = works.doi(doi)
-
-                if metadata:
-                    entry = {
-                        "ENTRYTYPE": "article",
-                        "title": metadata["title"][0],
-                        "author": " and ".join(
-                            [
-                                author["given"] + " " + author["family"]
-                                for author in metadata["author"]
-                            ]
-                        ),
-                        "journal": metadata["container-title"][0],
-                        "year": str(metadata["published"]["date-parts"][0][0]),
-                        "volume": metadata.get("volume", ""),
-                        "number": metadata.get("issue", ""),
-                        "pages": metadata.get("page", ""),
-                        "DOI": metadata["DOI"],
-                    }
-                else:
-                    st.error("FAIL: Invalid DOI")
-
-            elif uploaded_file_bib or bib_text_input:
-                bibtexfile_or_buffer = (
-                    uploaded_file_bib
-                    if uploaded_file_bib
-                    else io.StringIO(bib_text_input)
+            submitted = st.form_submit_button()
+            if submitted and not (
+                entry["author"] and entry["year"] and entry["title"]
+            ):
+                st.error(
+                    "'.bib file', 'DOI' or ('author', 'year' and 'title') is necessary."
                 )
-                entries = load_bib(bibtexfile_or_buffer)
-                if len(entries) > 2:
-                    st.error(
-                        f"Must be only one entry. (contains {len(entries)} entries)"
-                    )
-                    st.stop()
-                elif len(entries) == 0:
-                    st.error("No entry")
-                    st.stop()
-                entry = dict(entries[tuple(entries.keys())[0]])
-            else:
-                if not (entry["author"] and entry["year"] and entry["title"]):
-                    st.error(
-                        "'.bib file', 'DOI' or ('author', 'year' and 'title') is necessary."
-                    )
-                    st.stop()
+                st.stop()
 
+        if submitted:
             ## ここから共通
             entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
 
@@ -456,6 +464,15 @@ def main():
 
                 # reload
                 st.rerun()
+
+
+def pdf_upload_form():
+    return st.file_uploader(
+        "PDF file (.pdf)",
+        type="pdf",
+        accept_multiple_files=False,
+        help="PDF file (.pdf), optional",
+    )
 
 
 if __name__ == "__main__":
