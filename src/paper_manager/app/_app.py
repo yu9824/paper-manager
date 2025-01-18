@@ -215,31 +215,163 @@ def main():
         with tab3:
             st.subheader("CUSTOM")
 
-            entry = dict(
-                ENTRYTYPE="article",
-                title=st.text_input("title", placeholder="required"),
-                author=st.text_input(
-                    "author",
-                    placeholder="like 'Taro Yamada and Jiro Yamada', required",
+            entry_type = st.selectbox(
+                "Select entry type",
+                options=(
+                    "article",
+                    "proceedings",
+                    "thesis",
+                    "patent",
+                    "report",
                 ),
-                journal=st.text_input("journal"),
-                year=str(
-                    st.number_input(
-                        "year",
-                        format="%4i",
-                        placeholder="YYYY, required",
-                        step=1,
-                        value=None,
-                        min_value=1000,
-                        max_value=date.today().year + 1,
-                    )
-                ),
-                volume=st.text_input("volume"),
-                number=st.text_input("issue"),
-                pages=st.text_input("page"),
-                url=st.text_input("url"),
-                DOI=st.text_input("DOI", key="CUSTOM_DOI"),
             )
+            st.write(entry_type)
+
+            if entry_type == "article":
+                entry = dict(
+                    ENTRYTYPE="article",
+                    title=st.text_input("Title", placeholder="Required"),
+                    author=st.text_input(
+                        "Author",
+                        placeholder="e.g., 'Taro Yamada and Jiro Yamada', Required",
+                    ),
+                    journal=st.text_input("Journal"),
+                    year=str(
+                        st.number_input(
+                            "Year",
+                            format="%4i",
+                            placeholder="YYYY, Required",
+                            step=1,
+                            value=None,
+                            min_value=1000,
+                            max_value=date.today().year + 1,
+                        )
+                    ),
+                    volume=st.text_input("Volume"),
+                    number=st.text_input("Number"),
+                    pages=st.text_input("Pages"),
+                    url=st.text_input("URL"),
+                    DOI=st.text_input("DOI"),
+                )
+
+            elif entry_type == "proceedings":
+                entry = dict(
+                    ENTRYTYPE="proceedings",
+                    title=st.text_input("Title", placeholder="Required"),
+                    editor=st.text_input("Editor"),
+                    booktitle=st.text_input("Book title"),
+                    year=str(
+                        st.number_input(
+                            "Year",
+                            format="%4i",
+                            placeholder="YYYY, Required",
+                            step=1,
+                            value=None,
+                            min_value=1000,
+                            max_value=date.today().year + 1,
+                        )
+                    ),
+                    organization=st.text_input("Organization"),
+                    publisher=st.text_input("Publisher"),
+                    address=st.text_input("Address"),
+                    pages=st.text_input("Pages"),
+                    url=st.text_input("URL"),
+                    DOI=st.text_input("DOI"),
+                )
+
+            elif entry_type == "thesis":
+                entry = dict(
+                    ENTRYTYPE="thesis",
+                    title=st.text_input("Title", placeholder="Required"),
+                    author=st.text_input("Author", placeholder="Required"),
+                    school=st.text_input("School"),
+                    year=str(
+                        st.number_input(
+                            "Year",
+                            format="%4i",
+                            placeholder="YYYY, Required",
+                            step=1,
+                            value=None,
+                            min_value=1000,
+                            max_value=date.today().year + 1,
+                        )
+                    ),
+                    type=st.selectbox(
+                        "Type", options=["PhD Thesis", "Master's Thesis"]
+                    ),
+                    url=st.text_input("URL"),
+                )
+
+            elif entry_type == "patent":
+                entry = dict(
+                    ENTRYTYPE="patent",
+                    title=st.text_input("Title", placeholder="Required"),
+                    inventor=st.text_input("Inventor", placeholder="Required"),
+                    holder=st.text_input("Patent Holder"),
+                    number=st.text_input("Patent Number"),
+                    year=str(
+                        st.number_input(
+                            "Year",
+                            format="%4i",
+                            placeholder="YYYY, Required",
+                            step=1,
+                            value=None,
+                            min_value=1000,
+                            max_value=date.today().year + 1,
+                        )
+                    ),
+                    country=st.text_input("Country"),
+                    url=st.text_input("URL"),
+                )
+
+            elif entry_type == "report":
+                entry = dict(
+                    ENTRYTYPE="report",
+                    title=st.text_input("Title", placeholder="Required"),
+                    author=st.text_input("Author"),
+                    institution=st.text_input("Institution"),
+                    year=str(
+                        st.number_input(
+                            "Year",
+                            format="%4i",
+                            placeholder="YYYY, Required",
+                            step=1,
+                            value=None,
+                            min_value=1000,
+                            max_value=date.today().year + 1,
+                        )
+                    ),
+                    number=st.text_input("Report Number"),
+                    url=st.text_input("URL"),
+                )
+            elif entry_type == "book":
+                entry = dict(
+                    ENTRYTYPE="book",
+                    title=st.text_input("Title", placeholder="Required"),
+                    author=st.text_input(
+                        "Author", placeholder="e.g., 'Taro Yamada', Required"
+                    ),
+                    publisher=st.text_input(
+                        "Publisher", placeholder="Required"
+                    ),
+                    year=str(
+                        st.number_input(
+                            "Year",
+                            format="%4i",
+                            placeholder="YYYY, Required",
+                            step=1,
+                            value=None,
+                            min_value=1000,
+                            max_value=date.today().year + 1,
+                        )
+                    ),
+                    edition=st.text_input("Edition"),
+                    volume=st.text_input("Volume"),
+                    series=st.text_input("Series"),
+                    address=st.text_input("Publisher Address"),
+                    url=st.text_input("URL"),
+                    ISBN=st.text_input("ISBN"),
+                )
 
         uploaded_file_pdf = st.file_uploader(
             "PDF file (.pdf)",
