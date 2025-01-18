@@ -164,7 +164,7 @@ def main():
                     bib_text,
                     file_name=filepath_pdf_selected.with_suffix(".bib").name,
                 )
-                st.text(bib_text)
+                st.code(bib_text, language="bibtex")
             elif ext == "xml":
                 bib_database = BibDatabase()
                 bib_database.entries = [dict_paper_list[key_selected]]
@@ -183,7 +183,10 @@ def main():
                     mime="application/xml",
                     file_name=filepath_pdf_selected.with_suffix(".xml").name,
                 )
-                st.text(xml.dom.minidom.parseString(xml_str).toprettyxml())
+                st.code(
+                    xml.dom.minidom.parseString(xml_str).toprettyxml(),
+                    language="xml",
+                )
 
     st.header("Register")
 
