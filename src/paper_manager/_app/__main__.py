@@ -6,7 +6,6 @@ import xml.dom.minidom
 from datetime import date
 from logging import DEBUG
 from pathlib import Path
-from typing import Union
 
 import pandas as pd
 import streamlit as st
