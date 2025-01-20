@@ -19,6 +19,7 @@ from crossref.restful import Works  # type: ignore[import-untyped]
 from pybtex.database.input import bibtex  # type: ignore[import-untyped]
 from streamlit_pdf_viewer import pdf_viewer  # type: ignore[import-untyped]
 
+from paper_manager._app._utils import config_page
 from paper_manager.bib import load_bib
 from paper_manager.entry import get_filename_pdf, get_key
 from paper_manager.entry.typing import ENTRY
@@ -44,8 +45,8 @@ COLS_TABLE = (
 )
 
 
+@config_page
 def main():
-    st.title("PAPER MANAGER")
     st.header("List")
 
     os.makedirs(DIRPATH_PDF, exist_ok=True)
