@@ -6,15 +6,18 @@ import xml.dom.minidom
 from datetime import date
 from logging import DEBUG
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import streamlit as st
-from bib2xml.core import bib2xml
-from bibtexparser.bibdatabase import BibDatabase
-from bibtexparser.bwriter import BibTexWriter
-from crossref.restful import Works
-from pybtex.database.input import bibtex
-from streamlit_pdf_viewer import pdf_viewer
+from bib2xml.core import bib2xml  # type: ignore[import-untyped]
+from bibtexparser.bibdatabase import (  # type: ignore[import-untyped]
+    BibDatabase,
+)
+from bibtexparser.bwriter import BibTexWriter  # type: ignore[import-untyped]
+from crossref.restful import Works  # type: ignore[import-untyped]
+from pybtex.database.input import bibtex  # type: ignore[import-untyped]
+from streamlit_pdf_viewer import pdf_viewer  # type: ignore[import-untyped]
 
 from paper_manager.bib import load_bib
 from paper_manager.entry import get_filename_pdf, get_key
@@ -50,7 +53,7 @@ def main():
     if FILEPATH_LIST.exists():
         try:
             with open(FILEPATH_LIST, mode="r", encoding="utf-8") as f:
-                dict_paper_list: dict[str, ENTRY] = json.load(f)
+                dict_paper_list: dict[str, ENTRY] = json.load(f)  # type: ignore[annotation-unchecked]
         except json.JSONDecodeError:
             dict_paper_list = dict()
     else:
@@ -210,8 +213,8 @@ def main():
                 )
             uploaded_file_pdf = pdf_upload_form()
 
-            submitted = st.form_submit_button()
-            if submitted and (uploaded_file_bib or bib_text_input):
+            submitted_bib = st.form_submit_button()
+            if submitted_bib and (uploaded_file_bib or bib_text_input):
                 bibtexfile_or_buffer = (
                     uploaded_file_bib
                     if uploaded_file_bib
@@ -240,10 +243,10 @@ def main():
 
             uploaded_file_pdf = pdf_upload_form()
 
-            submitted = st.form_submit_button()
-            if submitted and doi:
+            submitted_doi = st.form_submit_button()
+            if submitted_doi and doi:
                 works = Works()
-                metadata: dict = works.doi(doi)
+                metadata: Optional[dict] = works.doi(doi)  # type: ignore[annotation-unchecked]
 
                 if metadata:
                     entry = {
@@ -283,7 +286,7 @@ def main():
 
         with st.form("custom_form", clear_on_submit=True):
             if entry_type == "article":
-                entry = dict(
+                _entry_custom = dict(
                     ENTRYTYPE="article",
                     title=st.text_input("Title", placeholder="Required"),
                     author=st.text_input(
@@ -310,7 +313,7 @@ def main():
                 )
 
             elif entry_type == "proceedings":
-                entry = dict(
+                _entry_custom = dict(
                     ENTRYTYPE="proceedings",
                     title=st.text_input("Title", placeholder="Required"),
                     editor=st.text_input("Editor"),
@@ -335,7 +338,7 @@ def main():
                 )
 
             elif entry_type == "thesis":
-                entry = dict(
+                _entry_custom = dict(
                     ENTRYTYPE="thesis",
                     title=st.text_input("Title", placeholder="Required"),
                     author=st.text_input("Author", placeholder="Required"),
@@ -358,7 +361,7 @@ def main():
                 )
 
             elif entry_type == "patent":
-                entry = dict(
+                _entry_custom = dict(
                     ENTRYTYPE="patent",
                     title=st.text_input("Title", placeholder="Required"),
                     inventor=st.text_input("Inventor", placeholder="Required"),
@@ -380,7 +383,7 @@ def main():
                 )
 
             elif entry_type == "report":
-                entry = dict(
+                _entry_custom = dict(
                     ENTRYTYPE="report",
                     title=st.text_input("Title", placeholder="Required"),
                     author=st.text_input("Author"),
@@ -400,7 +403,7 @@ def main():
                     url=st.text_input("URL"),
                 )
             elif entry_type == "book":
-                entry = dict(
+                _entry_custom = dict(
                     ENTRYTYPE="book",
                     title=st.text_input("Title", placeholder="Required"),
                     author=st.text_input(
@@ -430,42 +433,45 @@ def main():
             # 共通
             uploaded_file_pdf = pdf_upload_form()
 
-            submitted = st.form_submit_button()
-            if submitted and not (
-                entry["author"] and entry["year"] and entry["title"]
-            ):
-                st.error(
-                    "'.bib file', 'DOI' or ('author', 'year' and 'title') is necessary."
-                )
-                st.stop()
+            submitted_custom = st.form_submit_button()
+            if submitted_custom:
+                if (
+                    _entry_custom["author"]
+                    and _entry_custom["year"]
+                    and _entry_custom["title"]
+                ) and not entry:
+                    entry = _entry_custom
+                else:
+                    st.error("('author', 'year' and 'title') is necessary.")
+                    st.stop()
 
-        if submitted:
-            ## ここから共通
-            entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
+    if submitted_bib or submitted_doi or submitted_custom:
+        ## ここから共通
+        entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
 
-            # 前後の空白削除
-            entry = {_key: _value.strip() for _key, _value in entry.items()}
+        # 前後の空白削除
+        entry = {_key: _value.strip() for _key, _value in entry.items()}
 
-            filename_pdf = get_filename_pdf(entry)
-            # pdfのファイル名で重複を確認する (DOIがないものも対応するため)
-            st_doi: set[str] = {
-                get_filename_pdf(_entry) for _entry in dict_paper_list.values()
-            }
-            if filename_pdf in st_doi:
-                st.error("FAIL: Duplicated")
-            else:
-                # ラインナップとして追加して
-                dict_paper_list[get_key(entry, dict_paper_list.keys())] = entry
-                with open(FILEPATH_LIST, mode="w", encoding="utf-8") as f:
-                    json.dump(dict_paper_list, f, indent=4, ensure_ascii=True)
+        filename_pdf = get_filename_pdf(entry)
+        # pdfのファイル名で重複を確認する (DOIがないものも対応するため)
+        st_doi = {
+            get_filename_pdf(_entry) for _entry in dict_paper_list.values()
+        }
+        if filename_pdf in st_doi:
+            st.error("FAIL: Duplicated")
+        else:
+            # ラインナップとして追加して
+            dict_paper_list[get_key(entry, dict_paper_list.keys())] = entry
+            with open(FILEPATH_LIST, mode="w", encoding="utf-8") as f:
+                json.dump(dict_paper_list, f, indent=4, ensure_ascii=True)
 
-                # pdfをdataディレクトリ内に保存する
-                if uploaded_file_pdf:
-                    with open(DIRPATH_PDF / filename_pdf, mode="wb") as f:
-                        f.write(uploaded_file_pdf.getvalue())
+            # pdfをdataディレクトリ内に保存する
+            if uploaded_file_pdf:
+                with open(DIRPATH_PDF / filename_pdf, mode="wb") as f:
+                    f.write(uploaded_file_pdf.getvalue())
 
-                # reload
-                st.rerun()
+            # reload
+            st.rerun()
 
 
 def pdf_upload_form():
