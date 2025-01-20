@@ -16,17 +16,13 @@ class config_page:
         self._callable = _callable
 
     def __call__(self, *args, **kwargs):
+        st.set_page_config(page_title="PAPER MANAGER")
+
         st.title("PAPER MANAGER")
 
         st.session_state["paper_list"] = load_paper_list()
 
-        _return = self._callable(*args, **kwargs)
-
-        with open(FILEPATH_LIST, mode="w", encoding="utf-8") as f:
-            json.dump(
-                st.session_state["paper_list"], f, indent=4, ensure_ascii=False
-            )
-        return _return
+        return self._callable(*args, **kwargs)
 
 
 def load_paper_list() -> dict[str, ENTRY]:
