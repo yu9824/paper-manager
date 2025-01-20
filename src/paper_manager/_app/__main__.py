@@ -51,14 +51,7 @@ def main():
 
     os.makedirs(DIRPATH_PDF, exist_ok=True)
 
-    if FILEPATH_LIST.exists():
-        try:
-            with open(FILEPATH_LIST, mode="r", encoding="utf-8") as f:
-                dict_paper_list: dict[str, ENTRY] = json.load(f)  # type: ignore[annotation-unchecked]
-        except json.JSONDecodeError:
-            dict_paper_list = dict()
-    else:
-        dict_paper_list = dict()
+    dict_paper_list: dict[str, ENTRY] = st.session_state["paper_list"]
 
     if dict_paper_list:
         _df_paper_list = pd.DataFrame.from_dict(
