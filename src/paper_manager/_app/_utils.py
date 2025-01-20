@@ -1,0 +1,46 @@
+import json
+from collections.abc import Callable
+from pathlib import Path
+
+import streamlit as st
+
+from paper_manager.entry.typing import ENTRY
+
+DIRPATH_ROOT = Path(__file__).parent
+DIRPATH_DATA = DIRPATH_ROOT / "data"
+FILEPATH_LIST = DIRPATH_DATA / "list.json"
+
+
+class config_page:
+    def __init__(self, _callable: Callable) -> None:
+        self._callable = _callable
+
+    def __call__(self, *args, **kwargs):
+        st.set_page_config(page_title="PAPER MANAGER")
+
+        st.title("PAPER MANAGER")
+
+        st.session_state["paper_list"] = load_paper_list()
+
+        return self._callable(*args, **kwargs)
+
+
+def load_paper_list() -> dict[str, ENTRY]:
+    if FILEPATH_LIST.is_file():
+        try:
+            with open(FILEPATH_LIST, mode="r", encoding="utf-8") as f:
+                dict_paper_list: dict[str, ENTRY] = json.load(f)  # type: ignore[annotation-unchecked]
+        except json.JSONDecodeError:
+            dict_paper_list = dict()
+    else:
+        dict_paper_list = dict()
+    return dict_paper_list
+
+
+def pdf_upload_form():
+    return st.file_uploader(
+        "PDF file (.pdf)",
+        type="pdf",
+        accept_multiple_files=False,
+        help="PDF file (.pdf), optional",
+    )
