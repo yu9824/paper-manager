@@ -8,7 +8,7 @@ from typing import Optional
 import streamlit as st
 from crossref.restful import Works  # type: ignore[import-untyped]
 
-from paper_manager._app._utils import config_page
+from paper_manager._app._utils import config_page, pdf_upload_form
 from paper_manager.bib import load_bib
 from paper_manager.entry import get_filename_pdf, get_key
 from paper_manager.entry.typing import ENTRY
@@ -307,15 +307,6 @@ def main():
                     f.write(uploaded_file_pdf.getvalue())
 
             st.success("SUCCESS: Registered")
-
-
-def pdf_upload_form():
-    return st.file_uploader(
-        "PDF file (.pdf)",
-        type="pdf",
-        accept_multiple_files=False,
-        help="PDF file (.pdf), optional",
-    )
 
 
 if __name__ == "__main__":

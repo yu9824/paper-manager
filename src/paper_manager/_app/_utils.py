@@ -35,3 +35,12 @@ def load_paper_list() -> dict[str, ENTRY]:
     else:
         dict_paper_list = dict()
     return dict_paper_list
+
+
+def pdf_upload_form():
+    return st.file_uploader(
+        "PDF file (.pdf)",
+        type="pdf",
+        accept_multiple_files=False,
+        help="PDF file (.pdf), optional",
+    )
