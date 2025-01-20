@@ -29,7 +29,7 @@ def get_key(entry: ENTRY, keys: Sequence[str]) -> str:
     st_keys = set(keys)
 
     first_author = entry["author"].split(" and ")[0]
-    if (
+    while (
         key := "{0}{1}_{2}".format(
             first_author.replace(" ", ""), entry["year"], i
         )
