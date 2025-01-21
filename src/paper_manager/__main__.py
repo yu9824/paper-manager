@@ -57,7 +57,7 @@ def main(cli_args: Sequence[str], prog: Optional[str] = None) -> None:
 
 
 def run(cli_args: Sequence[str]):
-    cli.main_run((str(DIRPATH_ROOT / "app" / "_app.py"),) + tuple(cli_args))
+    cli.main_run((str(DIRPATH_ROOT / "_app" / "_list.py"),) + tuple(cli_args))
 
 
 def version(cli_args: Sequence[str]):
