@@ -6,8 +6,8 @@ run-name: ${{ github.workflow }} (${{ github.ref_name }})
 on:
   workflow_dispatch:
   push:
-    branches:
-      - 'main'
+    # branches:
+    #   - 'main'
 
 jobs:
   build-linux:
