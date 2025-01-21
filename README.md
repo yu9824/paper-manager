@@ -8,7 +8,6 @@ This is my own paper-manager with streamlit.
 ## Install
 
 ```bash
-pip install git+https://github.com/yu9824/bib2xml.git@v0.1.4 --no-deps
 pip install git+https://github.com/yu9824/paper-manager.git
 
 ```
