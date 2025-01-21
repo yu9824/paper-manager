@@ -8,8 +8,8 @@ name = "paper-manager"
 dynamic = ["version"]
 dependencies = [
     "typing-extensions >= 4.0.0; python_version < '3.8'",
-    # "crossrefapi == 1.6.0",
-    "crossrefapi @ git+https://github.com/fabiobatalha/crossrefapi.git@1.6.1",
+    "crossrefapi == 1.6.0",
+    # "crossrefapi @ git+https://github.com/fabiobatalha/crossrefapi.git@1.6.1",
     "pandas",
     "streamlit",
     "bibtexparser",
