@@ -3,21 +3,21 @@ import re
 import sys
 
 if sys.version_info >= (3, 9):
-    from collections.abc import Sequence
+    from collections.abc import Collection
 else:
-    from typing import Sequence
+    from typing import Collection
 
 from paper_manager.entry.typing import ENTRY
 
 
-def get_key(entry: ENTRY, keys: Sequence[str]) -> str:
+def get_key(entry: ENTRY, keys: Collection[str]) -> str:
     """get paper's key by using 'author' and 'year'
 
     Parameters
     ----------
     entry : ENTRY
         _description_
-    keys : Sequence[str]
+    keys : Collection[str]
         _description_
 
     Returns

@@ -51,9 +51,8 @@ def main():
         _df_paper_list = pd.DataFrame.from_dict(
             dict_paper_list, orient="index", dtype=str
         )
-        _df_paper_list.loc[
-            :, list(set(COLS_TABLE) - set(_df_paper_list.columns))
-        ] = ""
+        for _col in set(COLS_TABLE) - set(_df_paper_list.columns):
+            _df_paper_list.loc[:, _col] = ""
 
         paper_selected = st.dataframe(
             pd.concat(
@@ -69,11 +68,7 @@ def main():
                         },
                         name="PDF",
                     ),
-                    pd.DataFrame.from_dict(
-                        dict_paper_list, orient="index", dtype=str
-                    )
-                    .loc[:, list(COLS_TABLE)]
-                    .fillna(""),
+                    _df_paper_list.loc[:, list(COLS_TABLE)].fillna(""),
                 ),
                 axis=1,
             ),
