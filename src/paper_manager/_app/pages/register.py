@@ -7,6 +7,7 @@ from typing import Optional
 
 import streamlit as st
 from crossref.restful import Works  # type: ignore[import-untyped]
+from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from paper_manager._app._utils import config_page, pdf_upload_form
 from paper_manager.bib import load_bib
@@ -26,7 +27,9 @@ FILEPATH_LIST = DIRPATH_DATA / "list.json"
 @config_page
 def main():
     st.header("Register")
-    dict_paper_list: dict[str, ENTRY] = st.session_state["paper_list"]
+    dict_paper_list: dict[str, ENTRY] = st.session_state["paper_list"]  # type: ignore[annotation-unchecked]
+
+    uploaded_file_pdf: Optional[UploadedFile] = None  # type: ignore[annotation-unchecked]
 
     tab_from_bib, tab_from_doi, tab_custom_form = st.tabs(
         ("BIB", "DOI", "CUSTOM")
@@ -47,7 +50,12 @@ def main():
                     accept_multiple_files=False,
                     help="bibtex file (.bib), optional",
                 )
-            uploaded_file_pdf = pdf_upload_form()
+
+            uploaded_file_pdf = (
+                pdf_upload_form()
+                if uploaded_file_pdf is None
+                else uploaded_file_pdf
+            )
 
             submitted_bib = st.form_submit_button()
             if submitted_bib and (uploaded_file_bib or bib_text_input):
@@ -77,7 +85,11 @@ def main():
                 help="like 'doi.org/10.1107/S0567739476001551'",
             )
 
-            uploaded_file_pdf = pdf_upload_form()
+            uploaded_file_pdf = (
+                pdf_upload_form()
+                if uploaded_file_pdf is None
+                else uploaded_file_pdf
+            )
 
             submitted_doi = st.form_submit_button()
             if submitted_doi and doi:
@@ -266,8 +278,13 @@ def main():
                     url=st.text_input("URL"),
                     ISBN=st.text_input("ISBN"),
                 )
+
             # 共通
-            uploaded_file_pdf = pdf_upload_form()
+            uploaded_file_pdf = (
+                pdf_upload_form()
+                if uploaded_file_pdf is None
+                else uploaded_file_pdf
+            )
 
             submitted_custom = st.form_submit_button()
             if submitted_custom:
@@ -282,6 +299,7 @@ def main():
                     st.stop()
 
     if submitted_bib or submitted_doi or submitted_custom:
+        print(uploaded_file_pdf)
         ## ここから共通
         entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
 
