@@ -172,7 +172,7 @@ def main():
                 )
                 st.code(
                     xml.dom.minidom.parseString(xml_str).toprettyxml(
-                        indent="  ", encoding=ENCODING
+                        indent="  "
                     ),
                     language="xml",
                 )
