@@ -3,7 +3,7 @@ import json
 from datetime import date
 from logging import DEBUG
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import streamlit as st
 from crossref.restful import Works  # type: ignore[import-untyped]
@@ -76,6 +76,7 @@ def main():
                     st.error("No entry")
                     st.stop()
                 entry = dict(entries[tuple(entries.keys())[0]])
+                print(entry)
 
     # DOI登録
     with tab_from_doi:
@@ -96,11 +97,13 @@ def main():
             submitted_doi = st.form_submit_button()
             if submitted_doi and doi:
                 works = Works()
-                metadata: Optional[dict] = works.doi(doi)  # type: ignore[annotation-unchecked]
+                metadata: Optional[dict[str, Union[str, dict]]] = (  # type: ignore[annotation-unchecked]
+                    works.doi(doi)
+                )
 
                 if metadata:
                     entry = {
-                        "ENTRYTYPE": "article",
+                        "ENTRYTYPE": metadata["type"].split("-article")[0],
                         "title": metadata["title"][0],
                         "author": " and ".join(
                             [
