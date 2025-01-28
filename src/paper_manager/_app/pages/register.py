@@ -23,6 +23,8 @@ DIRPATH_PDF = DIRPATH_DATA / "pdf"
 
 FILEPATH_LIST = DIRPATH_DATA / "list.json"
 
+ENCODING = "utf-8"
+
 
 @config_page
 def main():
@@ -299,7 +301,6 @@ def main():
                     st.stop()
 
     if submitted_bib or submitted_doi or submitted_custom:
-        print(uploaded_file_pdf)
         ## ここから共通
         entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
 
@@ -316,8 +317,8 @@ def main():
         else:
             # ラインナップとして追加して
             dict_paper_list[get_key(entry, dict_paper_list.keys())] = entry
-            with open(FILEPATH_LIST, mode="w", encoding="utf-8") as f:
-                json.dump(dict_paper_list, f, indent=4, ensure_ascii=True)
+            with open(FILEPATH_LIST, mode="w", encoding=ENCODING) as f:
+                json.dump(dict_paper_list, f, indent=4, ensure_ascii=False)
 
             # pdfをdataディレクトリ内に保存する
             if uploaded_file_pdf:
