@@ -3,10 +3,11 @@ import json
 from datetime import date
 from logging import DEBUG
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import streamlit as st
 from crossref.restful import Works  # type: ignore[import-untyped]
+from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from paper_manager._app._utils import config_page, pdf_upload_form
 from paper_manager.bib import load_bib
@@ -22,11 +23,15 @@ DIRPATH_PDF = DIRPATH_DATA / "pdf"
 
 FILEPATH_LIST = DIRPATH_DATA / "list.json"
 
+ENCODING = "utf-8"
+
 
 @config_page
 def main():
     st.header("Register")
-    dict_paper_list: dict[str, ENTRY] = st.session_state["paper_list"]
+    dict_paper_list: dict[str, ENTRY] = st.session_state["paper_list"]  # type: ignore[annotation-unchecked]
+
+    uploaded_file_pdf: Optional[UploadedFile] = None  # type: ignore[annotation-unchecked]
 
     tab_from_bib, tab_from_doi, tab_custom_form = st.tabs(
         ("BIB", "DOI", "CUSTOM")
@@ -47,7 +52,12 @@ def main():
                     accept_multiple_files=False,
                     help="bibtex file (.bib), optional",
                 )
-            uploaded_file_pdf = pdf_upload_form()
+
+            uploaded_file_pdf = (
+                pdf_upload_form()
+                if uploaded_file_pdf is None
+                else uploaded_file_pdf
+            )
 
             submitted_bib = st.form_submit_button()
             if submitted_bib and (uploaded_file_bib or bib_text_input):
@@ -66,6 +76,7 @@ def main():
                     st.error("No entry")
                     st.stop()
                 entry = dict(entries[tuple(entries.keys())[0]])
+                print(entry)
 
     # DOI登録
     with tab_from_doi:
@@ -77,16 +88,22 @@ def main():
                 help="like 'doi.org/10.1107/S0567739476001551'",
             )
 
-            uploaded_file_pdf = pdf_upload_form()
+            uploaded_file_pdf = (
+                pdf_upload_form()
+                if uploaded_file_pdf is None
+                else uploaded_file_pdf
+            )
 
             submitted_doi = st.form_submit_button()
             if submitted_doi and doi:
                 works = Works()
-                metadata: Optional[dict] = works.doi(doi)  # type: ignore[annotation-unchecked]
+                metadata: Optional[dict[str, Union[str, dict]]] = (  # type: ignore[annotation-unchecked]
+                    works.doi(doi)
+                )
 
                 if metadata:
                     entry = {
-                        "ENTRYTYPE": "article",
+                        "ENTRYTYPE": metadata["type"].split("-article")[0],
                         "title": metadata["title"][0],
                         "author": " and ".join(
                             [
@@ -266,8 +283,13 @@ def main():
                     url=st.text_input("URL"),
                     ISBN=st.text_input("ISBN"),
                 )
+
             # 共通
-            uploaded_file_pdf = pdf_upload_form()
+            uploaded_file_pdf = (
+                pdf_upload_form()
+                if uploaded_file_pdf is None
+                else uploaded_file_pdf
+            )
 
             submitted_custom = st.form_submit_button()
             if submitted_custom:
@@ -298,8 +320,8 @@ def main():
         else:
             # ラインナップとして追加して
             dict_paper_list[get_key(entry, dict_paper_list.keys())] = entry
-            with open(FILEPATH_LIST, mode="w", encoding="utf-8") as f:
-                json.dump(dict_paper_list, f, indent=4, ensure_ascii=True)
+            with open(FILEPATH_LIST, mode="w", encoding=ENCODING) as f:
+                json.dump(dict_paper_list, f, indent=4, ensure_ascii=False)
 
             # pdfをdataディレクトリ内に保存する
             if uploaded_file_pdf:

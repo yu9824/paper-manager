@@ -39,11 +39,13 @@ COLS_TABLE = (
     "DOI",
 )
 
+ENCODING = "utf-8"
+
 
 @config_page
 def main():
     st.header("List")
-    dict_paper_list: dict[str, ENTRY] = st.session_state["paper_list"]
+    dict_paper_list: dict[str, ENTRY] = st.session_state["paper_list"]  # type: ignore[annotation-unchecked]
 
     os.makedirs(DIRPATH_PDF, exist_ok=True)
 
@@ -115,7 +117,7 @@ def main():
                     os.remove(filepath_pdf_selected)
 
                 del dict_paper_list[key_selected]
-                with open(FILEPATH_LIST, mode="w", encoding="utf-8") as f:
+                with open(FILEPATH_LIST, mode="w", encoding=ENCODING) as f:
                     json.dump(dict_paper_list, f, indent=4, ensure_ascii=False)
 
                 st.rerun()
@@ -164,12 +166,14 @@ def main():
                 xml_str = bib2xml(bibdata)
                 st.download_button(
                     "Download",
-                    data=xml_str.encode("utf-8"),
+                    data=xml_str.encode(ENCODING),
                     mime="application/xml",
                     file_name=filepath_pdf_selected.with_suffix(".xml").name,
                 )
                 st.code(
-                    xml.dom.minidom.parseString(xml_str).toprettyxml(),
+                    xml.dom.minidom.parseString(xml_str).toprettyxml(
+                        indent="  "
+                    ),
                     language="xml",
                 )
 

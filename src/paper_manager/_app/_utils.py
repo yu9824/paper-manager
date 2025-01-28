@@ -1,8 +1,10 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Union
 
 import streamlit as st
+from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from paper_manager.entry.typing import ENTRY
 
@@ -37,7 +39,7 @@ def load_paper_list() -> dict[str, ENTRY]:
     return dict_paper_list
 
 
-def pdf_upload_form():
+def pdf_upload_form() -> Union[UploadedFile, None]:
     return st.file_uploader(
         "PDF file (.pdf)",
         type="pdf",
