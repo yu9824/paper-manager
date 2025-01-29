@@ -5,8 +5,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Union
 
+# https://github.com/chbrown/pybtex
 from pybtex.database import Entry, Person
-from pybtex.database.input import bibtex  # https://github.com/chbrown/pybtex
+from pybtex.database.input import bibtex
 
 from paper_manager.logging import get_child_logger
 
@@ -52,18 +53,14 @@ def load_bib(
     # )
 
     dict_entries: "dict[str, MappingProxyType]" = dict()
+    key: str
+    entry: Entry
     for key, entry in bibdata.entries.items():
-        # typing
-        key: str
-        entry: Entry
-
         dict_entry: dict[str, str] = dict(entry.fields)
 
         list_authors = list()
+        author: Person
         for author in entry.persons["author"]:
-            # HACK: typing
-            author: Person
-
             first_name = author.first_names[0] if author.first_names else ""
             last_name = author.last_names[0]
             list_authors.append("{} {}".format(first_name, last_name))
