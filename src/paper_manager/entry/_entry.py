@@ -28,10 +28,12 @@ def get_key(entry: ENTRY, keys: Collection[str]) -> str:
     i = 0
     st_keys = set(keys)
 
-    first_author = entry["author"].split(" and ")[0]
+    first_author = (
+        entry["author"].split(" and ")[0] if "author" in entry else "Unknown"
+    )
     while (
         key := "{0}{1}_{2}".format(
-            first_author.replace(" ", ""), entry["year"], i
+            first_author.replace(" ", ""), entry.get("year", "YYYY"), i
         )
     ) in st_keys:
         i += 1
