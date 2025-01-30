@@ -29,6 +29,9 @@
         }
     },
     "book": {
+        "author": {
+            "required": true
+        },
         "editor": {
             "required": false
         },
@@ -47,13 +50,7 @@
         "number": {
             "required": false
         },
-        "series": {
-            "required": false
-        },
-        "address": {
-            "required": false
-        },
-        "edition": {
+        "pages": {
             "required": false
         },
         "month": {
