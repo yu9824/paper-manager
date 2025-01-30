@@ -88,11 +88,14 @@ def main():
                     st.error(
                         f"Must be only one entry. (contains {len(entries)} entries)"
                     )
-                    st.stop()
+                    submitted_bib = False
                 elif len(entries) == 0:
                     st.error("No entry")
-                    st.stop()
+                    submitted_bib = False
                 entry = dict(entries[tuple(entries.keys())[0]])
+            elif submitted_bib:
+                st.error("FAIL: Empty BIB")
+                submitted_bib = False
 
     # DOI登録
     with tab_from_doi:
@@ -136,6 +139,10 @@ def main():
                     }
                 else:
                     st.error("FAIL: Invalid DOI")
+                    submitted_doi = False
+            elif submitted_doi:
+                st.error("FAIL: Empty DOI")
+                submitted_doi = False
 
     # カスタム登録
     with tab_custom_form:
@@ -194,7 +201,11 @@ def main():
                 if set_required_fields <= set(entry.keys()):
                     pass
                 else:
-                    st.error("('author', 'year' and 'title') is necessary.")
+                    st.error(
+                        "('{}') is/are necessary.".format(
+                            "', '".join(set_required_fields)
+                        )
+                    )
                     submitted_custom = False
 
     if submitted_bib or submitted_doi or submitted_custom:
