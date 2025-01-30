@@ -19,3 +19,9 @@ Run streamlit server locally.
 ```bash
 paper-manager run   # wrapper of 'streamlit run'
 ```
+
+## For developper
+
+```bash
+paper-manager run --debug --server.address localhost
+```
