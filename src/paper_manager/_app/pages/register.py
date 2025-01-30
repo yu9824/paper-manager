@@ -3,6 +3,7 @@ import json
 from datetime import date
 from logging import DEBUG
 from pathlib import Path
+from types import MappingProxyType
 from typing import Optional, Union
 
 import streamlit as st
@@ -24,6 +25,21 @@ DIRPATH_PDF = DIRPATH_DATA / "pdf"
 FILEPATH_LIST = DIRPATH_DATA / "list.json"
 
 ENCODING = "utf-8"
+MAP_ENTRYTYPE4DOI = MappingProxyType(
+    {
+        "jornal-article": "article",
+        "proceedings-article": "inproceedings",
+        "book": "book",
+    }
+)
+
+
+def entrytype4doi(entrytype: str) -> str:
+    if entrytype in MAP_ENTRYTYPE4DOI:
+        return MAP_ENTRYTYPE4DOI[entrytype]
+    else:
+        _logger.warning(f"Unknown entrytype: {entrytype}. Use 'misc' instead.")
+        return "misc"
 
 
 @config_page
@@ -103,7 +119,7 @@ def main():
 
                 if metadata:
                     entry = {
-                        "ENTRYTYPE": metadata["type"].split("-article")[0],
+                        "ENTRYTYPE": entrytype4doi(metadata["type"]),
                         "title": metadata["title"][0],
                         "author": " and ".join(
                             [
