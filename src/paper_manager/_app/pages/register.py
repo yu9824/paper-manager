@@ -34,6 +34,15 @@ MAP_ENTRYTYPE4DOI = MappingProxyType(
 )
 MAP_FIELDS = MappingProxyType(load_fields())
 
+MAP_REQUIRED_FIELDS = {
+    entry_type: set(
+        field
+        for field in MAP_FIELDS[entry_type]
+        if MAP_FIELDS[entry_type][field]["required"]
+    )
+    for entry_type in MAP_FIELDS
+}
+
 
 def entrytype4doi(entrytype: str) -> str:
     if entrytype in MAP_ENTRYTYPE4DOI:
@@ -41,6 +50,40 @@ def entrytype4doi(entrytype: str) -> str:
     else:
         _logger.warning(f"Unknown entrytype: {entrytype}. Use 'misc' instead.")
         return "misc"
+
+
+def custom_entry(entry: ENTRY) -> dict[str, str]:
+    entry_type = entry["ENTRYTYPE"]
+
+    for field in MAP_FIELDS[entry_type]:
+        if field == "year":
+            if _year := st.number_input(
+                field,
+                format="%4i",
+                placeholder="YYYY, Required",
+                step=1,
+                value=None,
+                min_value=1000,
+                max_value=date.today().year + 1,
+            ):
+                entry[field] = str(_year)
+
+        elif field == "author":
+            if _text_input_temp := st.text_input(
+                field,
+                placeholder="e.g., 'Taro Yamada and Jiro Yamada', Required",
+            ):
+                entry[field] = _text_input_temp
+
+        else:
+            if _text_input_temp := st.text_input(
+                field,
+                placeholder="Required"
+                if field in MAP_REQUIRED_FIELDS[entry_type]
+                else "",
+            ):
+                entry[field] = _text_input_temp
+    return entry
 
 
 @config_page
@@ -152,42 +195,11 @@ def main():
             "Select entry type",
             options=tuple(MAP_FIELDS.keys()),
         )
-        set_required_fields = set(
-            field
-            for field in MAP_FIELDS[entry_type]
-            if MAP_FIELDS[entry_type][field]["required"]
-        )
 
         with st.form("custom_form", clear_on_submit=True):
             entry = dict(ENTRYTYPE=entry_type)
-            for field in MAP_FIELDS[entry_type]:
-                if field == "year":
-                    if _year := st.number_input(
-                        field,
-                        format="%4i",
-                        placeholder="YYYY, Required",
-                        step=1,
-                        value=None,
-                        min_value=1000,
-                        max_value=date.today().year + 1,
-                    ):
-                        entry[field] = str(_year)
 
-                elif field == "author":
-                    if _text_input_temp := st.text_input(
-                        field,
-                        placeholder="e.g., 'Taro Yamada and Jiro Yamada', Required",
-                    ):
-                        entry[field] = _text_input_temp
-
-                else:
-                    if _text_input_temp := st.text_input(
-                        field,
-                        placeholder="Required"
-                        if field in set_required_fields
-                        else "",
-                    ):
-                        entry[field] = _text_input_temp
+            entry = custom_entry(entry)
 
             # 共通
             uploaded_file_pdf = (
@@ -198,12 +210,15 @@ def main():
 
             submitted_custom = st.form_submit_button()
             if submitted_custom:
-                if set_required_fields <= set(entry.keys()):
+                if MAP_REQUIRED_FIELDS[entry_type] <= set(entry.keys()):
                     pass
                 else:
                     st.error(
                         "('{}') is/are necessary.".format(
-                            "', '".join(set_required_fields)
+                            "', '".join(
+                                MAP_REQUIRED_FIELDS[entry_type]
+                                - set(entry.keys())
+                            )
                         )
                     )
                     submitted_custom = False
