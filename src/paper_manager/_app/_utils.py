@@ -40,12 +40,12 @@ def load_paper_list() -> dict[str, ENTRY]:
     return dict_paper_list
 
 
-def load_fileds() -> dict[str, dict[Literal["required"], bool]]:
+def load_fields() -> dict[str, dict[str, dict[Literal["required"], bool]]]:
     if not FILEPATH_FIELDS.is_file():
         raise FileNotFoundError(f"{FILEPATH_FIELDS}")
     with open(FILEPATH_FIELDS, mode="r", encoding="utf-8") as f:
-        dict_fileds: dict[str, dict[Literal["required"], bool]] = json.load(f)
-    return dict_fileds
+        dict_fields = json.load(f)
+    return dict_fields
 
 
 def pdf_upload_form() -> Union[UploadedFile, None]:
@@ -55,7 +55,3 @@ def pdf_upload_form() -> Union[UploadedFile, None]:
         accept_multiple_files=False,
         help="PDF file (.pdf), optional",
     )
-
-
-if __name__ == "__main__":
-    print(load_fileds())
