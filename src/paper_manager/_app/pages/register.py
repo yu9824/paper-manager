@@ -59,28 +59,35 @@ def custom_entry(entry: ENTRY) -> dict[str, str]:
         if field == "year":
             if _year := st.number_input(
                 field,
+                value=st.session_state.get(field, None),
                 format="%4i",
                 placeholder="YYYY, Required",
                 step=1,
-                value=None,
                 min_value=1000,
                 max_value=date.today().year + 1,
+                key=field,
             ):
                 entry[field] = str(_year)
 
         elif field == "author":
+            _input_default = st.session_state.get(field, None)
             if _text_input_temp := st.text_input(
                 field,
+                value=_input_default,
                 placeholder="e.g., 'Taro Yamada and Jiro Yamada', Required",
+                key=field,
             ):
                 entry[field] = _text_input_temp
 
         else:
+            _input_default = st.session_state.get(field, None)
             if _text_input_temp := st.text_input(
                 field,
+                value=_input_default,
                 placeholder="Required"
                 if field in MAP_REQUIRED_FIELDS[entry_type]
                 else "",
+                key=field,
             ):
                 entry[field] = _text_input_temp
     return entry
@@ -197,9 +204,7 @@ def main():
         )
 
         with st.form("custom_form", clear_on_submit=True):
-            entry = dict(ENTRYTYPE=entry_type)
-
-            entry = custom_entry(entry)
+            entry = custom_entry(dict(ENTRYTYPE=entry_type))
 
             # 共通
             uploaded_file_pdf = (
@@ -211,7 +216,8 @@ def main():
             submitted_custom = st.form_submit_button()
             if submitted_custom:
                 if MAP_REQUIRED_FIELDS[entry_type] <= set(entry.keys()):
-                    pass
+                    for _key in MAP_FIELDS[entry_type]:
+                        _ = st.session_state.pop(_key, None)
                 else:
                     st.error(
                         "('{}') is/are necessary.".format(
@@ -224,6 +230,8 @@ def main():
                     submitted_custom = False
 
     if submitted_bib or submitted_doi or submitted_custom:
+        _logger.debug(f"submitted_entry={entry}")
+
         ## ここから共通
         entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
 
