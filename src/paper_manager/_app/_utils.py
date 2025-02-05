@@ -1,7 +1,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Union
+from typing import Literal, Union
 
 import streamlit as st
 from streamlit.runtime.uploaded_file_manager import UploadedFile
@@ -11,6 +11,7 @@ from paper_manager.entry.typing import ENTRY
 DIRPATH_ROOT = Path(__file__).parent
 DIRPATH_DATA = DIRPATH_ROOT / "data"
 FILEPATH_LIST = DIRPATH_DATA / "list.json"
+FILEPATH_FIELDS = DIRPATH_ROOT / "fields.json"
 
 
 class config_page:
@@ -37,6 +38,14 @@ def load_paper_list() -> dict[str, ENTRY]:
     else:
         dict_paper_list = dict()
     return dict_paper_list
+
+
+def load_fields() -> dict[str, dict[str, dict[Literal["required"], bool]]]:
+    if not FILEPATH_FIELDS.is_file():
+        raise FileNotFoundError(f"{FILEPATH_FIELDS}")
+    with open(FILEPATH_FIELDS, mode="r", encoding="utf-8") as f:
+        dict_fields = json.load(f)
+    return dict_fields
 
 
 def pdf_upload_form() -> Union[UploadedFile, None]:

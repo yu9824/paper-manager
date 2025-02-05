@@ -3,13 +3,14 @@ import json
 from datetime import date
 from logging import DEBUG
 from pathlib import Path
+from types import MappingProxyType
 from typing import Optional, Union
 
 import streamlit as st
 from crossref.restful import Works  # type: ignore[import-untyped]
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
-from paper_manager._app._utils import config_page, pdf_upload_form
+from paper_manager._app._utils import config_page, load_fields, pdf_upload_form
 from paper_manager.bib import load_bib
 from paper_manager.entry import get_filename_pdf, get_key
 from paper_manager.entry.typing import ENTRY
@@ -24,6 +25,71 @@ DIRPATH_PDF = DIRPATH_DATA / "pdf"
 FILEPATH_LIST = DIRPATH_DATA / "list.json"
 
 ENCODING = "utf-8"
+MAP_ENTRYTYPE4DOI = MappingProxyType(
+    {
+        "jornal-article": "article",
+        "proceedings-article": "inproceedings",
+        "book": "book",
+    }
+)
+MAP_FIELDS = MappingProxyType(load_fields())
+
+MAP_REQUIRED_FIELDS = {
+    entry_type: set(
+        field
+        for field in MAP_FIELDS[entry_type]
+        if MAP_FIELDS[entry_type][field]["required"]
+    )
+    for entry_type in MAP_FIELDS
+}
+
+
+def entrytype4doi(entrytype: str) -> str:
+    if entrytype in MAP_ENTRYTYPE4DOI:
+        return MAP_ENTRYTYPE4DOI[entrytype]
+    else:
+        _logger.warning(f"Unknown entrytype: {entrytype}. Use 'misc' instead.")
+        return "misc"
+
+
+def custom_entry(entry: ENTRY) -> dict[str, str]:
+    entry_type = entry["ENTRYTYPE"]
+
+    for field in MAP_FIELDS[entry_type]:
+        if field == "year":
+            _year_default = int(entry[field]) if field in entry else None
+            if _year := st.number_input(
+                field,
+                value=_year_default,
+                format="%4i",
+                placeholder="YYYY, Required",
+                step=1,
+                min_value=1000,
+                max_value=date.today().year + 1,
+                # key=field,
+            ):
+                entry[field] = str(_year)
+
+        elif field == "author":
+            if _text_input_temp := st.text_input(
+                field,
+                value=entry.get(field, None),
+                placeholder="e.g., 'Taro Yamada and Jiro Yamada', Required",
+                # key=field,
+            ):
+                entry[field] = _text_input_temp
+
+        else:
+            if _text_input_temp := st.text_input(
+                field,
+                value=entry.get(field, None),
+                placeholder="Required"
+                if field in MAP_REQUIRED_FIELDS[entry_type]
+                else "",
+                # key=field,
+            ):
+                entry[field] = _text_input_temp
+    return entry
 
 
 @config_page
@@ -71,12 +137,14 @@ def main():
                     st.error(
                         f"Must be only one entry. (contains {len(entries)} entries)"
                     )
-                    st.stop()
+                    submitted_bib = False
                 elif len(entries) == 0:
                     st.error("No entry")
-                    st.stop()
+                    submitted_bib = False
                 entry = dict(entries[tuple(entries.keys())[0]])
-                print(entry)
+            elif submitted_bib:
+                st.error("FAIL: Empty BIB")
+                submitted_bib = False
 
     # DOI登録
     with tab_from_doi:
@@ -103,7 +171,7 @@ def main():
 
                 if metadata:
                     entry = {
-                        "ENTRYTYPE": metadata["type"].split("-article")[0],
+                        "ENTRYTYPE": entrytype4doi(metadata["type"]),
                         "title": metadata["title"][0],
                         "author": " and ".join(
                             [
@@ -120,6 +188,10 @@ def main():
                     }
                 else:
                     st.error("FAIL: Invalid DOI")
+                    submitted_doi = False
+            elif submitted_doi:
+                st.error("FAIL: Empty DOI")
+                submitted_doi = False
 
     # カスタム登録
     with tab_custom_form:
@@ -127,162 +199,11 @@ def main():
 
         entry_type = st.selectbox(
             "Select entry type",
-            options=(
-                "article",
-                "proceedings",
-                "thesis",
-                "patent",
-                "report",
-            ),
+            options=tuple(MAP_FIELDS.keys()),
         )
-        st.write(entry_type)
 
         with st.form("custom_form", clear_on_submit=True):
-            if entry_type == "article":
-                _entry_custom = dict(
-                    ENTRYTYPE="article",
-                    title=st.text_input("Title", placeholder="Required"),
-                    author=st.text_input(
-                        "Author",
-                        placeholder="e.g., 'Taro Yamada and Jiro Yamada', Required",
-                    ),
-                    journal=st.text_input("Journal"),
-                    year=str(
-                        st.number_input(
-                            "Year",
-                            format="%4i",
-                            placeholder="YYYY, Required",
-                            step=1,
-                            value=None,
-                            min_value=1000,
-                            max_value=date.today().year + 1,
-                        )
-                    ),
-                    volume=st.text_input("Volume"),
-                    number=st.text_input("Number"),
-                    pages=st.text_input("Pages"),
-                    url=st.text_input("URL"),
-                    DOI=st.text_input("DOI"),
-                )
-
-            elif entry_type == "proceedings":
-                _entry_custom = dict(
-                    ENTRYTYPE="proceedings",
-                    title=st.text_input("Title", placeholder="Required"),
-                    editor=st.text_input("Editor"),
-                    booktitle=st.text_input("Book title"),
-                    year=str(
-                        st.number_input(
-                            "Year",
-                            format="%4i",
-                            placeholder="YYYY, Required",
-                            step=1,
-                            value=None,
-                            min_value=1000,
-                            max_value=date.today().year + 1,
-                        )
-                    ),
-                    organization=st.text_input("Organization"),
-                    publisher=st.text_input("Publisher"),
-                    address=st.text_input("Address"),
-                    pages=st.text_input("Pages"),
-                    url=st.text_input("URL"),
-                    DOI=st.text_input("DOI"),
-                )
-
-            elif entry_type == "thesis":
-                _entry_custom = dict(
-                    ENTRYTYPE="thesis",
-                    title=st.text_input("Title", placeholder="Required"),
-                    author=st.text_input("Author", placeholder="Required"),
-                    school=st.text_input("School"),
-                    year=str(
-                        st.number_input(
-                            "Year",
-                            format="%4i",
-                            placeholder="YYYY, Required",
-                            step=1,
-                            value=None,
-                            min_value=1000,
-                            max_value=date.today().year + 1,
-                        )
-                    ),
-                    type=st.selectbox(
-                        "Type", options=["PhD Thesis", "Master's Thesis"]
-                    ),
-                    url=st.text_input("URL"),
-                )
-
-            elif entry_type == "patent":
-                _entry_custom = dict(
-                    ENTRYTYPE="patent",
-                    title=st.text_input("Title", placeholder="Required"),
-                    inventor=st.text_input("Inventor", placeholder="Required"),
-                    holder=st.text_input("Patent Holder"),
-                    number=st.text_input("Patent Number"),
-                    year=str(
-                        st.number_input(
-                            "Year",
-                            format="%4i",
-                            placeholder="YYYY, Required",
-                            step=1,
-                            value=None,
-                            min_value=1000,
-                            max_value=date.today().year + 1,
-                        )
-                    ),
-                    country=st.text_input("Country"),
-                    url=st.text_input("URL"),
-                )
-
-            elif entry_type == "report":
-                _entry_custom = dict(
-                    ENTRYTYPE="report",
-                    title=st.text_input("Title", placeholder="Required"),
-                    author=st.text_input("Author"),
-                    institution=st.text_input("Institution"),
-                    year=str(
-                        st.number_input(
-                            "Year",
-                            format="%4i",
-                            placeholder="YYYY, Required",
-                            step=1,
-                            value=None,
-                            min_value=1000,
-                            max_value=date.today().year + 1,
-                        )
-                    ),
-                    number=st.text_input("Report Number"),
-                    url=st.text_input("URL"),
-                )
-            elif entry_type == "book":
-                _entry_custom = dict(
-                    ENTRYTYPE="book",
-                    title=st.text_input("Title", placeholder="Required"),
-                    author=st.text_input(
-                        "Author", placeholder="e.g., 'Taro Yamada', Required"
-                    ),
-                    publisher=st.text_input(
-                        "Publisher", placeholder="Required"
-                    ),
-                    year=str(
-                        st.number_input(
-                            "Year",
-                            format="%4i",
-                            placeholder="YYYY, Required",
-                            step=1,
-                            value=None,
-                            min_value=1000,
-                            max_value=date.today().year + 1,
-                        )
-                    ),
-                    edition=st.text_input("Edition"),
-                    volume=st.text_input("Volume"),
-                    series=st.text_input("Series"),
-                    address=st.text_input("Publisher Address"),
-                    url=st.text_input("URL"),
-                    ISBN=st.text_input("ISBN"),
-                )
+            entry = custom_entry(dict(ENTRYTYPE=entry_type))
 
             # 共通
             uploaded_file_pdf = (
@@ -293,17 +214,23 @@ def main():
 
             submitted_custom = st.form_submit_button()
             if submitted_custom:
-                if (
-                    _entry_custom["author"]
-                    and _entry_custom["year"]
-                    and _entry_custom["title"]
-                ) and not entry:
-                    entry = _entry_custom
+                if MAP_REQUIRED_FIELDS[entry_type] <= set(entry.keys()):
+                    for _key in MAP_FIELDS[entry_type]:
+                        _ = st.session_state.pop(_key, None)
                 else:
-                    st.error("('author', 'year' and 'title') is necessary.")
-                    st.stop()
+                    st.error(
+                        "('{}') is/are necessary.".format(
+                            "', '".join(
+                                MAP_REQUIRED_FIELDS[entry_type]
+                                - set(entry.keys())
+                            )
+                        )
+                    )
+                    submitted_custom = False
 
     if submitted_bib or submitted_doi or submitted_custom:
+        _logger.debug(f"submitted_entry={entry}")
+
         ## ここから共通
         entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
 
@@ -312,10 +239,10 @@ def main():
 
         filename_pdf = get_filename_pdf(entry)
         # pdfのファイル名で重複を確認する (DOIがないものも対応するため)
-        st_doi = {
+        st_pdf = {
             get_filename_pdf(_entry) for _entry in dict_paper_list.values()
         }
-        if filename_pdf in st_doi:
+        if filename_pdf in st_pdf:
             st.error("FAIL: Duplicated")
         else:
             # ラインナップとして追加して
