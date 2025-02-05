@@ -57,37 +57,36 @@ def custom_entry(entry: ENTRY) -> dict[str, str]:
 
     for field in MAP_FIELDS[entry_type]:
         if field == "year":
+            _year_default = int(entry[field]) if field in entry else None
             if _year := st.number_input(
                 field,
-                value=st.session_state.get(field, None),
+                value=_year_default,
                 format="%4i",
                 placeholder="YYYY, Required",
                 step=1,
                 min_value=1000,
                 max_value=date.today().year + 1,
-                key=field,
+                # key=field,
             ):
                 entry[field] = str(_year)
 
         elif field == "author":
-            _input_default = st.session_state.get(field, None)
             if _text_input_temp := st.text_input(
                 field,
-                value=_input_default,
+                value=entry.get(field, None),
                 placeholder="e.g., 'Taro Yamada and Jiro Yamada', Required",
-                key=field,
+                # key=field,
             ):
                 entry[field] = _text_input_temp
 
         else:
-            _input_default = st.session_state.get(field, None)
             if _text_input_temp := st.text_input(
                 field,
-                value=_input_default,
+                value=entry.get(field, None),
                 placeholder="Required"
                 if field in MAP_REQUIRED_FIELDS[entry_type]
                 else "",
-                key=field,
+                # key=field,
             ):
                 entry[field] = _text_input_temp
     return entry
@@ -240,10 +239,10 @@ def main():
 
         filename_pdf = get_filename_pdf(entry)
         # pdfのファイル名で重複を確認する (DOIがないものも対応するため)
-        st_doi = {
+        st_pdf = {
             get_filename_pdf(_entry) for _entry in dict_paper_list.values()
         }
-        if filename_pdf in st_doi:
+        if filename_pdf in st_pdf:
             st.error("FAIL: Duplicated")
         else:
             # ラインナップとして追加して
