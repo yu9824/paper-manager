@@ -6,8 +6,8 @@ from types import MappingProxyType
 from typing import Union
 
 # https://github.com/chbrown/pybtex
-import pybtex.database
-from pybtex.database.input import bibtex
+import pybtex.database  # type: ignore[import-untyped]
+from pybtex.database.input import bibtex  # type: ignore[import-untyped]
 
 from paper_manager.logging import get_child_logger
 
