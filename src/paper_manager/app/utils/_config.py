@@ -1,9 +1,8 @@
 import json
 from collections.abc import Callable
-from typing import Literal, Union
+from typing import Literal
 
 import streamlit as st
-from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from paper_manager._constants import DIRPATH_APP, FILEPATH_FIELDS
 from paper_manager.entry import PaperList
@@ -51,12 +50,3 @@ def load_fields() -> dict[str, dict[str, dict[Literal["required"], bool]]]:
     with open(FILEPATH_FIELDS, mode="r", encoding="utf-8") as f:
         dict_fields = json.load(f)
     return dict_fields
-
-
-def pdf_upload_form() -> Union[UploadedFile, None]:
-    return st.file_uploader(
-        "PDF file (.pdf)",
-        type="pdf",
-        accept_multiple_files=False,
-        help="PDF file (.pdf), optional",
-    )
