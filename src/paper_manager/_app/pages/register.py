@@ -1,7 +1,6 @@
 import io
 from datetime import date
 from logging import DEBUG
-from pathlib import Path
 from types import MappingProxyType
 from typing import Optional, Union
 
@@ -10,19 +9,13 @@ from crossref.restful import Works  # type: ignore[import-untyped]
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from paper_manager._app._utils import config_page, load_fields, pdf_upload_form
+from paper_manager._constants import DIRPATH_PDF
 from paper_manager.bib import load_bib
 from paper_manager.entry import Entry, PaperList
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
 
-DIRPATH_ROOT = Path(__file__).parent.parent
-DIRPATH_DATA = DIRPATH_ROOT / "data"
-DIRPATH_PDF = DIRPATH_DATA / "pdf"
-
-FILEPATH_LIST = DIRPATH_DATA / "list.json"
-
-ENCODING = "utf-8"
 MAP_ENTRYTYPE4DOI = MappingProxyType(
     {
         "journal-article": "article",
