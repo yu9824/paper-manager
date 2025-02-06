@@ -1,6 +1,7 @@
 import os
 import re
 import xml.dom.minidom
+from copy import deepcopy
 from logging import DEBUG
 
 import pandas as pd
@@ -14,6 +15,7 @@ from pybtex.database.input import bibtex  # type: ignore[import-untyped]
 from streamlit_pdf_viewer import pdf_viewer  # type: ignore[import-untyped]
 
 from paper_manager._app._utils import config_page
+from paper_manager._app.pages.register import custom_entry, pdf_upload_form
 from paper_manager._constants import COLS_TABLE, DIRPATH_PDF, ENCODING
 from paper_manager.entry import PaperList
 from paper_manager.logging import get_child_logger
@@ -87,7 +89,12 @@ def main():
                 options_file_ext = ("pdf",) + options_file_ext
 
                 flag_delete_pdf = st.checkbox("Delete the pdf file")
-            if st.button("Delete"):
+
+            _col_edit, _col_delete, *_ = st.columns(8)
+            if _col_edit.button("Edit", type="primary"):
+                edit_entry(key_selected)
+
+            elif _col_delete.button("Delete"):
                 _logger.debug("push delete button")
 
                 if filepath_pdf_selected.is_file() and flag_delete_pdf:
@@ -96,10 +103,12 @@ def main():
                 del paper_list[key_selected]
                 paper_list.to_session_state()
 
-                # st.rerun()
+                st.rerun()
 
             # if not deleted
-            if key_selected in set(paper_list.keys()):
+            elif key_selected in set(paper_list.keys()):
+                st.subheader("Information")
+
                 ext = st.radio(
                     "ext",
                     options=options_file_ext,
@@ -132,8 +141,6 @@ def main():
                         ).name,
                     )
 
-                    _logger.debug("push download bib button")
-
                     st.code(bib_text, language="bibtex")
                 elif ext == "xml":
                     bib_database = BibDatabase()
@@ -156,8 +163,6 @@ def main():
                         ).name,
                     )
 
-                    _logger.debug("push download xml button")
-
                     st.code(
                         xml.dom.minidom.parseString(xml_str).toprettyxml(
                             indent="  "
@@ -166,6 +171,48 @@ def main():
                     )
 
     _logger.debug("List page End")
+
+
+@st.fragment
+def edit_entry(key_selected):
+    paper_list = PaperList.from_session_state()
+    with st.form("Edit", clear_on_submit=False):
+        _entry_editted = custom_entry(deepcopy(paper_list[key_selected]))
+        if not (DIRPATH_PDF / paper_list[key_selected].pdf_filename).is_file():
+            uploaded_file_pdf = pdf_upload_form()
+            # pdfをdataディレクトリ内に保存する
+            if uploaded_file_pdf:
+                with open(
+                    DIRPATH_PDF / paper_list[key_selected].pdf_filename,
+                    mode="wb",
+                ) as f:
+                    f.write(uploaded_file_pdf.getvalue())
+
+        _col_done_edit, _col_cancel_edit, *_ = st.columns(6)
+        _flag_done_edit = _col_done_edit.form_submit_button(
+            "Done", type="primary"
+        )
+        _flag_cancel_edit = _col_cancel_edit.form_submit_button("Cancel")
+
+    if _flag_done_edit:
+        if (
+            paper_list[key_selected].pdf_filename
+            == _entry_editted.pdf_filename
+        ):
+            paper_list[key_selected] = _entry_editted
+        else:
+            new_id = _entry_editted.get_key(paper_list.keys())
+            del paper_list[key_selected]
+            _entry_editted["ID"] = new_id
+            paper_list[new_id] = _entry_editted
+
+        _logger.debug(f"{paper_list=}")
+
+        paper_list.to_session_state()
+
+        st.rerun()
+    elif _flag_cancel_edit:
+        st.rerun()
 
 
 if __name__ == "__main__":

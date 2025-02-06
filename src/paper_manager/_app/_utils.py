@@ -28,7 +28,7 @@ class config_page:
         _return = self._callable(*args, **kwargs)
 
         PaperList.from_session_state().to_file()
-        st.button("Sync")
+        # st.button("Sync")
         _logger.debug("config_page End")
         return _return
 

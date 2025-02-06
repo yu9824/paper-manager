@@ -208,7 +208,7 @@ def main():
         )
 
         if not (submitted_bib or submitted_doi):
-            with st.form("custom_form", clear_on_submit=True):
+            with st.form("custom_form", clear_on_submit=False):
                 entry = custom_entry(Entry(dict(ENTRYTYPE=entry_type)))
 
                 # 共通
