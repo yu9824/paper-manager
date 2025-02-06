@@ -27,7 +27,7 @@ class config_page:
                 icon=":material/menu:",
             )
             st.page_link(
-                DIRPATH_APP / "pages/register.py",
+                DIRPATH_APP / "pages/_register.py",
                 label="登録",
                 icon=":material/add:",
             )
