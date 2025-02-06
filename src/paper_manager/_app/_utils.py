@@ -5,7 +5,7 @@ from typing import Literal, Union
 import streamlit as st
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
-from paper_manager._constants import FILEPATH_FIELDS
+from paper_manager._constants import DIRPATH_APP, FILEPATH_FIELDS
 from paper_manager.entry import PaperList
 from paper_manager.logging import get_child_logger
 
@@ -19,6 +19,18 @@ class config_page:
     def __call__(self, *args, **kwargs):
         _logger.debug("config_page Start")
         st.set_page_config(page_title="PAPER MANAGER")
+
+        with st.sidebar:
+            st.page_link(
+                DIRPATH_APP / "_list.py",
+                label="リスト・編集",
+                icon=":material/menu:",
+            )
+            st.page_link(
+                DIRPATH_APP / "pages/register.py",
+                label="登録",
+                icon=":material/add:",
+            )
 
         st.title("PAPER MANAGER")
 
