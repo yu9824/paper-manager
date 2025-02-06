@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Union
 
 # https://github.com/chbrown/pybtex
-from pybtex.database import Entry, Person
+import pybtex.database
 from pybtex.database.input import bibtex
 
 from paper_manager.logging import get_child_logger
@@ -44,6 +44,8 @@ def load_bib(
     else:
         raise TypeError(f"{type(bib_parser)}")
 
+    assert isinstance(bibdata, pybtex.database.BibliographyData)
+
     # _logger.debug(f"{bibdata=}")
     # return MappingProxyType(
     #     {
@@ -53,13 +55,12 @@ def load_bib(
     # )
 
     dict_entries: "dict[str, MappingProxyType]" = dict()
-    key: str
-    entry: Entry
-    for key, entry in bibdata.entries.items():
+    for key, entry in bibdata.entries.items_lower():
+        assert isinstance(entry, pybtex.database.Entry)
         dict_entry: dict[str, str] = dict(entry.fields)
 
-        list_authors = list()
-        author: Person
+        list_authors: list[str] = list()
+        author: pybtex.database.Person
         for author in entry.persons["author"]:
             first_name = author.first_names[0] if author.first_names else ""
             last_name = author.last_names[0]

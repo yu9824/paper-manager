@@ -135,7 +135,7 @@ def main():
                 elif len(entries) == 0:
                     st.error("No entry")
                     submitted_bib = False
-                entry = Entry(dict(entries[tuple(entries.keys())[0]]))
+                entry = Entry(entries[tuple(entries.keys())[0]])
             elif submitted_bib:
                 st.error("FAIL: Empty BIB")
                 submitted_bib = False

@@ -130,11 +130,11 @@ class Entry(MutableMapping):
 
     def __str__(self) -> str:
         """Return a string representation of the mapping."""
-        return str(self.__mapping)
+        return "{}({})".format(self.__class__.__name__, self.__mapping)
 
     def __repr__(self) -> str:
         """Return a string representation suitable for debugging."""
-        return "{}({})".format(self.__class__.__name__, self.__mapping)
+        return str(self)
 
     def __iter__(self):
         """Return an iterator over the keys of the mapping."""

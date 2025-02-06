@@ -101,13 +101,6 @@ def get_handler(
     This function simplifies the configuration of logging handlers by allowing easy
     specification of formatter and level parameters.
 
-    Example
-    -------
-    >>> import logging
-    >>> handler = logging.StreamHandler()
-    >>> configured_handler = get_handler(handler, formatter=logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'), level=logging.DEBUG)
-    >>> logging.getLogger().addHandler(configured_handler)
-
     """
 
     handler.setLevel(level)
