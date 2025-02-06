@@ -1,5 +1,4 @@
 import io
-import json
 from datetime import date
 from logging import DEBUG
 from pathlib import Path
@@ -12,8 +11,7 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from paper_manager._app._utils import config_page, load_fields, pdf_upload_form
 from paper_manager.bib import load_bib
-from paper_manager.entry import get_filename_pdf, get_key
-from paper_manager.entry._typing import EntryType
+from paper_manager.entry import Entry, PaperList
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
@@ -27,7 +25,7 @@ FILEPATH_LIST = DIRPATH_DATA / "list.json"
 ENCODING = "utf-8"
 MAP_ENTRYTYPE4DOI = MappingProxyType(
     {
-        "jornal-article": "article",
+        "journal-article": "article",
         "proceedings-article": "inproceedings",
         "book": "book",
     }
@@ -52,7 +50,7 @@ def entrytype4doi(entrytype: str) -> str:
         return "misc"
 
 
-def custom_entry(entry: EntryType) -> EntryType:
+def custom_entry(entry: Entry) -> Entry:
     entry_type = entry["ENTRYTYPE"]
 
     for field in MAP_FIELDS[entry_type]:
@@ -95,7 +93,10 @@ def custom_entry(entry: EntryType) -> EntryType:
 @config_page
 def main():
     st.header("Register")
-    dict_paper_list: dict[str, EntryType] = st.session_state["paper_list"]  # type: ignore[annotation-unchecked]
+
+    _logger.debug("Register page Start")
+
+    paper_list = PaperList.from_session_state()
 
     uploaded_file_pdf: Optional[UploadedFile] = None  # type: ignore[annotation-unchecked]
 
@@ -125,7 +126,7 @@ def main():
                 else uploaded_file_pdf
             )
 
-            submitted_bib = st.form_submit_button()
+            submitted_bib = st.form_submit_button(type="primary")
             if submitted_bib and (uploaded_file_bib or bib_text_input):
                 bibtexfile_or_buffer = (
                     uploaded_file_bib
@@ -141,7 +142,7 @@ def main():
                 elif len(entries) == 0:
                     st.error("No entry")
                     submitted_bib = False
-                entry = dict(entries[tuple(entries.keys())[0]])
+                entry = Entry(dict(entries[tuple(entries.keys())[0]]))
             elif submitted_bib:
                 st.error("FAIL: Empty BIB")
                 submitted_bib = False
@@ -162,7 +163,7 @@ def main():
                 else uploaded_file_pdf
             )
 
-            submitted_doi = st.form_submit_button()
+            submitted_doi = st.form_submit_button(type="primary")
             if submitted_doi and doi:
                 works = Works()
                 metadata: Optional[dict[str, Union[str, dict]]] = (  # type: ignore[annotation-unchecked]
@@ -170,22 +171,26 @@ def main():
                 )
 
                 if metadata:
-                    entry = {
-                        "ENTRYTYPE": entrytype4doi(metadata["type"]),
-                        "title": metadata["title"][0],
-                        "author": " and ".join(
-                            [
-                                author["given"] + " " + author["family"]
-                                for author in metadata["author"]
-                            ]
-                        ),
-                        "journal": metadata["container-title"][0],
-                        "year": str(metadata["published"]["date-parts"][0][0]),
-                        "volume": metadata.get("volume", ""),
-                        "number": metadata.get("issue", ""),
-                        "pages": metadata.get("page", ""),
-                        "DOI": metadata["DOI"],
-                    }
+                    entry = Entry(
+                        {
+                            "ENTRYTYPE": entrytype4doi(metadata["type"]),
+                            "title": metadata["title"][0],
+                            "author": " and ".join(
+                                [
+                                    author["given"] + " " + author["family"]
+                                    for author in metadata["author"]
+                                ]
+                            ),
+                            "journal": metadata["container-title"][0],
+                            "year": str(
+                                metadata["published"]["date-parts"][0][0]
+                            ),
+                            "volume": metadata.get("volume", ""),
+                            "number": metadata.get("issue", ""),
+                            "pages": metadata.get("page", ""),
+                            "DOI": metadata["DOI"],
+                        }
+                    )
                 else:
                     st.error("FAIL: Invalid DOI")
                     submitted_doi = False
@@ -202,53 +207,51 @@ def main():
             options=tuple(MAP_FIELDS.keys()),
         )
 
-        with st.form("custom_form", clear_on_submit=True):
-            entry = custom_entry(dict(ENTRYTYPE=entry_type))
+        if not (submitted_bib or submitted_doi):
+            with st.form("custom_form", clear_on_submit=True):
+                entry = custom_entry(Entry(dict(ENTRYTYPE=entry_type)))
 
-            # 共通
-            uploaded_file_pdf = (
-                pdf_upload_form()
-                if uploaded_file_pdf is None
-                else uploaded_file_pdf
-            )
+                # 共通
+                uploaded_file_pdf = (
+                    pdf_upload_form()
+                    if uploaded_file_pdf is None
+                    else uploaded_file_pdf
+                )
 
-            submitted_custom = st.form_submit_button()
-            if submitted_custom:
-                if MAP_REQUIRED_FIELDS[entry_type] <= set(entry.keys()):
-                    for _key in MAP_FIELDS[entry_type]:
-                        _ = st.session_state.pop(_key, None)
-                else:
-                    st.error(
-                        "('{}') is/are necessary.".format(
-                            "', '".join(
-                                MAP_REQUIRED_FIELDS[entry_type]
-                                - set(entry.keys())
+                submitted_custom = st.form_submit_button(type="primary")
+                if submitted_custom:
+                    if MAP_REQUIRED_FIELDS[entry_type] <= set(entry.keys()):
+                        for _key in MAP_FIELDS[entry_type]:
+                            _ = st.session_state.pop(_key, None)
+                    else:
+                        st.error(
+                            "('{}') is/are necessary.".format(
+                                "', '".join(
+                                    MAP_REQUIRED_FIELDS[entry_type]
+                                    - set(entry.keys())
+                                )
                             )
                         )
-                    )
-                    submitted_custom = False
+                        submitted_custom = False
 
     if submitted_bib or submitted_doi or submitted_custom:
         _logger.debug(f"submitted_entry={entry}")
 
         ## ここから共通
-        entry["ID"] = get_key(entry, keys=dict_paper_list.keys())
+        entry["ID"] = entry.get_key(paper_list.keys())
 
         # 前後の空白削除
-        entry = {_key: _value.strip() for _key, _value in entry.items()}
+        entry = Entry({_key: _value.strip() for _key, _value in entry.items()})
 
-        filename_pdf = get_filename_pdf(entry)
+        filename_pdf = entry.pdf_filename
         # pdfのファイル名で重複を確認する (DOIがないものも対応するため)
-        st_pdf = {
-            get_filename_pdf(_entry) for _entry in dict_paper_list.values()
-        }
+        st_pdf = {_entry.pdf_filename for _entry in paper_list.values()}
         if filename_pdf in st_pdf:
             st.error("FAIL: Duplicated")
         else:
             # ラインナップとして追加して
-            dict_paper_list[get_key(entry, dict_paper_list.keys())] = entry
-            with open(FILEPATH_LIST, mode="w", encoding=ENCODING) as f:
-                json.dump(dict_paper_list, f, indent=4, ensure_ascii=False)
+            paper_list[entry.get_key(paper_list.keys())] = entry
+            paper_list.to_session_state()
 
             # pdfをdataディレクトリ内に保存する
             if uploaded_file_pdf:
@@ -256,6 +259,8 @@ def main():
                     f.write(uploaded_file_pdf.getvalue())
 
             st.success("SUCCESS: Registered")
+
+    _logger.debug("Register page End")
 
 
 if __name__ == "__main__":
