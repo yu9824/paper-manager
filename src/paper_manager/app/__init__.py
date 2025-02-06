@@ -2,7 +2,8 @@
 
 You can run this app with,
 
-.. code:: bash
+.. code-block:: bash
+
     paper-manager run   # wrapper of 'streamlit run'
 
 
