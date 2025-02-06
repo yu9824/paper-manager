@@ -24,6 +24,38 @@ KEY_PAPER_LIST = "paper_list"
 
 
 def sanitize_filename(filename: str) -> str:
+    """Sanitize a filename by replacing invalid characters with underscores.
+
+    This function ensures that filenames do not contain characters that are
+    invalid or problematic for different operating systems. On Windows, it
+    removes characters such as `\ / : * ? " < > |`, while on Linux and macOS,
+    it only removes `/`.
+
+    Parameters
+    ----------
+    filename : str
+        The original filename that may contain invalid characters.
+
+    Returns
+    -------
+    str
+        A sanitized filename with invalid characters replaced by underscores.
+
+    Example
+    -------
+    >>> sanitize_filename("invalid:file/name.txt")
+    'invalid_file_name.txt'
+
+    >>> sanitize_filename("C:\\Windows\\System32")
+    'C__Windows_System32'
+
+    Notes
+    -----
+    - This function does not guarantee that the resulting filename is unique
+      or valid in all scenarios.
+    - It does not check for reserved filenames (e.g., `CON`, `PRN` on Windows).
+
+    """
     # OSごとに不適切な文字を定義
     if platform.system() == "Windows":
         # Windowsでは \ / : + > " < > | が不適切
@@ -37,56 +69,105 @@ def sanitize_filename(filename: str) -> str:
 
 
 class Entry(MutableMapping):
+    """A dictionary-like class for handling bibliographic entries.
+
+    This class stores and manages bibliographic entry data, ensuring that values
+    are stripped of leading and trailing whitespace. It also provides methods
+    for generating unique keys and sanitized filenames.
+    """
+
     def __init__(
-        self, __mapping: Mapping[Union[str, Literal["ENTRYTYPE"]], str]
+        self, __mapping: Mapping[Union[str, Literal["ENTRYTYPE", "ID"]], str]
     ):
+        """Initialize an Entry object with a given mapping.
+
+        Parameters
+        ----------
+        __mapping : Mapping[Union[str, Literal["ENTRYTYPE"]], str]
+            A mapping containing entry data where keys are strings and values are stripped strings.
+        """
         super().__init__()
         self.__mapping = {
             _key: _value.strip() for _key, _value in __mapping.items()
         }
 
     def __getitem__(self, key: str) -> str:
-        return self.__mapping[key]
-
-    def __setitem__(self, key: str, value: str) -> None:
-        self.__mapping[key] = value
-
-    def __delitem__(self, key: str) -> None:
-        del self.__mapping[key]
-
-    def __str__(self) -> str:
-        return str(self.__mapping)
-
-    def __repr__(self) -> str:
-        return "{}({})".format(self.__class__.__name__, self.__mapping)
-
-    def __iter__(self):
-        return iter(self.__mapping)
-
-    def __len__(self):
-        return len(self.__mapping)
-
-    def items(self) -> ItemsView[str, str]:
-        return super().items()
-
-    def values(self) -> ValuesView[str]:
-        return super().values()
-
-    def keys(self) -> KeysView[str]:
-        return super().keys()
-
-    def get_key(self, keys: Collection[str]) -> str:
-        """get paper's key by using 'author' and 'year'
+        """Retrieve the value associated with the given key.
 
         Parameters
         ----------
-        keys : Collection[str]
-            keys
+        key : str
+            The key to look up.
 
         Returns
         -------
         str
-            key
+            The value associated with the key.
+        """
+        return self.__mapping[key]
+
+    def __setitem__(self, key: str, value: str) -> None:
+        """Set the value for a given key.
+
+        Parameters
+        ----------
+        key : str
+            The key to update.
+        value : str
+            The value to assign to the key.
+        """
+        self.__mapping[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        """Delete a key-value pair from the mapping.
+
+        Parameters
+        ----------
+        key : str
+            The key to remove.
+        """
+        del self.__mapping[key]
+
+    def __str__(self) -> str:
+        """Return a string representation of the mapping."""
+        return str(self.__mapping)
+
+    def __repr__(self) -> str:
+        """Return a string representation suitable for debugging."""
+        return "{}({})".format(self.__class__.__name__, self.__mapping)
+
+    def __iter__(self):
+        """Return an iterator over the keys of the mapping."""
+        return iter(self.__mapping)
+
+    def __len__(self):
+        """Return the number of key-value pairs in the mapping."""
+        return len(self.__mapping)
+
+    def items(self) -> ItemsView[str, str]:
+        """Return a view of the mapping's items."""
+        return super().items()
+
+    def values(self) -> ValuesView[str]:
+        """Return a view of the mapping's values."""
+        return super().values()
+
+    def keys(self) -> KeysView[str]:
+        """Return a view of the mapping's keys."""
+        return super().keys()
+
+    def get_key(self, keys: Collection[str]) -> str:
+        """Generate a unique key using the 'author' and 'year' fields.
+
+        Parameters
+        ----------
+        keys : Collection[str]
+            A collection of existing keys to avoid duplicates.
+
+        Returns
+        -------
+        str
+            A unique key based on the first author's name and the year.
         """
         i = 0
         st_keys = set(keys)
@@ -100,11 +181,19 @@ class Entry(MutableMapping):
             )
         ) in st_keys:
             i += 1
-        else:
-            return key
+        return key
 
     @property
     def pdf_filename(self) -> str:
+        """Generate a sanitized filename for the entry's PDF file.
+
+        The filename format is '<year> - <first_author> - <title>.pdf'.
+
+        Returns
+        -------
+        str
+            A sanitized filename for the entry.
+        """
         year = self.get("year", "YYYY")
         first_author = (
             self["author"].split(" and ")[0] if "author" in self else "Unknown"
@@ -116,7 +205,21 @@ class Entry(MutableMapping):
 
 
 class PaperList(MutableMapping):
+    """
+    A mutable mapping that manages a collection of `Entry` objects representing academic papers.
+
+    This class provides methods for loading and saving the paper list from a file or session state.
+    """
+
     def __init__(self, __mapping: Mapping[str, Entry]) -> None:
+        """
+        Initializes the PaperList with a given mapping of paper entries.
+
+        Parameters
+        ----------
+        __mapping : Mapping[str, Entry]
+            A dictionary where keys are paper identifiers and values are `Entry` objects.
+        """
         super().__init__()
 
         os.makedirs(DIRPATH_PDF, exist_ok=True)
@@ -128,6 +231,19 @@ class PaperList(MutableMapping):
         cls,
         _filepath_paper_list_json: Union[os.PathLike, str, None] = None,
     ) -> "PaperList":
+        """
+        Loads a paper list from a JSON file.
+
+        Parameters
+        ----------
+        _filepath_paper_list_json : Union[os.PathLike, str, None], optional
+            The file path to load the paper list from. If None, a default path is used.
+
+        Returns
+        -------
+        PaperList
+            An instance of `PaperList` initialized with the loaded data.
+        """
         _filepath_paper_list_json = cls._get_filepath_paper_list(
             _filepath_paper_list_json
         )
@@ -158,11 +274,27 @@ class PaperList(MutableMapping):
 
     @classmethod
     def from_session_state(cls) -> "PaperList":
+        """
+        Loads the paper list from Streamlit's session state.
+
+        Returns
+        -------
+        PaperList
+            An instance of `PaperList` initialized with the session state data.
+        """
         return cls(st.session_state.get(KEY_PAPER_LIST, dict()))
 
     def to_file(
         self, _filepath_paper_list_json: Union[os.PathLike, str, None] = None
     ) -> None:
+        """
+        Saves the current paper list to a JSON file.
+
+        Parameters
+        ----------
+        _filepath_paper_list_json : Union[os.PathLike, str, None], optional
+            The file path to save the paper list. If None, a default path is used.
+        """
         with open(
             self._get_filepath_paper_list(_filepath_paper_list_json),
             mode="w",
@@ -179,12 +311,28 @@ class PaperList(MutableMapping):
             )
 
     def to_session_state(self) -> None:
+        """
+        Saves the current paper list to Streamlit's session state.
+        """
         st.session_state[KEY_PAPER_LIST] = self.__mapping
 
     @staticmethod
     def _get_filepath_paper_list(
         _filepath_paper_list_json: Union[os.PathLike, str, None] = None,
     ) -> Path:
+        """
+        Determines the file path for the paper list JSON file.
+
+        Parameters
+        ----------
+        _filepath_paper_list_json : Union[os.PathLike, str, None], optional
+            A custom file path. If None, the default path is used.
+
+        Returns
+        -------
+        Path
+            The resolved file path.
+        """
         if _filepath_paper_list_json is None:
             _filepath_paper_list_json = FILEPATH_LIST
         else:
@@ -192,33 +340,120 @@ class PaperList(MutableMapping):
         return _filepath_paper_list_json
 
     def __getitem__(self, key: str) -> Entry:
+        """
+        Retrieves an `Entry` from the paper list.
+
+        Parameters
+        ----------
+        key : str
+            The key of the paper to retrieve.
+
+        Returns
+        -------
+        Entry
+            The corresponding `Entry` object.
+        """
         return self.__mapping[key]
 
     def __setitem__(self, key: str, value: Entry) -> None:
+        """
+        Adds or updates an `Entry` in the paper list.
+
+        Parameters
+        ----------
+        key : str
+            The key for the paper.
+        value : Entry
+            The `Entry` object to be stored.
+        """
         self.__mapping[key] = value
 
     def __delitem__(self, key: str) -> None:
+        """
+        Deletes an `Entry` from the paper list.
+
+        Parameters
+        ----------
+        key : str
+            The key of the paper to remove.
+        """
         del self.__mapping[key]
 
     def __str__(self) -> str:
+        """
+        Returns a string representation of the paper list.
+
+        Returns
+        -------
+        str
+            A string representation of the internal dictionary.
+        """
         return str(self.__mapping)
 
     def __repr__(self) -> str:
+        """
+        Returns a detailed string representation of the object.
+
+        Returns
+        -------
+        str
+            A formatted string showing the class name and its content.
+        """
         return "{}({})".format(self.__class__.__name__, self.__mapping)
 
     def __iter__(self):
+        """
+        Returns an iterator over the paper list keys.
+
+        Returns
+        -------
+        Iterator[str]
+            An iterator over the dictionary keys.
+        """
         return iter(self.__mapping)
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """
+        Returns the number of papers in the list.
+
+        Returns
+        -------
+        int
+            The number of stored entries.
+        """
         return len(self.__mapping)
 
     def items(self) -> ItemsView[str, Entry]:
+        """
+        Returns a view of the paper list's items.
+
+        Returns
+        -------
+        ItemsView[str, Entry]
+            A view of key-value pairs.
+        """
         return super().items()
 
     def values(self) -> ValuesView[Entry]:
+        """
+        Returns a view of the paper list's values.
+
+        Returns
+        -------
+        ValuesView[Entry]
+            A view of `Entry` values.
+        """
         return super().values()
 
     def keys(self) -> KeysView[str]:
+        """
+        Returns a view of the paper list's keys.
+
+        Returns
+        -------
+        KeysView[str]
+            A view of the keys in the dictionary.
+        """
         return super().keys()
 
 
