@@ -1,3 +1,3 @@
-from ._entry import get_filename_pdf, get_key
+from ._entry import Entry, PaperList
 
-__all__ = ("get_filename_pdf", "get_key")
+__all__ = ("Entry", "PaperList")
