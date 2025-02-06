@@ -128,16 +128,22 @@ class PaperList(MutableMapping):
         cls,
         _filepath_paper_list_json: Union[os.PathLike, str, None] = None,
     ) -> "PaperList":
-        with open(
-            cls._get_filepath_paper_list(_filepath_paper_list_json),
-            mode="r",
-            encoding=ENCODING,
-        ) as f:
-            try:
-                _paper_list_raw: Union[dict, None] = json.load(f)
-            except json.JSONDecodeError:
-                st.warning("Broken paper list (json)")
-                _paper_list_raw = None
+        _filepath_paper_list_json = cls._get_filepath_paper_list(
+            _filepath_paper_list_json
+        )
+        if _filepath_paper_list_json.is_file():
+            with open(
+                _filepath_paper_list_json,
+                mode="r",
+                encoding=ENCODING,
+            ) as f:
+                try:
+                    _paper_list_raw: Union[dict, None] = json.load(f)
+                except json.JSONDecodeError:
+                    st.warning("Broken paper list (json)")
+                    _paper_list_raw = None
+        else:
+            _paper_list_raw = None
 
         return (
             cls(dict())
