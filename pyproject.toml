@@ -64,7 +64,7 @@ version = { attr = "paper_manager.__version__" }
 where = ["src/"]
 
 [tool.setuptools.package-data]
-"paper_manager" = ["*"]
+"paper_manager.app" = ["fields.json"]
 
 [tool.ruff]
 line-length = 79
