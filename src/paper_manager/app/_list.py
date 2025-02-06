@@ -14,9 +14,9 @@ from bibtexparser.bwriter import BibTexWriter  # type: ignore[import-untyped]
 from pybtex.database.input import bibtex  # type: ignore[import-untyped]
 from streamlit_pdf_viewer import pdf_viewer  # type: ignore[import-untyped]
 
-from paper_manager._app._utils import config_page
-from paper_manager._app.pages.register import custom_entry, pdf_upload_form
 from paper_manager._constants import COLS_TABLE, DIRPATH_PDF, ENCODING
+from paper_manager.app._utils import config_page
+from paper_manager.app.pages.register import custom_entry, pdf_upload_form
 from paper_manager.entry import PaperList
 from paper_manager.logging import get_child_logger
 

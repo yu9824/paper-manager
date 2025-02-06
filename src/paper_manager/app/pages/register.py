@@ -8,8 +8,8 @@ import streamlit as st
 from crossref.restful import Works  # type: ignore[import-untyped]
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
-from paper_manager._app._utils import config_page, load_fields, pdf_upload_form
 from paper_manager._constants import DIRPATH_PDF
+from paper_manager.app._utils import config_page, load_fields, pdf_upload_form
 from paper_manager.bib import load_bib
 from paper_manager.entry import Entry, PaperList
 from paper_manager.logging import get_child_logger

@@ -15,7 +15,7 @@ __all__ = (
 
 DIRPATH_ROOT = Path(__file__).parent
 
-DIRPATH_APP = DIRPATH_ROOT / "_app"
+DIRPATH_APP = DIRPATH_ROOT / "app"
 
 root_logger = get_root_logger()
 if root_logger.level == DEBUG:
