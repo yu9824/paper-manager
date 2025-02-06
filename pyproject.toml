@@ -38,7 +38,13 @@ classifiers = [
 test = ["pytest"]
 dev = ["build"]
 optional = ["colorlog"]
-docs = ["sphinx", "sphinx_rtd_theme", "sphinx-markdown-tables", "recommonmark"]
+docs = [
+    "setuptools",
+    "sphinx",
+    "sphinx_rtd_theme",
+    "sphinx-markdown-tables",
+    "recommonmark",
+]
 
 [project.urls]
 Homepage = "https://github.com/yu9824/paper-manager"
