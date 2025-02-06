@@ -1,17 +1,15 @@
 import json
 from collections.abc import Callable
-from pathlib import Path
 from typing import Literal, Union
 
 import streamlit as st
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
-from paper_manager.entry.typing import ENTRY
+from paper_manager._constants import DIRPATH_APP, FILEPATH_FIELDS
+from paper_manager.entry import PaperList
+from paper_manager.logging import get_child_logger
 
-DIRPATH_ROOT = Path(__file__).parent
-DIRPATH_DATA = DIRPATH_ROOT / "data"
-FILEPATH_LIST = DIRPATH_DATA / "list.json"
-FILEPATH_FIELDS = DIRPATH_ROOT / "fields.json"
+_logger = get_child_logger(__name__)
 
 
 class config_page:
@@ -19,25 +17,32 @@ class config_page:
         self._callable = _callable
 
     def __call__(self, *args, **kwargs):
+        _logger.debug("config_page Start")
         st.set_page_config(page_title="PAPER MANAGER")
+
+        with st.sidebar:
+            st.page_link(
+                DIRPATH_APP / "_list.py",
+                label="リスト・編集",
+                icon=":material/menu:",
+            )
+            st.page_link(
+                DIRPATH_APP / "pages/register.py",
+                label="登録",
+                icon=":material/add:",
+            )
 
         st.title("PAPER MANAGER")
 
-        st.session_state["paper_list"] = load_paper_list()
+        if not PaperList.from_session_state():
+            PaperList.from_file().to_session_state()
 
-        return self._callable(*args, **kwargs)
+        _return = self._callable(*args, **kwargs)
 
-
-def load_paper_list() -> dict[str, ENTRY]:
-    if FILEPATH_LIST.is_file():
-        try:
-            with open(FILEPATH_LIST, mode="r", encoding="utf-8") as f:
-                dict_paper_list: dict[str, ENTRY] = json.load(f)  # type: ignore[annotation-unchecked]
-        except json.JSONDecodeError:
-            dict_paper_list = dict()
-    else:
-        dict_paper_list = dict()
-    return dict_paper_list
+        PaperList.from_session_state().to_file()
+        # st.button("Sync")
+        _logger.debug("config_page End")
+        return _return
 
 
 def load_fields() -> dict[str, dict[str, dict[Literal["required"], bool]]]:

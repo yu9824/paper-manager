@@ -53,6 +53,9 @@ def main(cli_args: Sequence[str], prog: Optional[str] = None) -> None:
     if getattr(args, "debug", False):
         root_logger.setLevel(DEBUG)
 
+    if "--client.showSidebarNavigation" not in set(unknown):
+        unknown.extend(["--client.showSidebarNavigation", "false"])
+
     args.func(unknown)
 
 

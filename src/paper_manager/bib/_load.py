@@ -44,7 +44,7 @@ def load_bib(
     else:
         raise TypeError(f"{type(bib_parser)}")
 
-    _logger.debug(bibdata)
+    # _logger.debug(f"{bibdata=}")
     # return MappingProxyType(
     #     {
     #         key: MappingProxyType(dict(entry.fields))
