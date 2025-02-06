@@ -102,6 +102,7 @@ def main():
 
                 del paper_list[key_selected]
                 paper_list.to_session_state()
+                paper_list.to_file()
 
                 st.rerun()
 
@@ -141,7 +142,8 @@ def main():
                         ).name,
                     )
 
-                    st.code(bib_text, language="bibtex")
+                    st.code(bib_text, language="latex")
+
                 elif ext == "xml":
                     bib_database = BibDatabase()
                     bib_database.entries = [paper_list[key_selected]]
@@ -209,6 +211,7 @@ def edit_entry(key_selected):
         _logger.debug(f"{paper_list=}")
 
         paper_list.to_session_state()
+        paper_list.to_file()
 
         st.rerun()
     elif _flag_cancel_edit:

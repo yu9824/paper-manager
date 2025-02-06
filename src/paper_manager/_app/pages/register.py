@@ -217,6 +217,7 @@ def main():
                     if uploaded_file_pdf is None
                     else uploaded_file_pdf
                 )
+                print(uploaded_file_pdf)
 
                 submitted_custom = st.form_submit_button(type="primary")
                 if submitted_custom:
@@ -243,10 +244,9 @@ def main():
         # 前後の空白削除
         entry = Entry({_key: _value.strip() for _key, _value in entry.items()})
 
-        filename_pdf = entry.pdf_filename
         # pdfのファイル名で重複を確認する (DOIがないものも対応するため)
         st_pdf = {_entry.pdf_filename for _entry in paper_list.values()}
-        if filename_pdf in st_pdf:
+        if entry.pdf_filename in st_pdf:
             st.error("FAIL: Duplicated")
         else:
             # ラインナップとして追加して
@@ -255,7 +255,7 @@ def main():
 
             # pdfをdataディレクトリ内に保存する
             if uploaded_file_pdf:
-                with open(DIRPATH_PDF / filename_pdf, mode="wb") as f:
+                with open(DIRPATH_PDF / entry.pdf_filename, mode="wb") as f:
                     f.write(uploaded_file_pdf.getvalue())
 
             st.success("SUCCESS: Registered")
