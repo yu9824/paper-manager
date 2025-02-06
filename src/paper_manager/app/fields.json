@@ -26,6 +26,12 @@
         },
         "note": {
             "required": false
+        },
+        "url": {
+            "required": false
+        },
+        "DOI": {
+            "required": false
         }
     },
     "book": {
@@ -57,6 +63,12 @@
             "required": false
         },
         "note": {
+            "required": false
+        },
+        "url": {
+            "required": false
+        },
+        "DOI": {
             "required": false
         }
     },
@@ -102,6 +114,12 @@
         },
         "note": {
             "required": false
+        },
+        "url": {
+            "required": false
+        },
+        "DOI": {
+            "required": false
         }
     },
     "inproceedings": {
@@ -146,6 +164,12 @@
         },
         "note": {
             "required": false
+        },
+        "url": {
+            "required": false
+        },
+        "DOI": {
+            "required": false
         }
     },
     "masterthesis": {
@@ -172,6 +196,12 @@
         },
         "note": {
             "required": false
+        },
+        "url": {
+            "required": false
+        },
+        "DOI": {
+            "required": false
         }
     },
     "phdthesis": {
@@ -197,6 +227,12 @@
             "required": false
         },
         "note": {
+            "required": false
+        },
+        "url": {
+            "required": false
+        },
+        "DOI": {
             "required": false
         }
     },
@@ -227,6 +263,12 @@
         },
         "note": {
             "required": false
+        },
+        "url": {
+            "required": false
+        },
+        "DOI": {
+            "required": false
         }
     },
     "misc": {
@@ -246,6 +288,12 @@
             "required": false
         },
         "note": {
+            "required": false
+        },
+        "url": {
+            "required": false
+        },
+        "DOI": {
             "required": false
         }
     }
