@@ -17,7 +17,7 @@ from streamlit_pdf_viewer import pdf_viewer  # type: ignore[import-untyped]
 
 from paper_manager._app._utils import config_page
 from paper_manager.entry import get_filename_pdf
-from paper_manager.entry.typing import ENTRY
+from paper_manager.entry._typing import EntryType
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
@@ -45,7 +45,7 @@ ENCODING = "utf-8"
 @config_page
 def main():
     st.header("List")
-    dict_paper_list: dict[str, ENTRY] = st.session_state["paper_list"]  # type: ignore[annotation-unchecked]
+    dict_paper_list: dict[str, EntryType] = st.session_state["paper_list"]  # type: ignore[annotation-unchecked]
 
     os.makedirs(DIRPATH_PDF, exist_ok=True)
 

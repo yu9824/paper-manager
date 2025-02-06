@@ -13,7 +13,7 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 from paper_manager._app._utils import config_page, load_fields, pdf_upload_form
 from paper_manager.bib import load_bib
 from paper_manager.entry import get_filename_pdf, get_key
-from paper_manager.entry.typing import ENTRY
+from paper_manager.entry._typing import EntryType
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
@@ -52,7 +52,7 @@ def entrytype4doi(entrytype: str) -> str:
         return "misc"
 
 
-def custom_entry(entry: ENTRY) -> dict[str, str]:
+def custom_entry(entry: EntryType) -> EntryType:
     entry_type = entry["ENTRYTYPE"]
 
     for field in MAP_FIELDS[entry_type]:
@@ -95,7 +95,7 @@ def custom_entry(entry: ENTRY) -> dict[str, str]:
 @config_page
 def main():
     st.header("Register")
-    dict_paper_list: dict[str, ENTRY] = st.session_state["paper_list"]  # type: ignore[annotation-unchecked]
+    dict_paper_list: dict[str, EntryType] = st.session_state["paper_list"]  # type: ignore[annotation-unchecked]
 
     uploaded_file_pdf: Optional[UploadedFile] = None  # type: ignore[annotation-unchecked]
 

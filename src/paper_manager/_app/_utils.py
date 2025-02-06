@@ -6,7 +6,7 @@ from typing import Literal, Union
 import streamlit as st
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
-from paper_manager.entry.typing import ENTRY
+from paper_manager.entry._typing import EntryType
 
 DIRPATH_ROOT = Path(__file__).parent
 DIRPATH_DATA = DIRPATH_ROOT / "data"
@@ -28,11 +28,11 @@ class config_page:
         return self._callable(*args, **kwargs)
 
 
-def load_paper_list() -> dict[str, ENTRY]:
+def load_paper_list() -> dict[str, EntryType]:
     if FILEPATH_LIST.is_file():
         try:
             with open(FILEPATH_LIST, mode="r", encoding="utf-8") as f:
-                dict_paper_list: dict[str, ENTRY] = json.load(f)  # type: ignore[annotation-unchecked]
+                dict_paper_list: dict[str, EntryType] = json.load(f)  # type: ignore[annotation-unchecked]
         except json.JSONDecodeError:
             dict_paper_list = dict()
     else:
