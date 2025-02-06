@@ -25,7 +25,8 @@ _logger = get_child_logger(__name__)
 
 
 @config_page
-def main():
+def main() -> None:
+    """main script"""
     st.header("List")
 
     _logger.debug("List page Start")
@@ -84,7 +85,7 @@ def main():
                 DIRPATH_PDF / paper_list[key_selected].pdf_filename
             )
 
-            options_file_ext = ("bib", "xml")
+            options_file_ext: tuple[str, ...] = ("bib", "xml")
 
             if filepath_pdf_selected.is_file():
                 options_file_ext = ("pdf",) + options_file_ext

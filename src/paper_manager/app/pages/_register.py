@@ -1,90 +1,29 @@
 import io
-from datetime import date
 from logging import DEBUG
-from types import MappingProxyType
-from typing import Optional, Union
+from typing import Optional
 
 import streamlit as st
 from crossref.restful import Works  # type: ignore[import-untyped]
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from paper_manager._constants import DIRPATH_PDF
-from paper_manager.app._utils import config_page, load_fields, pdf_upload_form
+from paper_manager.app.components import custom_entry, pdf_upload_form
+from paper_manager.app.utils import (
+    MAP_FIELDS,
+    MAP_REQUIRED_FIELDS,
+    config_page,
+    entrytype4doi,
+)
 from paper_manager.bib import load_bib
 from paper_manager.entry import Entry, PaperList
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
 
-MAP_ENTRYTYPE4DOI = MappingProxyType(
-    {
-        "journal-article": "article",
-        "proceedings-article": "inproceedings",
-        "book": "book",
-    }
-)
-MAP_FIELDS = MappingProxyType(load_fields())
-
-MAP_REQUIRED_FIELDS = {
-    entry_type: set(
-        field
-        for field in MAP_FIELDS[entry_type]
-        if MAP_FIELDS[entry_type][field]["required"]
-    )
-    for entry_type in MAP_FIELDS
-}
-
-
-def entrytype4doi(entrytype: str) -> str:
-    if entrytype in MAP_ENTRYTYPE4DOI:
-        return MAP_ENTRYTYPE4DOI[entrytype]
-    else:
-        _logger.warning(f"Unknown entrytype: {entrytype}. Use 'misc' instead.")
-        return "misc"
-
-
-def custom_entry(entry: Entry) -> Entry:
-    entry_type = entry["ENTRYTYPE"]
-
-    for field in MAP_FIELDS[entry_type]:
-        if field == "year":
-            _year_default = int(entry[field]) if field in entry else None
-            if _year := st.number_input(
-                field,
-                value=_year_default,
-                format="%4i",
-                placeholder="YYYY, Required",
-                step=1,
-                min_value=1000,
-                max_value=date.today().year + 1,
-                # key=field,
-            ):
-                entry[field] = str(_year)
-
-        elif field == "author":
-            if _text_input_temp := st.text_input(
-                field,
-                value=entry.get(field, None),
-                placeholder="e.g., 'Taro Yamada and Jiro Yamada', Required",
-                # key=field,
-            ):
-                entry[field] = _text_input_temp
-
-        else:
-            if _text_input_temp := st.text_input(
-                field,
-                value=entry.get(field, None),
-                placeholder="Required"
-                if field in MAP_REQUIRED_FIELDS[entry_type]
-                else "",
-                # key=field,
-            ):
-                entry[field] = _text_input_temp
-    return entry
-
 
 @config_page
-def main():
+def main() -> None:
+    """main script"""
     st.header("Register")
 
     _logger.debug("Register page Start")
@@ -126,6 +65,9 @@ def main():
                     if uploaded_file_bib
                     else io.StringIO(bib_text_input)
                 )
+                assert isinstance(
+                    bibtexfile_or_buffer, (io.StringIO, io.BytesIO)
+                )
                 entries = load_bib(bibtexfile_or_buffer)
                 if len(entries) > 2:
                     st.error(
@@ -159,9 +101,7 @@ def main():
             submitted_doi = st.form_submit_button(type="primary")
             if submitted_doi and doi:
                 works = Works()
-                metadata: Optional[dict[str, Union[str, dict]]] = (  # type: ignore[annotation-unchecked]
-                    works.doi(doi)
-                )
+                metadata: Optional[dict] = works.doi(doi)
 
                 if metadata:
                     entry = Entry(
@@ -201,6 +141,7 @@ def main():
         )
 
         if not (submitted_bib or submitted_doi):
+            assert entry_type is not None
             with st.form("custom_form", clear_on_submit=False):
                 entry = custom_entry(Entry(dict(ENTRYTYPE=entry_type)))
 

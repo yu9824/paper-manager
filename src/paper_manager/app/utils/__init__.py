@@ -1,3 +1,8 @@
-from ._config import config_page
+from ._config import (
+    MAP_FIELDS,
+    MAP_REQUIRED_FIELDS,
+    config_page,
+    entrytype4doi,
+)
 
-__all__ = ("config_page",)
+__all__ = ("MAP_FIELDS", "MAP_REQUIRED_FIELDS", "config_page", "entrytype4doi")
