@@ -1,6 +1,6 @@
 """My own paper manager"""
 
-__version__ = "1.0.1"
+__version__ = "1.0.2-rc.0"
 __license__ = "MIT"
 __author__ = "yu9824"
 __copyright__ = "Copyright © 2024 yu9824"
