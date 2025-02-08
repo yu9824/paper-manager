@@ -88,7 +88,10 @@ class Entry(MutableMapping):
         """
         super().__init__()
         self.__mapping = {
-            _key: _value.strip() for _key, _value in __mapping.items()
+            _key.upper()
+            if _key.upper() in {"ID", "ENTRYTYPE"}
+            else _key.lower(): _value.strip()
+            for _key, _value in __mapping.items()
         }
 
     def __getitem__(self, key: str) -> str:

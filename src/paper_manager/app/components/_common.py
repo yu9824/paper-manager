@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Union
+from typing import Optional, Union
 
 import streamlit as st
 from streamlit.runtime.uploaded_file_manager import UploadedFile
@@ -8,20 +8,33 @@ from paper_manager.app.utils import MAP_FIELDS, MAP_REQUIRED_FIELDS
 from paper_manager.entry import Entry
 
 
-def pdf_upload_form() -> Union[UploadedFile, None]:
+def pdf_upload_form(
+    uploaded_file_pdf: Optional[UploadedFile] = None,
+) -> Union[UploadedFile, None]:
     """
     Displays a file uploader widget for uploading a single PDF file.
+
+    Parameters
+    ----------
+    uploaded_file_pdf : UploadedFile or None
+        An optional parameter representing the uploaded PDF file.
 
     Returns
     -------
     Union[UploadedFile, None]
-        The uploaded file object if a file is uploaded, otherwise None.
+        Returns the uploaded file object if a PDF file is uploaded,
+        otherwise returns None if no file is uploaded.
     """
-    return st.file_uploader(
+    _uploaded_file_pdf_temp = st.file_uploader(
         "PDF file (.pdf)",
         type="pdf",
         accept_multiple_files=False,
         help="PDF file (.pdf), optional",
+    )
+    return (
+        _uploaded_file_pdf_temp
+        if _uploaded_file_pdf_temp
+        else uploaded_file_pdf
     )
 
 
@@ -46,7 +59,11 @@ def custom_entry(entry: Entry) -> Entry:
 
     for field in MAP_FIELDS[entry_type]:
         if field == "year":
-            _year_default = int(entry[field]) if field in entry else None
+            _year_default = (
+                int(entry[field])
+                if field in entry
+                else st.session_state.get(field)
+            )
             if _year := st.number_input(
                 field,
                 value=_year_default,
@@ -55,27 +72,27 @@ def custom_entry(entry: Entry) -> Entry:
                 step=1,
                 min_value=1000,
                 max_value=date.today().year + 1,
-                # key=field,
+                key=field,
             ):
                 entry[field] = str(_year)
 
         elif field == "author":
             if _text_input_temp := st.text_input(
                 field,
-                value=entry.get(field, None),
+                value=entry.get(field, st.session_state.get(field)),
                 placeholder="e.g., 'Taro Yamada and Jiro Yamada', Required",
-                # key=field,
+                key=field,
             ):
                 entry[field] = _text_input_temp
 
         else:
             if _text_input_temp := st.text_input(
                 field,
-                value=entry.get(field, None),
+                value=entry.get(field, st.session_state.get(field)),
                 placeholder="Required"
                 if field in MAP_REQUIRED_FIELDS[entry_type]
                 else "",
-                # key=field,
+                key=field,
             ):
                 entry[field] = _text_input_temp
 

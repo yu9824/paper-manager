@@ -52,11 +52,7 @@ def main() -> None:
                     help="bibtex file (.bib), optional",
                 )
 
-            uploaded_file_pdf = (
-                pdf_upload_form()
-                if uploaded_file_pdf is None
-                else uploaded_file_pdf
-            )
+            uploaded_file_pdf = pdf_upload_form(uploaded_file_pdf)
 
             submitted_bib = st.form_submit_button(type="primary")
             if submitted_bib and (uploaded_file_bib or bib_text_input):
@@ -88,15 +84,10 @@ def main() -> None:
         with st.form("doi_form", clear_on_submit=True):
             doi = st.text_input(
                 "DOI",
-                key="DOI_DOI",
                 help="like 'doi.org/10.1107/S0567739476001551'",
             )
 
-            uploaded_file_pdf = (
-                pdf_upload_form()
-                if uploaded_file_pdf is None
-                else uploaded_file_pdf
-            )
+            uploaded_file_pdf = pdf_upload_form(uploaded_file_pdf)
 
             submitted_doi = st.form_submit_button(type="primary")
             if submitted_doi and doi:
@@ -142,22 +133,17 @@ def main() -> None:
 
         if not (submitted_bib or submitted_doi):
             assert entry_type is not None
-            with st.form("custom_form", clear_on_submit=False):
+            with st.form("custom_form", clear_on_submit=True):
                 entry = custom_entry(Entry(dict(ENTRYTYPE=entry_type)))
 
                 # 共通
-                uploaded_file_pdf = (
-                    pdf_upload_form()
-                    if uploaded_file_pdf is None
-                    else uploaded_file_pdf
-                )
-                print(uploaded_file_pdf)
+                uploaded_file_pdf = pdf_upload_form(uploaded_file_pdf)
 
                 submitted_custom = st.form_submit_button(type="primary")
                 if submitted_custom:
                     if MAP_REQUIRED_FIELDS[entry_type] <= set(entry.keys()):
-                        for _key in MAP_FIELDS[entry_type]:
-                            _ = st.session_state.pop(_key, None)
+                        for field in MAP_FIELDS[entry_type]:
+                            _ = st.session_state.pop(field, None)
                     else:
                         st.error(
                             "('{}') is/are necessary.".format(
@@ -175,9 +161,6 @@ def main() -> None:
         ## ここから共通
         entry["ID"] = entry.get_key(paper_list.keys())
 
-        # 前後の空白削除
-        entry = Entry({_key: _value.strip() for _key, _value in entry.items()})
-
         # pdfのファイル名で重複を確認する (DOIがないものも対応するため)
         st_pdf = {_entry.pdf_filename for _entry in paper_list.values()}
         if entry.pdf_filename in st_pdf:
@@ -193,6 +176,9 @@ def main() -> None:
                     f.write(uploaded_file_pdf.getvalue())
 
             st.success("SUCCESS: Registered")
+
+            # to reload
+            st.button("Clear")
 
     _logger.debug("Register page End")
 
