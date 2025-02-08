@@ -162,9 +162,6 @@ def main() -> None:
         ## ここから共通
         entry["ID"] = entry.get_key(paper_list.keys())
 
-        # 前後の空白削除
-        entry = Entry({_key: _value.strip() for _key, _value in entry.items()})
-
         # pdfのファイル名で重複を確認する (DOIがないものも対応するため)
         st_pdf = {_entry.pdf_filename for _entry in paper_list.values()}
         if entry.pdf_filename in st_pdf:
