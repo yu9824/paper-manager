@@ -15,6 +15,7 @@ dependencies = [
     "streamlit-pdf-viewer",
     "pybtex",
     "bib2xml @ git+https://github.com/yu9824/bib2xml.git@v0.1.4",
+    "setuptools; python_version >=3.12",
 ]
 requires-python = ">= 3.9"
 authors = [{ name = "yu9824" }]
@@ -38,13 +39,7 @@ classifiers = [
 test = ["pytest"]
 dev = ["build"]
 optional = ["colorlog"]
-docs = [
-    "setuptools",
-    "sphinx",
-    "sphinx_rtd_theme",
-    "sphinx-markdown-tables",
-    "recommonmark",
-]
+docs = ["sphinx", "sphinx_rtd_theme", "sphinx-markdown-tables", "recommonmark"]
 
 [project.urls]
 Homepage = "https://github.com/yu9824/paper-manager"
