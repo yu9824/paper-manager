@@ -52,11 +52,7 @@ def main() -> None:
                     help="bibtex file (.bib), optional",
                 )
 
-            uploaded_file_pdf = (
-                pdf_upload_form()
-                if uploaded_file_pdf is None
-                else uploaded_file_pdf
-            )
+            uploaded_file_pdf = pdf_upload_form(uploaded_file_pdf)
 
             submitted_bib = st.form_submit_button(type="primary")
             if submitted_bib and (uploaded_file_bib or bib_text_input):
@@ -92,11 +88,7 @@ def main() -> None:
                 help="like 'doi.org/10.1107/S0567739476001551'",
             )
 
-            uploaded_file_pdf = (
-                pdf_upload_form()
-                if uploaded_file_pdf is None
-                else uploaded_file_pdf
-            )
+            uploaded_file_pdf = pdf_upload_form(uploaded_file_pdf)
 
             submitted_doi = st.form_submit_button(type="primary")
             if submitted_doi and doi:
@@ -146,12 +138,7 @@ def main() -> None:
                 entry = custom_entry(Entry(dict(ENTRYTYPE=entry_type)))
 
                 # 共通
-                uploaded_file_pdf = (
-                    pdf_upload_form()
-                    if uploaded_file_pdf is None
-                    else uploaded_file_pdf
-                )
-                print(uploaded_file_pdf)
+                uploaded_file_pdf = pdf_upload_form(uploaded_file_pdf)
 
                 submitted_custom = st.form_submit_button(type="primary")
                 if submitted_custom:
