@@ -12,6 +12,7 @@ from bibtexparser.bibdatabase import (  # type: ignore[import-untyped]
 )
 from bibtexparser.bwriter import BibTexWriter  # type: ignore[import-untyped]
 from pybtex.database.input import bibtex  # type: ignore[import-untyped]
+from pybtex.style.formatting.plain import Style  # type: ignore[import-untyped]
 from streamlit_pdf_viewer import pdf_viewer  # type: ignore[import-untyped]
 
 from paper_manager._constants import COLS_TABLE, DIRPATH_PDF, ENCODING
@@ -110,7 +111,37 @@ def main() -> None:
 
             # if not deleted
             elif key_selected in set(paper_list.keys()):
-                st.subheader("Information")
+                st.subheader("Citation")
+
+                # bibtex
+                bib_database = BibDatabase()
+                bib_database.entries = [paper_list[key_selected]]
+
+                bib_writer = BibTexWriter()
+                bib_text = bib_writer.write(bib_database)
+
+                bib_parser = bibtex.Parser()
+                bibdata = bib_parser.parse_string(bib_text)
+
+                _citation_key = tuple(bibdata.entries.keys())[0]
+                formatted_entry = Style().format_entry(
+                    _citation_key, bibdata.entries[_citation_key]
+                )
+
+                st.text("HTML")
+                with st.container(border=True):
+                    st.html(formatted_entry.text.render_as("html"))
+
+                st.text("Plain text")
+                st.code(
+                    formatted_entry.text.render_as("text"),
+                    language="plaintext",
+                    wrap_lines=True,
+                )
+
+                st.divider()
+
+                st.subheader("Export")
 
                 ext = st.radio(
                     "ext",
@@ -129,13 +160,8 @@ def main() -> None:
                         file_name=filepath_pdf_selected.name,
                     )
                     pdf_viewer(pdf_contents, width=700, height=1000)
+
                 elif ext == "bib":
-                    bib_database = BibDatabase()
-                    bib_database.entries = [paper_list[key_selected]]
-
-                    bib_writer = BibTexWriter()
-                    bib_text = bib_writer.write(bib_database)
-
                     st.download_button(
                         "Download",
                         bib_text,
@@ -147,16 +173,6 @@ def main() -> None:
                     st.code(bib_text, language="latex")
 
                 elif ext == "xml":
-                    bib_database = BibDatabase()
-                    bib_database.entries = [paper_list[key_selected]]
-
-                    bib_writer = BibTexWriter()
-
-                    bib_parser = bibtex.Parser()
-                    bibdata = bib_parser.parse_string(
-                        bib_writer.write(bib_database)
-                    )
-
                     xml_str = bib2xml(bibdata)
                     st.download_button(
                         "Download",
