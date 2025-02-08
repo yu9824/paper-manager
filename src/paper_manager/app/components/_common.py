@@ -59,7 +59,11 @@ def custom_entry(entry: Entry) -> Entry:
 
     for field in MAP_FIELDS[entry_type]:
         if field == "year":
-            _year_default = int(entry[field]) if field in entry else None
+            _year_default = (
+                int(entry[field])
+                if field in entry
+                else st.session_state.get(field)
+            )
             if _year := st.number_input(
                 field,
                 value=_year_default,
@@ -68,27 +72,27 @@ def custom_entry(entry: Entry) -> Entry:
                 step=1,
                 min_value=1000,
                 max_value=date.today().year + 1,
-                # key=field,
+                key=field,
             ):
                 entry[field] = str(_year)
 
         elif field == "author":
             if _text_input_temp := st.text_input(
                 field,
-                value=entry.get(field, None),
+                value=entry.get(field, st.session_state.get(field)),
                 placeholder="e.g., 'Taro Yamada and Jiro Yamada', Required",
-                # key=field,
+                key=field,
             ):
                 entry[field] = _text_input_temp
 
         else:
             if _text_input_temp := st.text_input(
                 field,
-                value=entry.get(field, None),
+                value=entry.get(field, st.session_state.get(field)),
                 placeholder="Required"
                 if field in MAP_REQUIRED_FIELDS[entry_type]
                 else "",
-                # key=field,
+                key=field,
             ):
                 entry[field] = _text_input_temp
 

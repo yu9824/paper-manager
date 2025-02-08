@@ -84,7 +84,6 @@ def main() -> None:
         with st.form("doi_form", clear_on_submit=True):
             doi = st.text_input(
                 "DOI",
-                key="DOI_DOI",
                 help="like 'doi.org/10.1107/S0567739476001551'",
             )
 
@@ -134,7 +133,7 @@ def main() -> None:
 
         if not (submitted_bib or submitted_doi):
             assert entry_type is not None
-            with st.form("custom_form", clear_on_submit=False):
+            with st.form("custom_form", clear_on_submit=True):
                 entry = custom_entry(Entry(dict(ENTRYTYPE=entry_type)))
 
                 # 共通
@@ -143,8 +142,8 @@ def main() -> None:
                 submitted_custom = st.form_submit_button(type="primary")
                 if submitted_custom:
                     if MAP_REQUIRED_FIELDS[entry_type] <= set(entry.keys()):
-                        for _key in MAP_FIELDS[entry_type]:
-                            _ = st.session_state.pop(_key, None)
+                        for field in MAP_FIELDS[entry_type]:
+                            _ = st.session_state.pop(field, None)
                     else:
                         st.error(
                             "('{}') is/are necessary.".format(
@@ -177,6 +176,9 @@ def main() -> None:
                     f.write(uploaded_file_pdf.getvalue())
 
             st.success("SUCCESS: Registered")
+
+            # to reload
+            st.button("Clear")
 
     _logger.debug("Register page End")
 
