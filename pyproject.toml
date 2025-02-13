@@ -14,8 +14,7 @@ dependencies = [
     "bibtexparser",
     "streamlit-pdf-viewer",
     "pybtex",
-    "bib2xml @ git+https://github.com/yu9824/bib2xml.git@v0.1.4",
-    "setuptools; python_version >='3.12'",
+    "bib2xml @ git+https://github.com/yu9824/bib2xml.git@v0.1.5",
 ]
 requires-python = ">= 3.9"
 authors = [{ name = "yu9824" }]
