@@ -1,4 +1,3 @@
-import os
 import re
 import xml.dom.minidom
 from copy import deepcopy
@@ -17,13 +16,12 @@ from pybtex.database.input import bibtex  # type: ignore[import-untyped]
 from pybtex.style.formatting.plain import Style  # type: ignore[import-untyped]
 from streamlit_pdf_viewer import pdf_viewer  # type: ignore[import-untyped]
 
-from paper_manager._constants import COLS_TABLE, DIRPATH_PDF, ENCODING
+from paper_manager._constants import COLS_TABLE, ENCODING
 from paper_manager.app.components import (
     custom_entry,
     delete_pdfs,
     pdf_upload_form,
     save_paper_list,
-    save_pdfs,
     update_entry_in_list,
 )
 from paper_manager.app.utils import config_page
@@ -31,6 +29,8 @@ from paper_manager.entry import Entry, PaperList
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
+
+COLNAME_HAS_PDF = "PDF"
 
 
 def _render_paper_table(paper_list: PaperList) -> Optional[str]:
@@ -60,12 +60,13 @@ def _render_paper_table(paper_list: PaperList) -> Optional[str]:
                         _key: str(_entry.get_pdf_count())
                         for _key, _entry in paper_list.items()
                     },
-                    name="PDF",
+                    name=COLNAME_HAS_PDF,
                 ),
-                _df_paper_list.loc[:, list(COLS_TABLE)].fillna(""),
+                _df_paper_list,
             ),
             axis=1,
         ),
+        column_order=(COLNAME_HAS_PDF,) + COLS_TABLE,
         hide_index=True,
         selection_mode="single-row",
         on_select="rerun",
