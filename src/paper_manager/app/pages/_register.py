@@ -6,8 +6,11 @@ import streamlit as st
 from crossref.restful import Works  # type: ignore[import-untyped]
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
-from paper_manager._constants import DIRPATH_PDF
-from paper_manager.app.components import custom_entry, pdf_upload_form
+from paper_manager.app.components import (
+    custom_entry,
+    pdf_upload_form,
+    register_entry_to_list,
+)
 from paper_manager.app.utils import (
     MAP_FIELDS,
     MAP_REQUIRED_FIELDS,
@@ -221,54 +224,6 @@ def _render_custom_form(
         return True, entry, uploaded_file_pdf
 
 
-def _register_entry(
-    paper_list: PaperList,
-    entry: Entry,
-    uploaded_file_pdf: Optional[UploadedFile],
-) -> bool:
-    """論文エントリを登録する。
-
-    Parameters
-    ----------
-    paper_list : PaperList
-        論文リスト
-    entry : Entry
-        登録する論文エントリ
-    uploaded_file_pdf : Optional[UploadedFile]
-        アップロードされたPDFファイル
-
-    Returns
-    -------
-    bool
-        登録成功した場合True
-    """
-    _logger.debug(f"submitted_entry={entry}")
-
-    entry["ID"] = entry.get_key(paper_list.keys())
-
-    # pdfのファイル名で重複を確認する (DOIがないものも対応するため)
-    st_pdf = {_entry.pdf_filename for _entry in paper_list.values()}
-    if entry.pdf_filename in st_pdf:
-        st.error("FAIL: Duplicated")
-        return False
-
-    # ラインナップとして追加
-    paper_list[entry.get_key(paper_list.keys())] = entry
-    paper_list.to_session_state()
-
-    # pdfをdataディレクトリ内に保存する
-    if uploaded_file_pdf:
-        with open(DIRPATH_PDF / entry.pdf_filename, mode="wb") as f:
-            f.write(uploaded_file_pdf.getvalue())
-
-    st.success("SUCCESS: Registered")
-
-    # to reload
-    st.button("Clear")
-
-    return True
-
-
 @config_page
 def main() -> None:
     """論文登録ページのメインスクリプト。
@@ -307,13 +262,16 @@ def main() -> None:
             )
         )
 
-    # 登録処理
+    # 登録処理（共通関数を使用）
     if submitted_bib and entry_bib is not None:
-        _register_entry(paper_list, entry_bib, uploaded_file_pdf)
+        if register_entry_to_list(paper_list, entry_bib, uploaded_file_pdf):
+            st.button("Clear")
     elif submitted_doi and entry_doi is not None:
-        _register_entry(paper_list, entry_doi, uploaded_file_pdf)
+        if register_entry_to_list(paper_list, entry_doi, uploaded_file_pdf):
+            st.button("Clear")
     elif submitted_custom and entry_custom is not None:
-        _register_entry(paper_list, entry_custom, uploaded_file_pdf)
+        if register_entry_to_list(paper_list, entry_custom, uploaded_file_pdf):
+            st.button("Clear")
 
     _logger.debug("Register page End")
 

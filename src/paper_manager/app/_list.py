@@ -18,8 +18,13 @@ from pybtex.style.formatting.plain import Style  # type: ignore[import-untyped]
 from streamlit_pdf_viewer import pdf_viewer  # type: ignore[import-untyped]
 
 from paper_manager._constants import COLS_TABLE, DIRPATH_PDF, ENCODING
-from paper_manager.app.components import pdf_upload_form
-from paper_manager.app.pages._register import custom_entry
+from paper_manager.app.components import (
+    custom_entry,
+    pdf_upload_form,
+    save_paper_list,
+    save_pdf,
+    update_entry_in_list,
+)
 from paper_manager.app.utils import config_page
 from paper_manager.entry import Entry, PaperList
 from paper_manager.logging import get_child_logger
@@ -228,8 +233,7 @@ def _delete_entry(
         os.remove(filepath_pdf)
 
     del paper_list[key_selected]
-    paper_list.to_session_state()
-    paper_list.to_file()
+    save_paper_list(paper_list)
 
     st.rerun()
 
@@ -301,43 +305,37 @@ def edit_entry(key_selected: str) -> None:
         編集する論文のキー
     """
     paper_list = PaperList.from_session_state()
+    original_entry = paper_list[key_selected]
+
     with st.form("Edit", clear_on_submit=False):
-        _entry_editted = custom_entry(deepcopy(paper_list[key_selected]))
-        if not (DIRPATH_PDF / paper_list[key_selected].pdf_filename).is_file():
+        entry_edited = custom_entry(deepcopy(original_entry))
+
+        # PDFファイルがない場合のみアップロードフォームを表示
+        uploaded_file_pdf = None
+        if not (DIRPATH_PDF / original_entry.pdf_filename).is_file():
             uploaded_file_pdf = pdf_upload_form()
-            # pdfをdataディレクトリ内に保存する
-            if uploaded_file_pdf:
-                with open(
-                    DIRPATH_PDF / paper_list[key_selected].pdf_filename,
-                    mode="wb",
-                ) as f:
-                    f.write(uploaded_file_pdf.getvalue())
 
         _col_done_edit, _col_cancel_edit, *_ = st.columns(6)
-        _flag_done_edit = _col_done_edit.form_submit_button(
+        flag_done_edit = _col_done_edit.form_submit_button(
             "Done", type="primary"
         )
-        _flag_cancel_edit = _col_cancel_edit.form_submit_button("Cancel")
+        flag_cancel_edit = _col_cancel_edit.form_submit_button("Cancel")
 
-    if _flag_done_edit:
-        if (
-            paper_list[key_selected].pdf_filename
-            == _entry_editted.pdf_filename
-        ):
-            paper_list[key_selected] = _entry_editted
-        else:
-            new_id = _entry_editted.get_key(paper_list.keys())
-            del paper_list[key_selected]
-            _entry_editted["ID"] = new_id
-            paper_list[new_id] = _entry_editted
+    if flag_done_edit:
+        # PDFファイルの保存（フォーム内でアップロードされた場合）
+        if uploaded_file_pdf:
+            save_pdf(
+                uploaded_file_pdf,
+                DIRPATH_PDF / original_entry.pdf_filename,
+            )
 
-        _logger.debug(f"{paper_list=}")
-
-        paper_list.to_session_state()
-        paper_list.to_file()
-
+        # 共通関数を使用してエントリを更新
+        update_entry_in_list(
+            paper_list, key_selected, entry_edited, uploaded_file_pdf
+        )
         st.rerun()
-    elif _flag_cancel_edit:
+
+    elif flag_cancel_edit:
         st.rerun()
 
 
