@@ -28,7 +28,7 @@ def sanitize_filename(filename: str) -> str:
 
     This function ensures that filenames do not contain characters that are
     invalid or problematic for different operating systems. On Windows, it
-    removes characters such as `\ / : * ? " < > |`, while on Linux and macOS,
+    removes characters such as `\\ / : * ? " < > |`, while on Linux and macOS,
     it only removes `/`.
 
     Parameters
@@ -46,7 +46,7 @@ def sanitize_filename(filename: str) -> str:
     >>> sanitize_filename("invalid:file/name.txt")
     'invalid_file_name.txt'
 
-    >>> sanitize_filename("C:\\Windows\\System32")
+    >>> sanitize_filename("C:\\\\Windows\\\\System32")
     'C__Windows_System32'
 
     Notes
@@ -58,7 +58,7 @@ def sanitize_filename(filename: str) -> str:
     """
     # OSごとに不適切な文字を定義
     if platform.system() == "Windows":
-        # Windowsでは \ / : + > " < > | が不適切
+        # Windowsでは \\ / : + > " < > | が不適切
         invalid_chars = r"[\\/:*?<>|]"
     else:
         # LinuxとOSXでは / が不適切
@@ -187,8 +187,100 @@ class Entry(MutableMapping):
         return key
 
     @property
+    def pdf_dir_name(self) -> str:
+        """Generate a sanitized directory name for the entry's PDF files.
+
+        The directory name format is '<year> - <first_author> - <title>'.
+
+        Returns
+        -------
+        str
+            A sanitized directory name for the entry.
+        """
+        year = self.get("year", "YYYY")
+        first_author = (
+            self["author"].split(" and ")[0] if "author" in self else "Unknown"
+        )
+        title = self.get("title", "Unknown")
+        return sanitize_filename(
+            "{} - {} - {}".format(year, first_author, title)
+        )
+
+    def get_pdf_dir(self, base_dir: Union[Path, None] = None) -> Path:
+        """Get the directory path for storing PDF files.
+
+        Parameters
+        ----------
+        base_dir : Union[Path, None], optional
+            Base directory for PDF storage. If None, uses DIRPATH_PDF.
+
+        Returns
+        -------
+        Path
+            The directory path for this entry's PDF files.
+        """
+        if base_dir is None:
+            base_dir = DIRPATH_PDF
+        return base_dir / self.pdf_dir_name
+
+    def get_pdf_files(self, base_dir: Union[Path, None] = None) -> list[Path]:
+        """Get a list of PDF files associated with this entry.
+
+        Parameters
+        ----------
+        base_dir : Union[Path, None], optional
+            Base directory for PDF storage. If None, uses DIRPATH_PDF.
+
+        Returns
+        -------
+        list[Path]
+            A list of PDF file paths. Empty list if no PDFs exist.
+        """
+        pdf_dir = self.get_pdf_dir(base_dir)
+        if not pdf_dir.is_dir():
+            # 後方互換性: 旧形式の単一PDFファイルをチェック
+            legacy_pdf = (base_dir or DIRPATH_PDF) / self.pdf_filename
+            if legacy_pdf.is_file():
+                return [legacy_pdf]
+            return []
+        return sorted(pdf_dir.glob("*.pdf"))
+
+    def has_pdf(self, base_dir: Union[Path, None] = None) -> bool:
+        """Check if this entry has any associated PDF files.
+
+        Parameters
+        ----------
+        base_dir : Union[Path, None], optional
+            Base directory for PDF storage. If None, uses DIRPATH_PDF.
+
+        Returns
+        -------
+        bool
+            True if at least one PDF file exists, False otherwise.
+        """
+        return len(self.get_pdf_files(base_dir)) > 0
+
+    def get_pdf_count(self, base_dir: Union[Path, None] = None) -> int:
+        """Get the number of PDF files associated with this entry.
+
+        Parameters
+        ----------
+        base_dir : Union[Path, None], optional
+            Base directory for PDF storage. If None, uses DIRPATH_PDF.
+
+        Returns
+        -------
+        int
+            The number of PDF files.
+        """
+        return len(self.get_pdf_files(base_dir))
+
+    @property
     def pdf_filename(self) -> str:
         """Generate a sanitized filename for the entry's PDF file.
+
+        .. deprecated::
+            Use `pdf_dir_name` and `get_pdf_files()` for multiple PDF support.
 
         The filename format is '<year> - <first_author> - <title>.pdf'.
 

@@ -20,9 +20,10 @@ from streamlit_pdf_viewer import pdf_viewer  # type: ignore[import-untyped]
 from paper_manager._constants import COLS_TABLE, DIRPATH_PDF, ENCODING
 from paper_manager.app.components import (
     custom_entry,
+    delete_pdfs,
     pdf_upload_form,
     save_paper_list,
-    save_pdf,
+    save_pdfs,
     update_entry_in_list,
 )
 from paper_manager.app.utils import config_page
@@ -56,9 +57,7 @@ def _render_paper_table(paper_list: PaperList) -> Optional[str]:
             (
                 pd.Series(
                     {
-                        _key: "o"
-                        if (DIRPATH_PDF / _entry.pdf_filename).is_file()
-                        else "x"
+                        _key: str(_entry.get_pdf_count())
                         for _key, _entry in paper_list.items()
                     },
                     name="PDF",
@@ -145,11 +144,51 @@ def _render_citation(entry: Entry) -> tuple[str, "bibtex.BibliographyData"]:
     return bib_text, bibdata
 
 
+def _render_pdf_viewer(pdf_files: list[Path]) -> None:
+    """複数のPDFファイルを表示する。
+
+    Parameters
+    ----------
+    pdf_files : list[Path]
+        表示するPDFファイルのリスト
+    """
+    if not pdf_files:
+        st.info("No PDF files available.")
+        return
+
+    st.subheader(f"PDF Files ({len(pdf_files)})")
+
+    # PDFファイルの選択
+    pdf_options = {f.name: f for f in pdf_files}
+    selected_pdf_name = st.selectbox(
+        "Select PDF to view",
+        options=list(pdf_options.keys()),
+        key="pdf_selector",
+    )
+
+    if selected_pdf_name:
+        selected_pdf = pdf_options[selected_pdf_name]
+
+        with open(selected_pdf, mode="rb") as f:
+            pdf_contents = f.read()
+
+        # ダウンロードボタン
+        st.download_button(
+            "Download",
+            data=pdf_contents,
+            file_name=selected_pdf.name,
+            key=f"download_{selected_pdf.name}",
+        )
+
+        # PDFビューア
+        pdf_viewer(pdf_contents, width=700, height=1000)
+
+
 def _render_export(
     bib_text: str,
     bibdata: "bibtex.BibliographyData",
-    filepath_pdf: Path,
-    options_file_ext: tuple[str, ...],
+    entry: Entry,
+    pdf_files: list[Path],
 ) -> None:
     """エクスポート機能を表示する。
 
@@ -159,12 +198,17 @@ def _render_export(
         BibTeX形式のテキスト
     bibdata : bibtex.BibliographyData
         パースされたBibliographyData
-    filepath_pdf : Path
-        PDFファイルのパス
-    options_file_ext : tuple[str, ...]
-        選択可能なファイル拡張子
+    entry : Entry
+        論文エントリ
+    pdf_files : list[Path]
+        PDFファイルのリスト
     """
     st.subheader("Export")
+
+    # エクスポートオプション
+    options_file_ext: list[str] = ["bib", "xml"]
+    if pdf_files:
+        options_file_ext.insert(0, "pdf")
 
     ext = st.radio(
         "ext",
@@ -174,23 +218,14 @@ def _render_export(
     )
 
     if ext == "pdf":
-        with open(filepath_pdf, mode="rb") as f:
-            pdf_contents = f.read()
-
-        st.download_button(
-            "Download",
-            data=pdf_contents,
-            file_name=filepath_pdf.name,
-        )
-        pdf_viewer(pdf_contents, width=700, height=1000)
+        _render_pdf_viewer(pdf_files)
 
     elif ext == "bib":
         st.download_button(
             "Download",
             bib_text,
-            file_name=filepath_pdf.with_suffix(".bib").name,
+            file_name=f"{entry.pdf_dir_name}.bib",
         )
-
         st.code(bib_text, language="latex")
 
     elif ext == "xml":
@@ -199,9 +234,8 @@ def _render_export(
             "Download",
             data=xml_str.encode(ENCODING),
             mime="application/xml",
-            file_name=filepath_pdf.with_suffix(".xml").name,
+            file_name=f"{entry.pdf_dir_name}.xml",
         )
-
         st.code(
             xml.dom.minidom.parseString(xml_str).toprettyxml(indent="  "),
             language="xml",
@@ -211,7 +245,7 @@ def _render_export(
 def _delete_entry(
     paper_list: PaperList,
     key_selected: str,
-    filepath_pdf: Path,
+    entry: Entry,
     flag_delete_pdf: bool,
 ) -> None:
     """論文エントリを削除する。
@@ -222,15 +256,15 @@ def _delete_entry(
         論文リスト
     key_selected : str
         削除する論文のキー
-    filepath_pdf : Path
-        PDFファイルのパス
+    entry : Entry
+        削除する論文エントリ
     flag_delete_pdf : bool
         PDFファイルも削除するかどうか
     """
     _logger.debug("push delete button")
 
-    if filepath_pdf.is_file() and flag_delete_pdf:
-        os.remove(filepath_pdf)
+    if flag_delete_pdf:
+        delete_pdfs(entry)
 
     del paper_list[key_selected]
     save_paper_list(paper_list)
@@ -261,18 +295,17 @@ def main() -> None:
         return
 
     entry = paper_list[key_selected]
-    filepath_pdf_selected = DIRPATH_PDF / entry.pdf_filename
+    pdf_files = entry.get_pdf_files()
 
     # リンクの表示
     _render_link(entry)
 
-    # ファイル拡張子オプションの設定
-    options_file_ext: tuple[str, ...] = ("bib", "xml")
+    # PDF削除オプション
     flag_delete_pdf = False
-
-    if filepath_pdf_selected.is_file():
-        options_file_ext = ("pdf",) + options_file_ext
-        flag_delete_pdf = st.checkbox("Delete the pdf file")
+    if pdf_files:
+        flag_delete_pdf = st.checkbox(
+            f"Delete PDF files ({len(pdf_files)} file(s))"
+        )
 
     # 編集・削除ボタン
     _col_edit, _col_delete, *_ = st.columns(8)
@@ -281,16 +314,12 @@ def main() -> None:
         edit_entry(key_selected)
 
     elif _col_delete.button("Delete"):
-        _delete_entry(
-            paper_list, key_selected, filepath_pdf_selected, flag_delete_pdf
-        )
+        _delete_entry(paper_list, key_selected, entry, flag_delete_pdf)
 
     # 削除されていない場合のみ引用・エクスポートを表示
     elif key_selected in set(paper_list.keys()):
         bib_text, bibdata = _render_citation(entry)
-        _render_export(
-            bib_text, bibdata, filepath_pdf_selected, options_file_ext
-        )
+        _render_export(bib_text, bibdata, entry, pdf_files)
 
     _logger.debug("List page End")
 
@@ -306,14 +335,20 @@ def edit_entry(key_selected: str) -> None:
     """
     paper_list = PaperList.from_session_state()
     original_entry = paper_list[key_selected]
+    existing_pdf_files = original_entry.get_pdf_files()
 
     with st.form("Edit", clear_on_submit=False):
         entry_edited = custom_entry(deepcopy(original_entry))
 
-        # PDFファイルがない場合のみアップロードフォームを表示
-        uploaded_file_pdf = None
-        if not (DIRPATH_PDF / original_entry.pdf_filename).is_file():
-            uploaded_file_pdf = pdf_upload_form()
+        # 既存のPDFファイルを表示
+        if existing_pdf_files:
+            st.write(f"Existing PDF files: {len(existing_pdf_files)}")
+            for pdf_file in existing_pdf_files:
+                st.text(f"  - {pdf_file.name}")
+
+        # 追加のPDFファイルアップロード
+        st.write("Add more PDF files:")
+        uploaded_files = pdf_upload_form(accept_multiple=True)
 
         _col_done_edit, _col_cancel_edit, *_ = st.columns(6)
         flag_done_edit = _col_done_edit.form_submit_button(
@@ -322,16 +357,9 @@ def edit_entry(key_selected: str) -> None:
         flag_cancel_edit = _col_cancel_edit.form_submit_button("Cancel")
 
     if flag_done_edit:
-        # PDFファイルの保存（フォーム内でアップロードされた場合）
-        if uploaded_file_pdf:
-            save_pdf(
-                uploaded_file_pdf,
-                DIRPATH_PDF / original_entry.pdf_filename,
-            )
-
         # 共通関数を使用してエントリを更新
         update_entry_in_list(
-            paper_list, key_selected, entry_edited, uploaded_file_pdf
+            paper_list, key_selected, entry_edited, uploaded_files
         )
         st.rerun()
 

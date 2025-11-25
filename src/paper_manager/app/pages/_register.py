@@ -57,20 +57,13 @@ def _create_entry_from_doi_metadata(metadata: dict) -> Entry:
     )
 
 
-def _render_bib_form(
-    uploaded_file_pdf: Optional[UploadedFile],
-) -> tuple[bool, Optional[Entry], Optional[UploadedFile]]:
+def _render_bib_form() -> tuple[bool, Optional[Entry], list[UploadedFile]]:
     """BIB登録フォームを表示する。
-
-    Parameters
-    ----------
-    uploaded_file_pdf : Optional[UploadedFile]
-        アップロードされたPDFファイル
 
     Returns
     -------
-    tuple[bool, Optional[Entry], Optional[UploadedFile]]
-        (送信成功フラグ, 作成されたEntry, PDFファイル)
+    tuple[bool, Optional[Entry], list[UploadedFile]]
+        (送信成功フラグ, 作成されたEntry, PDFファイルリスト)
     """
     st.subheader("BIB")
 
@@ -88,16 +81,16 @@ def _render_bib_form(
                 help="bibtex file (.bib), optional",
             )
 
-        uploaded_file_pdf = pdf_upload_form(uploaded_file_pdf)
+        uploaded_files = pdf_upload_form(accept_multiple=True)
 
         submitted = st.form_submit_button(type="primary")
 
         if not submitted:
-            return False, None, uploaded_file_pdf
+            return False, None, []
 
         if not (uploaded_file_bib or bib_text_input):
             st.error("FAIL: Empty BIB")
-            return False, None, uploaded_file_pdf
+            return False, None, []
 
         bibtexfile_or_buffer: Union[io.StringIO, io.BytesIO] = (
             uploaded_file_bib
@@ -112,30 +105,23 @@ def _render_bib_form(
             st.error(
                 f"Must be only one entry. (contains {len(entries)} entries)"
             )
-            return False, None, uploaded_file_pdf
+            return False, None, []
 
         if len(entries) == 0:
             st.error("No entry")
-            return False, None, uploaded_file_pdf
+            return False, None, []
 
         entry = Entry(entries[tuple(entries.keys())[0]])
-        return True, entry, uploaded_file_pdf
+        return True, entry, uploaded_files
 
 
-def _render_doi_form(
-    uploaded_file_pdf: Optional[UploadedFile],
-) -> tuple[bool, Optional[Entry], Optional[UploadedFile]]:
+def _render_doi_form() -> tuple[bool, Optional[Entry], list[UploadedFile]]:
     """DOI登録フォームを表示する。
-
-    Parameters
-    ----------
-    uploaded_file_pdf : Optional[UploadedFile]
-        アップロードされたPDFファイル
 
     Returns
     -------
-    tuple[bool, Optional[Entry], Optional[UploadedFile]]
-        (送信成功フラグ, 作成されたEntry, PDFファイル)
+    tuple[bool, Optional[Entry], list[UploadedFile]]
+        (送信成功フラグ, 作成されたEntry, PDFファイルリスト)
     """
     st.subheader("DOI")
 
@@ -145,45 +131,42 @@ def _render_doi_form(
             help="like 'doi.org/10.1107/S0567739476001551'",
         )
 
-        uploaded_file_pdf = pdf_upload_form(uploaded_file_pdf)
+        uploaded_files = pdf_upload_form(accept_multiple=True)
 
         submitted = st.form_submit_button(type="primary")
 
         if not submitted:
-            return False, None, uploaded_file_pdf
+            return False, None, []
 
         if not doi:
             st.error("FAIL: Empty DOI")
-            return False, None, uploaded_file_pdf
+            return False, None, []
 
         works = Works()
         metadata: Optional[dict] = works.doi(doi)
 
         if not metadata:
             st.error("FAIL: Invalid DOI")
-            return False, None, uploaded_file_pdf
+            return False, None, []
 
         entry = _create_entry_from_doi_metadata(metadata)
-        return True, entry, uploaded_file_pdf
+        return True, entry, uploaded_files
 
 
 def _render_custom_form(
-    uploaded_file_pdf: Optional[UploadedFile],
     already_submitted: bool,
-) -> tuple[bool, Optional[Entry], Optional[UploadedFile]]:
+) -> tuple[bool, Optional[Entry], list[UploadedFile]]:
     """カスタム登録フォームを表示する。
 
     Parameters
     ----------
-    uploaded_file_pdf : Optional[UploadedFile]
-        アップロードされたPDFファイル
     already_submitted : bool
         他のフォームで既に送信されたかどうか
 
     Returns
     -------
-    tuple[bool, Optional[Entry], Optional[UploadedFile]]
-        (送信成功フラグ, 作成されたEntry, PDFファイル)
+    tuple[bool, Optional[Entry], list[UploadedFile]]
+        (送信成功フラグ, 作成されたEntry, PDFファイルリスト)
     """
     st.subheader("CUSTOM")
 
@@ -193,19 +176,19 @@ def _render_custom_form(
     )
 
     if already_submitted:
-        return False, None, uploaded_file_pdf
+        return False, None, []
 
     assert entry_type is not None
 
     with st.form("custom_form", clear_on_submit=True):
         entry = custom_entry(Entry(dict(ENTRYTYPE=entry_type)))
 
-        uploaded_file_pdf = pdf_upload_form(uploaded_file_pdf)
+        uploaded_files = pdf_upload_form(accept_multiple=True)
 
         submitted = st.form_submit_button(type="primary")
 
         if not submitted:
-            return False, None, uploaded_file_pdf
+            return False, None, []
 
         # 必須フィールドのチェック
         if not (MAP_REQUIRED_FIELDS[entry_type] <= set(entry.keys())):
@@ -215,13 +198,13 @@ def _render_custom_form(
             st.error(
                 "('{}') is/are necessary.".format("', '".join(missing_fields))
             )
-            return False, None, uploaded_file_pdf
+            return False, None, []
 
         # セッションステートのクリア
         for field in MAP_FIELDS[entry_type]:
             _ = st.session_state.pop(field, None)
 
-        return True, entry, uploaded_file_pdf
+        return True, entry, uploaded_files
 
 
 @config_page
@@ -234,7 +217,6 @@ def main() -> None:
     _logger.debug("Register page Start")
 
     paper_list = PaperList.from_session_state()
-    uploaded_file_pdf: Optional[UploadedFile] = None  # type: ignore[annotation-unchecked]
 
     # タブの作成
     tab_from_bib, tab_from_doi, tab_custom_form = st.tabs(
@@ -243,34 +225,31 @@ def main() -> None:
 
     # BIB登録
     with tab_from_bib:
-        submitted_bib, entry_bib, uploaded_file_pdf = _render_bib_form(
-            uploaded_file_pdf
-        )
+        submitted_bib, entry_bib, uploaded_files_bib = _render_bib_form()
 
     # DOI登録
     with tab_from_doi:
-        submitted_doi, entry_doi, uploaded_file_pdf = _render_doi_form(
-            uploaded_file_pdf
-        )
+        submitted_doi, entry_doi, uploaded_files_doi = _render_doi_form()
 
     # カスタム登録
     with tab_custom_form:
-        submitted_custom, entry_custom, uploaded_file_pdf = (
+        submitted_custom, entry_custom, uploaded_files_custom = (
             _render_custom_form(
-                uploaded_file_pdf,
                 already_submitted=(submitted_bib or submitted_doi),
             )
         )
 
     # 登録処理（共通関数を使用）
     if submitted_bib and entry_bib is not None:
-        if register_entry_to_list(paper_list, entry_bib, uploaded_file_pdf):
+        if register_entry_to_list(paper_list, entry_bib, uploaded_files_bib):
             st.button("Clear")
     elif submitted_doi and entry_doi is not None:
-        if register_entry_to_list(paper_list, entry_doi, uploaded_file_pdf):
+        if register_entry_to_list(paper_list, entry_doi, uploaded_files_doi):
             st.button("Clear")
     elif submitted_custom and entry_custom is not None:
-        if register_entry_to_list(paper_list, entry_custom, uploaded_file_pdf):
+        if register_entry_to_list(
+            paper_list, entry_custom, uploaded_files_custom
+        ):
             st.button("Clear")
 
     _logger.debug("Register page End")
