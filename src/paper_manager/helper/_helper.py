@@ -50,3 +50,23 @@ def dummy_func(x: T, *args, **kwargs) -> T:
 
 def is_argument(_callable: Callable, arg_name: str) -> bool:
     return arg_name in inspect.signature(_callable).parameters.keys()
+
+
+def split(s: str, sep: str) -> tuple[str, ...]:
+    """文字列をセパレータで分割し、タプルとして返す。
+
+    Parameters
+    ----------
+    s : str
+        分割する文字列
+    sep : str
+        セパレータ
+
+    Returns
+    -------
+    tuple[str, ...]
+        分割された文字列のタプル
+    """
+    if not s:
+        return ()
+    return tuple(map(str.strip, s.split(sep)))

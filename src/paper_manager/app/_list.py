@@ -34,29 +34,10 @@ from paper_manager.app.components import (
 )
 from paper_manager.app.helper import config_page
 from paper_manager.entry import Entry, PaperList
+from paper_manager.helper import split
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
-
-
-def split(s: str, sep: str) -> tuple[str, ...]:
-    """文字列をセパレータで分割し、タプルとして返す。
-
-    Parameters
-    ----------
-    s : str
-        分割する文字列
-    sep : str
-        セパレータ
-
-    Returns
-    -------
-    tuple[str, ...]
-        分割された文字列のタプル
-    """
-    if not s:
-        return ()
-    return tuple(map(str.strip, s.split(sep)))
 
 
 def _render_paper_table(paper_list: PaperList) -> Optional[str]:
