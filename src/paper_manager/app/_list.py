@@ -16,7 +16,15 @@ from pybtex.database.input import bibtex  # type: ignore[import-untyped]
 from pybtex.style.formatting.plain import Style  # type: ignore[import-untyped]
 from streamlit_pdf_viewer import pdf_viewer  # type: ignore[import-untyped]
 
-from paper_manager._constants import COLS_TABLE, ENCODING
+from paper_manager._constants import (
+    AUTHOR_SEPARATOR,
+    COLNAME_AUTHOR,
+    COLNAME_HAS_PDF,
+    COLNAME_TAGS,
+    COLNAMES_DISPLAY,
+    ENCODING,
+    TAG_SEPARATOR,
+)
 from paper_manager.app.components import (
     custom_entry,
     delete_pdfs,
@@ -24,13 +32,31 @@ from paper_manager.app.components import (
     save_paper_list,
     update_entry_in_list,
 )
-from paper_manager.app.utils import config_page
+from paper_manager.app.helper import config_page
 from paper_manager.entry import Entry, PaperList
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
 
-COLNAME_HAS_PDF = "PDF"
+
+def split(s: str, sep: str) -> tuple[str, ...]:
+    """文字列をセパレータで分割し、タプルとして返す。
+
+    Parameters
+    ----------
+    s : str
+        分割する文字列
+    sep : str
+        セパレータ
+
+    Returns
+    -------
+    tuple[str, ...]
+        分割された文字列のタプル
+    """
+    if not s:
+        return ()
+    return tuple(map(str.strip, s.split(sep)))
 
 
 def _render_paper_table(paper_list: PaperList) -> Optional[str]:
@@ -46,27 +72,35 @@ def _render_paper_table(paper_list: PaperList) -> Optional[str]:
     Optional[str]
         選択された論文のキー。選択されていない場合は None。
     """
-    _df_paper_list = pd.DataFrame.from_dict(
-        dict(paper_list), orient="index", dtype=str
-    )
-    for _col in set(COLS_TABLE) - set(_df_paper_list.columns):
+    _df_paper_list = pd.DataFrame.from_dict(dict(paper_list), orient="index")
+    # fill missing columns
+    for _col in set(COLNAMES_DISPLAY) - set(_df_paper_list.columns):
         _df_paper_list.loc[:, _col] = ""
+    _df_paper_list.fillna("", inplace=True)
+
+    _df_paper_list.loc[:, COLNAME_HAS_PDF] = pd.Series(
+        {
+            _key: "o" if _entry.get_pdf_count() else "x"
+            for _key, _entry in paper_list.items()
+        },
+        dtype=str,
+    )
+    _df_paper_list.loc[:, COLNAME_TAGS].apply(split, args=(TAG_SEPARATOR,))
+    _df_paper_list.loc[:, COLNAME_AUTHOR] = _df_paper_list.loc[
+        :, COLNAME_AUTHOR
+    ].apply(split, args=(AUTHOR_SEPARATOR,))
+    column_config = {
+        COLNAME_HAS_PDF: st.column_config.MultiselectColumn(
+            options=("o", "x"), color=("red", "blue")
+        ),
+        COLNAME_TAGS: st.column_config.MultiselectColumn(color="auto"),
+        COLNAME_AUTHOR: st.column_config.MultiselectColumn(color="auto"),
+    }
 
     paper_selected = st.dataframe(
-        pd.concat(
-            (
-                pd.Series(
-                    {
-                        _key: str(_entry.get_pdf_count())
-                        for _key, _entry in paper_list.items()
-                    },
-                    name=COLNAME_HAS_PDF,
-                ),
-                _df_paper_list,
-            ),
-            axis=1,
-        ),
-        column_order=(COLNAME_HAS_PDF,) + COLS_TABLE,
+        _df_paper_list,
+        column_order=COLNAMES_DISPLAY,
+        column_config=column_config,
         hide_index=True,
         selection_mode="single-row",
         on_select="rerun",

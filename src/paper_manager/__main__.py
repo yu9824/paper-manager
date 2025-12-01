@@ -12,8 +12,8 @@ else:
 from streamlit.web import cli
 
 from paper_manager import __version__
+from paper_manager.helper import dummy_func
 from paper_manager.logging import get_root_logger
-from paper_manager.utils import dummy_func
 
 __all__ = ("main",)
 
