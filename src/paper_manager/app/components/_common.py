@@ -205,11 +205,24 @@ def save_pdfs(
     pdf_dir = entry.get_pdf_dir(base_dir)
     pdf_dir.mkdir(parents=True, exist_ok=True)
 
+    # 既存のPDFファイル名を取得しておき、重複しない新しい名前を付与する
+    existing_files = {f.name for f in pdf_dir.glob("*.pdf")}
+    index = 0
+
     saved_count = 0
     for uploaded_file in uploaded_files:
-        filepath = pdf_dir / uploaded_file.name
+        # エントリに基づいたわかりやすいファイル名を生成
+        while True:
+            new_name = entry._generate_pdf_filename(index)
+            if new_name not in existing_files:
+                break
+            index += 1
+
+        filepath = pdf_dir / new_name
         with open(filepath, mode="wb") as f:
             f.write(uploaded_file.getvalue())
+
+        existing_files.add(new_name)
         _logger.debug(f"PDF saved: {filepath}")
         saved_count += 1
 
