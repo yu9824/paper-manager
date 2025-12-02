@@ -32,6 +32,9 @@
         },
         "DOI": {
             "required": false
+        },
+        "tags": {
+            "required": false
         }
     },
     "book": {
@@ -69,6 +72,9 @@
             "required": false
         },
         "DOI": {
+            "required": false
+        },
+        "tags": {
             "required": false
         }
     },
@@ -120,6 +126,9 @@
         },
         "DOI": {
             "required": false
+        },
+        "tags": {
+            "required": false
         }
     },
     "inproceedings": {
@@ -170,6 +179,9 @@
         },
         "DOI": {
             "required": false
+        },
+        "tags": {
+            "required": false
         }
     },
     "masterthesis": {
@@ -202,6 +214,9 @@
         },
         "DOI": {
             "required": false
+        },
+        "tags": {
+            "required": false
         }
     },
     "phdthesis": {
@@ -233,6 +248,9 @@
             "required": false
         },
         "DOI": {
+            "required": false
+        },
+        "tags": {
             "required": false
         }
     },
@@ -269,6 +287,9 @@
         },
         "DOI": {
             "required": false
+        },
+        "tags": {
+            "required": false
         }
     },
     "misc": {
@@ -294,6 +315,9 @@
             "required": false
         },
         "DOI": {
+            "required": false
+        },
+        "tags": {
             "required": false
         }
     }

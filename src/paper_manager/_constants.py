@@ -2,14 +2,31 @@ import os
 from pathlib import Path
 
 __all__ = (
+    "AUTHOR_SEPARATOR",
+    "TAG_SEPARATOR",
     "DIRPATH_ROOT",
     "DIRPATH_APP",
     "DIRPATH_DATA",
     "DIRPATH_PDF",
     "FILEPATH_LIST",
-    "COLS_TABLE",
+    "FILEPATH_FIELDS",
+    "COLNAME_HAS_PDF",
+    "COLNAME_YEAR",
+    "COLNAME_AUTHOR",
+    "COLNAME_TITLE",
+    "COLNAME_JOURNAL",
+    "COLNAME_VOLUME",
+    "COLNAME_NUMBER",
+    "COLNAME_PAGES",
+    "COLNAME_DOI",
+    "COLNAME_TAGS",
+    "COLNAMES_DISPLAY",
     "ENCODING",
 )
+
+
+AUTHOR_SEPARATOR = " and "
+TAG_SEPARATOR = ", "
 
 DIRPATH_ROOT = Path(__file__).parent
 
@@ -21,15 +38,27 @@ DIRPATH_PDF = DIRPATH_DATA / "pdf"
 FILEPATH_LIST = DIRPATH_DATA / "list.json"
 FILEPATH_FIELDS = DIRPATH_APP / "fields.json"
 
-COLS_TABLE = (
-    "year",
-    "author",
-    "title",
-    "journal",
-    "volume",
-    "number",
-    "pages",
-    "DOI",
+COLNAME_HAS_PDF = "PDF"
+COLNAME_YEAR = "year"
+COLNAME_AUTHOR = "author"
+COLNAME_TITLE = "title"
+COLNAME_JOURNAL = "journal"
+COLNAME_VOLUME = "volume"
+COLNAME_NUMBER = "number"
+COLNAME_PAGES = "pages"
+COLNAME_DOI = "DOI"
+COLNAME_TAGS = "tags"
+COLNAMES_DISPLAY = (
+    COLNAME_HAS_PDF,
+    COLNAME_YEAR,
+    COLNAME_AUTHOR,
+    COLNAME_TITLE,
+    COLNAME_JOURNAL,
+    COLNAME_VOLUME,
+    COLNAME_NUMBER,
+    COLNAME_PAGES,
+    COLNAME_DOI,
+    COLNAME_TAGS,
 )
 
 ENCODING = "utf-8"

@@ -11,7 +11,7 @@ from paper_manager.app.components import (
     pdf_upload_form,
     register_entry_to_list,
 )
-from paper_manager.app.utils import (
+from paper_manager.app.helper import (
     MAP_FIELDS,
     MAP_REQUIRED_FIELDS,
     config_page,

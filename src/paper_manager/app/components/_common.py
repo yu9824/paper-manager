@@ -6,12 +6,21 @@ from typing import Optional, Union
 import streamlit as st
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
-from paper_manager._constants import DIRPATH_PDF
-from paper_manager.app.utils import MAP_FIELDS, MAP_REQUIRED_FIELDS
+from paper_manager._constants import (
+    AUTHOR_SEPARATOR,
+    COLNAME_TAGS,
+    DIRPATH_PDF,
+    TAG_SEPARATOR,
+)
+from paper_manager.app.helper import MAP_FIELDS, MAP_REQUIRED_FIELDS
 from paper_manager.entry import Entry, PaperList
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
+
+
+def is_required_field(field_name: str, entrytype: str) -> bool:
+    return field_name in MAP_REQUIRED_FIELDS[entrytype]
 
 
 def pdf_upload_form(
@@ -61,46 +70,110 @@ def custom_entry(entry: Entry) -> Entry:
     Entry
         更新されたEntryオブジェクト
     """
-    entry_type = entry["ENTRYTYPE"]
+    entrytype = entry["ENTRYTYPE"]
 
-    for field in MAP_FIELDS[entry_type]:
+    for field in MAP_FIELDS[entrytype]:
+        default = entry.get(field, st.session_state.get(field))
+        required = is_required_field(field, entrytype)
+        _logger.debug(
+            f"field: {field}, type: {type(default)}, value: {default}"
+        )
+
+        placeholder = "Required" if required else ""
         if field == "year":
-            _year_default = (
-                int(entry[field])
-                if field in entry
-                else st.session_state.get(field)
-            )
-            if _year := st.number_input(
+            assert isinstance(default, (str, int, type(None)))
+            int_default: Optional[int]
+            if default:
+                int_default = int(default)
+            elif required:
+                int_default = date.today().year  # this year
+            else:
+                int_default = None
+            _year_input = st.number_input(
                 field,
-                value=_year_default,
+                value=int_default,
                 format="%4i",
-                placeholder="YYYY, Required",
+                placeholder=placeholder,
                 step=1,
                 min_value=1000,
                 max_value=date.today().year + 1,
                 key=field,
-            ):
-                entry[field] = str(_year)
+            )
+            assert isinstance(_year_input, (int, type(None)))
+            if _year_input:
+                entry[field] = str(_year_input)
+            elif required:
+                raise ValueError(f"'{field}' is required!")
+            elif field in entry:
+                _ = entry.pop(field)
 
         elif field == "author":
-            if _text_input_temp := st.text_input(
-                field,
-                value=entry.get(field, st.session_state.get(field)),
-                placeholder="e.g., 'Taro Yamada and Jiro Yamada', Required",
-                key=field,
-            ):
-                entry[field] = _text_input_temp
+            assert isinstance(default, (str, type(None), list))
+            if isinstance(default, str):
+                if default:
+                    tup_default = tuple(default.split(AUTHOR_SEPARATOR))
+                else:
+                    tup_default = tuple()
+            elif isinstance(default, list):
+                tup_default = tuple(default)
+            else:  # None
+                tup_default = tuple()
 
-        else:
-            if _text_input_temp := st.text_input(
+            _author_input_temp = st.multiselect(
                 field,
-                value=entry.get(field, st.session_state.get(field)),
-                placeholder="Required"
-                if field in MAP_REQUIRED_FIELDS[entry_type]
-                else "",
+                options=tup_default,
+                default=tup_default,
+                accept_new_options=True,
                 key=field,
-            ):
+                placeholder=placeholder,
+            )
+            entry[field] = AUTHOR_SEPARATOR.join(_author_input_temp)
+
+            if _author_input_temp:
+                entry[field] = TAG_SEPARATOR.join(_author_input_temp)
+            elif required:
+                raise ValueError(f"'{field}' is required!")
+            elif field in entry:
+                _ = entry.pop(field)
+        elif field == COLNAME_TAGS:
+            assert isinstance(default, (str, type(None), list))
+            if isinstance(default, str):
+                if default:
+                    tup_default = tuple(default.split(AUTHOR_SEPARATOR))
+                else:
+                    tup_default = tuple()
+            elif isinstance(default, list):
+                tup_default = tuple(default)
+            else:  # None
+                tup_default = tuple()
+
+            _tags_input_temp = st.multiselect(
+                field,
+                options=tup_default,
+                default=tup_default,
+                accept_new_options=True,
+                key=field,
+            )
+            if _tags_input_temp:
+                entry[field] = TAG_SEPARATOR.join(_tags_input_temp)
+            elif required:
+                raise ValueError(f"'{field}' is required!")
+            elif field in entry:
+                _ = entry.pop(field)
+        else:
+            assert isinstance(default, (str, type(None)))
+            _text_input_temp = st.text_input(
+                field,
+                value=default,
+                placeholder=placeholder,
+                key=field,
+            )
+            if _text_input_temp:
                 entry[field] = _text_input_temp
+            elif required:
+                raise ValueError(f"'{field}' is required!")
+            elif field in entry:
+                _ = entry.pop(field)
 
     return entry
 

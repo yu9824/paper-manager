@@ -15,7 +15,13 @@ from typing import Literal, Union
 
 import streamlit as st
 
-from paper_manager._constants import DIRPATH_PDF, ENCODING, FILEPATH_LIST
+from paper_manager._constants import (
+    AUTHOR_SEPARATOR,
+    DIRPATH_PDF,
+    ENCODING,
+    FILEPATH_LIST,
+)
+from paper_manager.helper import split
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
@@ -176,7 +182,9 @@ class Entry(MutableMapping):
         st_keys = set(keys)
 
         first_author = (
-            self["author"].split(" and ")[0] if "author" in self else "Unknown"
+            self["author"].split(AUTHOR_SEPARATOR)[0]
+            if "author" in self
+            else "Unknown"
         )
         while (
             key := "{0}{1}_{2}".format(
@@ -198,9 +206,9 @@ class Entry(MutableMapping):
             A sanitized directory name for the entry.
         """
         year = self.get("year", "YYYY")
-        first_author = (
-            self["author"].split(" and ")[0] if "author" in self else "Unknown"
-        )
+        first_author = split(self.get("author", ""), AUTHOR_SEPARATOR)[0]
+        if first_author == "":
+            first_author = "Unknown"
         title = self.get("title", "Unknown")
         return sanitize_filename(
             "{} - {} - {}".format(year, first_author, title)
@@ -291,7 +299,9 @@ class Entry(MutableMapping):
         """
         year = self.get("year", "YYYY")
         first_author = (
-            self["author"].split(" and ")[0] if "author" in self else "Unknown"
+            self["author"].split(AUTHOR_SEPARATOR)[0]
+            if "author" in self
+            else "Unknown"
         )
         title = self["title"]
         return sanitize_filename(
