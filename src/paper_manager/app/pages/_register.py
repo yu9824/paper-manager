@@ -207,6 +207,20 @@ def _render_custom_form(
         return True, entry, uploaded_files
 
 
+def _validate_required_fields(entry: Entry) -> bool:
+    """必須フィールドをチェックし、不足していればエラーを表示する。"""
+    entry_type = entry["ENTRYTYPE"]
+    missing_fields = MAP_REQUIRED_FIELDS[entry_type] - set(entry.keys())
+
+    if missing_fields:
+        st.error(
+            "('{}') is/are necessary.".format("', '".join(missing_fields))
+        )
+        return False
+
+    return True
+
+
 @config_page
 def main() -> None:
     """論文登録ページのメインスクリプト。
@@ -241,13 +255,17 @@ def main() -> None:
 
     # 登録処理（共通関数を使用）
     if submitted_bib and entry_bib is not None:
-        if register_entry_to_list(paper_list, entry_bib, uploaded_files_bib):
+        if _validate_required_fields(entry_bib) and register_entry_to_list(
+            paper_list, entry_bib, uploaded_files_bib
+        ):
             st.button("Clear")
     elif submitted_doi and entry_doi is not None:
-        if register_entry_to_list(paper_list, entry_doi, uploaded_files_doi):
+        if _validate_required_fields(entry_doi) and register_entry_to_list(
+            paper_list, entry_doi, uploaded_files_doi
+        ):
             st.button("Clear")
     elif submitted_custom and entry_custom is not None:
-        if register_entry_to_list(
+        if _validate_required_fields(entry_custom) and register_entry_to_list(
             paper_list, entry_custom, uploaded_files_custom
         ):
             st.button("Clear")

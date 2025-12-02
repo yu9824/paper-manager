@@ -74,6 +74,8 @@ def custom_entry(entry: Entry) -> Entry:
 
     for field in MAP_FIELDS[entrytype]:
         default = entry.get(field, st.session_state.get(field))
+        # 必須判定はプレースホルダー表示など UI 用にのみ使用し、
+        # バリデーション自体は submit ボタン押下時に行う
         required = is_required_field(field, entrytype)
         _logger.debug(
             f"field: {field}, type: {type(default)}, value: {default}"
@@ -102,8 +104,6 @@ def custom_entry(entry: Entry) -> Entry:
             assert isinstance(_year_input, (int, type(None)))
             if _year_input:
                 entry[field] = str(_year_input)
-            elif required:
-                raise ValueError(f"'{field}' is required!")
             elif field in entry:
                 _ = entry.pop(field)
 
@@ -131,8 +131,6 @@ def custom_entry(entry: Entry) -> Entry:
 
             if _author_input_temp:
                 entry[field] = TAG_SEPARATOR.join(_author_input_temp)
-            elif required:
-                raise ValueError(f"'{field}' is required!")
             elif field in entry:
                 _ = entry.pop(field)
         elif field == COLNAME_TAGS:
@@ -156,8 +154,6 @@ def custom_entry(entry: Entry) -> Entry:
             )
             if _tags_input_temp:
                 entry[field] = TAG_SEPARATOR.join(_tags_input_temp)
-            elif required:
-                raise ValueError(f"'{field}' is required!")
             elif field in entry:
                 _ = entry.pop(field)
         else:
@@ -170,8 +166,6 @@ def custom_entry(entry: Entry) -> Entry:
             )
             if _text_input_temp:
                 entry[field] = _text_input_temp
-            elif required:
-                raise ValueError(f"'{field}' is required!")
             elif field in entry:
                 _ = entry.pop(field)
 
