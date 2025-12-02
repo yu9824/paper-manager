@@ -246,11 +246,32 @@ class Entry(MutableMapping):
         """
         pdf_dir = self.get_pdf_dir(base_dir)
         if not pdf_dir.is_dir():
-            # 後方互換性: 旧形式の単一PDFファイルをチェック
-            legacy_pdf = (base_dir or DIRPATH_PDF) / self.pdf_filename
+            # 後方互換性: 旧形式の単一PDFファイルをチェックし、
+            # 見つかった場合は現在のフォルダ方式に従ってリネームして移動する
+            legacy_base_dir = base_dir or DIRPATH_PDF
+            legacy_pdf = legacy_base_dir / self.pdf_filename
             if legacy_pdf.is_file():
-                return [legacy_pdf]
+                pdf_dir.mkdir(parents=True, exist_ok=True)
+
+                existing_files = {f.name for f in pdf_dir.glob("*.pdf")}
+                index = 0
+                # 既存ファイルと重複しない新しいファイル名を決定
+                while True:
+                    new_name = self._generate_pdf_filename(index)
+                    if new_name not in existing_files:
+                        break
+                    index += 1
+
+                new_path = pdf_dir / new_name
+                legacy_pdf.rename(new_path)
+                _logger.debug(
+                    "Legacy PDF migrated: %s -> %s", legacy_pdf, new_path
+                )
+                return [new_path]
+
+            # 旧形式のファイルも存在しない場合は空リスト
             return []
+
         return sorted(pdf_dir.glob("*.pdf"))
 
     def has_pdf(self, base_dir: Union[Path, None] = None) -> bool:
@@ -307,6 +328,32 @@ class Entry(MutableMapping):
         return sanitize_filename(
             "{} - {} - {}.pdf".format(year, first_author, title)
         )
+
+    def _generate_pdf_filename(self, index: int) -> str:
+        """Generate a standardized PDF filename inside the PDF directory.
+
+        The filename is based on ``pdf_dir_name`` so that it is easily
+        identifiable and close to the folder name.
+
+        Parameters
+        ----------
+        index : int
+            Index of the PDF file for this entry. ``0`` is used for the first
+            file, ``1`` for the second, and so on.
+
+        Returns
+        -------
+        str
+            A sanitized filename such as
+            ``'<pdf_dir_name>.pdf'`` (for index 0) or
+            ``'<pdf_dir_name>_01.pdf'`` (for index 1).
+        """
+        base_name = self.pdf_dir_name
+        if index == 0:
+            filename = f"{base_name}.pdf"
+        else:
+            filename = f"{base_name}_{index:02d}.pdf"
+        return sanitize_filename(filename)
 
 
 class PaperList(MutableMapping):

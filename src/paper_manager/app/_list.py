@@ -32,7 +32,7 @@ from paper_manager.app.components import (
     save_paper_list,
     update_entry_in_list,
 )
-from paper_manager.app.helper import config_page
+from paper_manager.app.helper import MAP_REQUIRED_FIELDS, config_page
 from paper_manager.entry import Entry, PaperList
 from paper_manager.helper import split
 from paper_manager.logging import get_child_logger
@@ -373,11 +373,22 @@ def edit_entry(key_selected: str) -> None:
         flag_cancel_edit = _col_cancel_edit.form_submit_button("Cancel")
 
     if flag_done_edit:
-        # 共通関数を使用してエントリを更新
-        update_entry_in_list(
-            paper_list, key_selected, entry_edited, uploaded_files
+        # 必須フィールドのチェック（ENTRYTYPE ごと）
+        entry_type = entry_edited["ENTRYTYPE"]
+        missing_fields = MAP_REQUIRED_FIELDS[entry_type] - set(
+            entry_edited.keys()
         )
-        st.rerun()
+
+        if missing_fields:
+            st.error(
+                "('{}') is/are necessary.".format("', '".join(missing_fields))
+            )
+        else:
+            # 共通関数を使用してエントリを更新
+            update_entry_in_list(
+                paper_list, key_selected, entry_edited, uploaded_files
+            )
+            st.rerun()
 
     elif flag_cancel_edit:
         st.rerun()
