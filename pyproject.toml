@@ -1,6 +1,6 @@
 # https://packaging.python.org/ja/latest/guides/writing-pyproject-toml/
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -21,8 +21,9 @@ authors = [{ name = "yu9824" }]
 maintainers = [{ name = "yu9824" }]
 description = ""
 readme = { file = "README.md", content-type = "text/markdown" }
-license = { file = "LICENSE" }
-keywords = []
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+keywords = ["paper-manager"]
 # https://pypi.org/classifiers/
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -37,8 +38,14 @@ classifiers = [
 [project.optional-dependencies]
 test = ["pytest"]
 dev = ["build"]
-optional = ["colorlog"]
-docs = ["sphinx", "sphinx_rtd_theme", "sphinx-markdown-tables", "recommonmark"]
+optional = ["colorlog", "tqdm"]
+docs = [
+    "sphinx",
+    "myst-parser",
+    "myst-nb",
+    "sphinx-book-theme",
+    "jupyter-sphinx",
+]
 
 [project.urls]
 Homepage = "https://github.com/yu9824/paper-manager"
