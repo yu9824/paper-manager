@@ -1,8 +1,10 @@
 import re
 import xml.dom.minidom
+import zipfile
 from collections.abc import Sequence
 from copy import deepcopy
 from datetime import datetime
+from io import BytesIO
 from logging import DEBUG
 from pathlib import Path
 from typing import Union
@@ -196,6 +198,8 @@ def _render_pdf_viewer(pdf_files: list[Path]) -> None:
             "Download",
             data=pdf_contents,
             file_name=selected_pdf.name,
+            type="primary",
+            mime="application/pdf",
             key=f"download_{selected_pdf.name}",
         )
 
@@ -237,7 +241,11 @@ def _render_export(
 
     # エクスポートオプション
     options_file_ext: list[str] = ["bib", "xml"]
-    if not is_multi and pdf_files:
+    # 複数選択時はPDFをzipでダウンロード、単一選択時はPDFビューアを表示
+    has_pdf_files = (not is_multi and pdf_files) or (
+        is_multi and any(entry.get_pdf_count() > 0 for entry in entries)
+    )
+    if has_pdf_files:
         options_file_ext.insert(0, "pdf")
 
     radio_key = "ext_multi" if is_multi else "ext"
@@ -255,15 +263,42 @@ def _render_export(
         filepath_base_export = Path(f"{entries[0].pdf_dir_name}")
 
     if ext == "pdf":
-        if pdf_files is None:
-            return
-        _render_pdf_viewer(list(pdf_files))
+        if is_multi:
+            # 複数選択時: 階層構造を保ってzipファイルを作成
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(
+                zip_buffer, "w", zipfile.ZIP_DEFLATED
+            ) as zip_file:
+                for entry in entries:
+                    pdf_files_for_entry = entry.get_pdf_files()
+                    if pdf_files_for_entry:
+                        # 各エントリのpdf_dir_nameをディレクトリ名として使用
+                        dir_name = entry.pdf_dir_name
+                        for pdf_file in pdf_files_for_entry:
+                            # 階層構造を保つ: dir_name/pdf_filename
+                            arcname = f"{dir_name}/{pdf_file.name}"
+                            zip_file.write(pdf_file, arcname)
+
+            zip_buffer.seek(0)
+            st.download_button(
+                "Download",
+                data=zip_buffer.getvalue(),
+                type="primary",
+                mime="application/zip",
+                file_name=str(filepath_base_export.with_suffix(".zip")),
+            )
+        else:
+            # 単一選択時: 既存のPDFビューアを表示
+            if pdf_files is None:
+                return
+            _render_pdf_viewer(list(pdf_files))
 
     elif ext == "bib":
         st.download_button(
             "Download",
             bib_text,
             file_name=str(filepath_base_export.with_suffix(".bib")),
+            type="primary",
         )
         st.code(bib_text, language="latex")
 
@@ -274,6 +309,7 @@ def _render_export(
             data=xml_str.encode(ENCODING),
             mime="application/xml",
             file_name=str(filepath_base_export.with_suffix(".xml")),
+            type="primary",
         )
         st.code(
             xml.dom.minidom.parseString(xml_str).toprettyxml(indent="  "),
