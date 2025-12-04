@@ -1,9 +1,11 @@
 import re
 import xml.dom.minidom
+from collections.abc import Sequence
 from copy import deepcopy
+from datetime import datetime
 from logging import DEBUG
 from pathlib import Path
-from typing import Optional
+from typing import Union
 
 import pandas as pd
 import streamlit as st
@@ -40,7 +42,7 @@ from paper_manager.logging import get_child_logger
 _logger = get_child_logger(__name__)
 
 
-def _render_paper_table(paper_list: PaperList) -> Optional[str]:
+def _render_paper_table(paper_list: PaperList) -> list[str]:
     """論文一覧テーブルを表示し、選択された論文のキーを返す。
 
     Parameters
@@ -50,8 +52,8 @@ def _render_paper_table(paper_list: PaperList) -> Optional[str]:
 
     Returns
     -------
-    Optional[str]
-        選択された論文のキー。選択されていない場合は None。
+    list[str]
+        選択された論文のキーのリスト。選択されていない場合は空リスト。
     """
     _df_paper_list = pd.DataFrame.from_dict(dict(paper_list), orient="index")
     # fill missing columns
@@ -83,14 +85,15 @@ def _render_paper_table(paper_list: PaperList) -> Optional[str]:
         column_order=COLNAMES_DISPLAY,
         column_config=column_config,
         hide_index=True,
-        selection_mode="single-row",
+        selection_mode="multi-row",
         on_select="rerun",
     )
 
     # 行が選択されていたら
     if index_list_selected := paper_selected["selection"]["rows"]:
-        return tuple(paper_list.keys())[index_list_selected[0]]
-    return None
+        keys = tuple(paper_list.keys())
+        return [keys[i] for i in index_list_selected]
+    return []
 
 
 def _render_link(entry: Entry) -> None:
@@ -201,46 +204,66 @@ def _render_pdf_viewer(pdf_files: list[Path]) -> None:
 
 
 def _render_export(
-    bib_text: str,
-    bibdata: "bibtex.BibliographyData",
-    entry: Entry,
-    pdf_files: list[Path],
+    entries: Sequence[Entry],
+    pdf_files: Union[Sequence[Path], None] = None,
 ) -> None:
     """エクスポート機能を表示する。
 
     Parameters
     ----------
-    bib_text : str
-        BibTeX形式のテキスト
-    bibdata : bibtex.BibliographyData
-        パースされたBibliographyData
-    entry : Entry
-        論文エントリ
-    pdf_files : list[Path]
-        PDFファイルのリスト
+    entries : Sequence[Entry]
+        論文エントリのシーケンス
+    pdf_files : Sequence[Path] or None, optional
+        PDFファイルのシーケンス（単一エントリの場合のみ使用）。デフォルトはNone。
     """
+    if not entries:
+        st.info("No entries selected.")
+        return
+
+    is_multi = len(entries) > 1
+
+    # サブヘッダーの設定
     st.subheader("Export")
+
+    # BibTeX テキストを生成
+    bib_database = BibDatabase()
+    bib_database.entries = list(entries)
+
+    bib_writer = BibTexWriter()
+    bib_text = bib_writer.write(bib_database)
+
+    bib_parser = bibtex.Parser()
+    bibdata = bib_parser.parse_string(bib_text)
 
     # エクスポートオプション
     options_file_ext: list[str] = ["bib", "xml"]
-    if pdf_files:
+    if not is_multi and pdf_files:
         options_file_ext.insert(0, "pdf")
 
+    radio_key = "ext_multi" if is_multi else "ext"
     ext = st.radio(
-        "ext",
+        radio_key,
         options=options_file_ext,
         horizontal=True,
         label_visibility="hidden",
     )
 
+    if is_multi:
+        now_str = datetime.now().strftime("%y%m%d_%H%M")
+        filepath_base_export = Path(f"selected_{len(entries)}_{now_str}")
+    else:
+        filepath_base_export = Path(f"{entries[0].pdf_dir_name}")
+
     if ext == "pdf":
-        _render_pdf_viewer(pdf_files)
+        if pdf_files is None:
+            return
+        _render_pdf_viewer(list(pdf_files))
 
     elif ext == "bib":
         st.download_button(
             "Download",
             bib_text,
-            file_name=f"{entry.pdf_dir_name}.bib",
+            file_name=str(filepath_base_export.with_suffix(".bib")),
         )
         st.code(bib_text, language="latex")
 
@@ -250,7 +273,7 @@ def _render_export(
             "Download",
             data=xml_str.encode(ENCODING),
             mime="application/xml",
-            file_name=f"{entry.pdf_dir_name}.xml",
+            file_name=str(filepath_base_export.with_suffix(".xml")),
         )
         st.code(
             xml.dom.minidom.parseString(xml_str).toprettyxml(indent="  "),
@@ -260,31 +283,40 @@ def _render_export(
 
 def _delete_entry(
     paper_list: PaperList,
-    key_selected: str,
-    entry: Entry,
+    keys_selected: Sequence[str],
     flag_delete_pdf: bool,
 ) -> None:
-    """論文エントリを削除する。
+    """論文エントリを削除する（単一または複数）。
 
     Parameters
     ----------
     paper_list : PaperList
         論文リスト
-    key_selected : str
-        削除する論文のキー
-    entry : Entry
-        削除する論文エントリ
+    keys_selected : Sequence[str]
+        削除する論文のキーのシーケンス
     flag_delete_pdf : bool
         PDFファイルも削除するかどうか
     """
-    _logger.debug("push delete button")
+    is_multi = len(keys_selected) > 1
 
-    if flag_delete_pdf:
-        delete_pdfs(entry)
+    if is_multi:
+        _logger.debug(
+            "Delete selected entries: %s (delete_pdf=%s)",
+            list(keys_selected),
+            flag_delete_pdf,
+        )
+    else:
+        _logger.debug("push delete button")
 
-    del paper_list[key_selected]
+    for key in keys_selected:
+        if key not in paper_list:
+            continue
+        entry = paper_list[key]
+        if flag_delete_pdf:
+            delete_pdfs(entry)
+        del paper_list[key]
+
     save_paper_list(paper_list)
-
     st.rerun()
 
 
@@ -304,38 +336,63 @@ def main() -> None:
         return
 
     # 論文一覧テーブルの表示
-    key_selected = _render_paper_table(paper_list)
+    keys_selected = _render_paper_table(paper_list)
 
-    if key_selected is None:
+    if not keys_selected:
         _logger.debug("List page End")
         return
 
-    entry = paper_list[key_selected]
-    pdf_files = entry.get_pdf_files()
+    # 単一行選択時: 既存の挙動（編集・削除・引用・エクスポート）を維持
+    if len(keys_selected) == 1:
+        key_selected = keys_selected[0]
+        entry = paper_list[key_selected]
+        pdf_files = entry.get_pdf_files()
 
-    # リンクの表示
-    _render_link(entry)
+        # リンクの表示
+        _render_link(entry)
 
-    # PDF削除オプション
-    flag_delete_pdf = False
-    if pdf_files:
-        flag_delete_pdf = st.checkbox(
-            f"Delete PDF files ({len(pdf_files)} file(s))"
+        # PDF削除オプション
+        flag_delete_pdf = False
+        if pdf_files:
+            flag_delete_pdf = st.checkbox(
+                f"Delete PDF files ({len(pdf_files)} file(s))"
+            )
+
+        # 編集・削除ボタン
+        _col_edit, _col_delete, *_ = st.columns(8)
+
+        if _col_edit.button("Edit", type="primary"):
+            edit_entry(key_selected)
+
+        elif _col_delete.button("Delete"):
+            _delete_entry(paper_list, [key_selected], flag_delete_pdf)
+
+        # 削除されていない場合のみ引用・エクスポートを表示
+        elif key_selected in set(paper_list.keys()):
+            bib_text, bibdata = _render_citation(entry)
+            _render_export([entry], pdf_files)
+
+    # 複数行選択時: Edit など他機能は無効化し、エクスポートと一括削除のみ許可
+    else:
+        st.info(
+            f"{len(keys_selected)} 件の論文が選択されています。"
+            "複数選択時は Export（bib/xml）と Delete（一括）のみ実行できます。"
         )
+        entries = [paper_list[key] for key in keys_selected]
 
-    # 編集・削除ボタン
-    _col_edit, _col_delete, *_ = st.columns(8)
+        # 一括削除オプション（PDF の削除有無を選択）
+        total_pdf_count = sum(entry.get_pdf_count() for entry in entries)
+        flag_delete_pdf_multi = False
+        if total_pdf_count:
+            flag_delete_pdf_multi = st.checkbox(
+                f"Delete PDF files of selected entries "
+                f"({total_pdf_count} file(s) in total)"
+            )
 
-    if _col_edit.button("Edit", type="primary"):
-        edit_entry(key_selected)
+        if st.button("Delete"):
+            _delete_entry(paper_list, keys_selected, flag_delete_pdf_multi)
 
-    elif _col_delete.button("Delete"):
-        _delete_entry(paper_list, key_selected, entry, flag_delete_pdf)
-
-    # 削除されていない場合のみ引用・エクスポートを表示
-    elif key_selected in set(paper_list.keys()):
-        bib_text, bibdata = _render_citation(entry)
-        _render_export(bib_text, bibdata, entry, pdf_files)
+        _render_export(entries)
 
     _logger.debug("List page End")
 
