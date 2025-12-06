@@ -81,6 +81,21 @@ class config_page:
                 label="登録",
                 icon=":material/add:",
             )
+            st.page_link(
+                DIRPATH_APP / "pages/_backup.py",
+                label="バックアップ",
+                icon=":material/download:",
+            )
+            st.page_link(
+                DIRPATH_APP / "pages/_restore.py",
+                label="復元",
+                icon=":material/restore:",
+            )
+            st.page_link(
+                DIRPATH_APP / "pages/_settings.py",
+                label="設定",
+                icon=":material/settings:",
+            )
 
         st.title("PAPER MANAGER")
 

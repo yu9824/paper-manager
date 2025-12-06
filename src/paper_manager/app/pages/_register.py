@@ -17,6 +17,7 @@ from paper_manager.app.helper import (
     config_page,
     entrytype4doi,
 )
+from paper_manager.app.helper._proxy import apply_proxy_to_environment
 from paper_manager.bib import load_bib
 from paper_manager.entry import Entry, PaperList
 from paper_manager.logging import get_child_logger
@@ -65,37 +66,42 @@ def _render_bib_form() -> tuple[bool, Optional[Entry], list[UploadedFile]]:
     tuple[bool, Optional[Entry], list[UploadedFile]]
         (送信成功フラグ, 作成されたEntry, PDFファイルリスト)
     """
-    st.subheader("BIB")
+    st.markdown("#### 📄 BibTeX形式から登録")
 
     with st.form("bib_form", clear_on_submit=True):
         tab_from_bib_with_text, tab_from_bib_with_file = st.tabs(
-            ("TEXT", "FILE Upload")
+            ("📝 テキスト入力", "📎 ファイルアップロード")
         )
         with tab_from_bib_with_text:
-            bib_text_input = st.text_area("bibtex file")
+            bib_text_input = st.text_area(
+                "BibTeX形式のテキストを入力",
+                height=200,
+                help="BibTeX形式のエントリを貼り付けてください",
+                placeholder="@article{key,\n  title={Example Title},\n  author={Author Name},\n  ...\n}",
+            )
         with tab_from_bib_with_file:
             uploaded_file_bib = st.file_uploader(
-                "bibtex file (.bib)",
+                "BibTeXファイルをアップロード",
                 type="bib",
                 accept_multiple_files=False,
-                help="bibtex file (.bib), optional",
+                help=".bib形式のファイルを選択してください",
             )
 
+        st.divider()
+        st.markdown("**PDFファイル（オプション）**")
         uploaded_files = pdf_upload_form(accept_multiple=True)
 
         submitted = st.form_submit_button(
-            "",
+            "📤 登録",
             type="primary",
-            help="Submit",
-            icon=":material/send:",
-            width=100,
+            use_container_width=True,
         )
 
         if not submitted:
             return False, None, []
 
         if not (uploaded_file_bib or bib_text_input):
-            st.error("FAIL: Empty BIB")
+            st.error("❌ BibTeXデータが入力されていません。")
             return False, None, []
 
         bibtexfile_or_buffer: Union[io.StringIO, io.BytesIO] = (
@@ -107,14 +113,14 @@ def _render_bib_form() -> tuple[bool, Optional[Entry], list[UploadedFile]]:
 
         entries = load_bib(bibtexfile_or_buffer)
 
-        if len(entries) > 2:
+        if len(entries) > 1:
             st.error(
-                f"Must be only one entry. (contains {len(entries)} entries)"
+                f"❌ エントリは1つだけ登録できます。（{len(entries)} 個のエントリが含まれています）"
             )
             return False, None, []
 
         if len(entries) == 0:
-            st.error("No entry")
+            st.error("❌ 有効なエントリが見つかりませんでした。")
             return False, None, []
 
         entry = Entry(entries[tuple(entries.keys())[0]])
@@ -129,36 +135,41 @@ def _render_doi_form() -> tuple[bool, Optional[Entry], list[UploadedFile]]:
     tuple[bool, Optional[Entry], list[UploadedFile]]
         (送信成功フラグ, 作成されたEntry, PDFファイルリスト)
     """
-    st.subheader("DOI")
+    st.markdown("#### 🔗 DOIから自動取得")
 
     with st.form("doi_form", clear_on_submit=True):
         doi = st.text_input(
             "DOI",
-            help="like 'doi.org/10.1107/S0567739476001551'",
+            help="DOIを入力してください（例: 10.1107/S0567739476001551 または doi.org/10.1107/S0567739476001551）",
+            placeholder="10.1107/S0567739476001551",
         )
 
+        st.divider()
+        st.markdown("**PDFファイル（オプション）**")
         uploaded_files = pdf_upload_form(accept_multiple=True)
 
         submitted = st.form_submit_button(
-            "",
+            "📤 登録",
             type="primary",
-            help="Submit",
-            icon=":material/send:",
-            width=100,
+            use_container_width=True,
         )
 
         if not submitted:
             return False, None, []
 
         if not doi:
-            st.error("FAIL: Empty DOI")
+            st.error("❌ DOIが入力されていません。")
             return False, None, []
 
-        works = Works()
-        metadata: Optional[dict] = works.doi(doi)
+        # プロキシ設定を適用
+        apply_proxy_to_environment()
+
+        with st.spinner("🔍 DOIからメタデータを取得中..."):
+            works = Works()
+            metadata: Optional[dict] = works.doi(doi)
 
         if not metadata:
-            st.error("FAIL: Invalid DOI")
+            st.error("❌ 無効なDOI、またはメタデータの取得に失敗しました。")
             return False, None, []
 
         entry = _create_entry_from_doi_metadata(metadata)
@@ -180,11 +191,12 @@ def _render_custom_form(
     tuple[bool, Optional[Entry], list[UploadedFile]]
         (送信成功フラグ, 作成されたEntry, PDFファイルリスト)
     """
-    st.subheader("CUSTOM")
+    st.markdown("#### ✏️ 手動入力")
 
     entry_type = st.selectbox(
-        "Select entry type",
+        "エントリタイプを選択",
         options=tuple(MAP_FIELDS.keys()),
+        help="論文の種類を選択してください",
     )
 
     if already_submitted:
@@ -193,16 +205,17 @@ def _render_custom_form(
     assert entry_type is not None
 
     with st.form("custom_form", clear_on_submit=True):
+        st.markdown("**論文情報を入力**")
         entry = custom_entry(Entry(dict(ENTRYTYPE=entry_type)))
 
+        st.divider()
+        st.markdown("**PDFファイル（オプション）**")
         uploaded_files = pdf_upload_form(accept_multiple=True)
 
         submitted = st.form_submit_button(
-            "",
+            "📤 登録",
             type="primary",
-            help="Submit",
-            icon=":material/send:",
-            width=100,
+            use_container_width=True,
         )
 
         if not submitted:
@@ -214,7 +227,7 @@ def _render_custom_form(
                 entry.keys()
             )
             st.error(
-                "('{}') is/are necessary.".format("', '".join(missing_fields))
+                f"❌ 必須フィールドが不足しています: {', '.join(missing_fields)}"
             )
             return False, None, []
 
@@ -245,14 +258,26 @@ def main() -> None:
 
     BIB、DOI、カスタムの3つの方法で論文を登録できる。
     """
-    st.header("Register")
+    st.header("📝 論文登録")
     _logger.debug("Register page Start")
 
     paper_list = PaperList.from_session_state()
 
+    st.markdown(
+        """
+        以下の3つの方法で論文を登録できます：
+
+        - **BIB**: BibTeX形式のテキストまたはファイルから登録
+        - **DOI**: DOIから自動的にメタデータを取得して登録
+        - **CUSTOM**: 手動で情報を入力して登録
+        """
+    )
+
+    st.divider()
+
     # タブの作成
     tab_from_bib, tab_from_doi, tab_custom_form = st.tabs(
-        ("BIB", "DOI", "CUSTOM")
+        ("📄 BIB", "🔗 DOI", "✏️ CUSTOM")
     )
 
     # BIB登録
@@ -276,17 +301,23 @@ def main() -> None:
         if _validate_required_fields(entry_bib) and register_entry_to_list(
             paper_list, entry_bib, uploaded_files_bib
         ):
-            st.button("Clear", icon=":material/clear_all:")
+            st.balloons()
+            if st.button("🔄 クリア", use_container_width=True):
+                st.rerun()
     elif submitted_doi and entry_doi is not None:
         if _validate_required_fields(entry_doi) and register_entry_to_list(
             paper_list, entry_doi, uploaded_files_doi
         ):
-            st.button("Clear", icon=":material/clear_all:")
+            st.balloons()
+            if st.button("🔄 クリア", use_container_width=True):
+                st.rerun()
     elif submitted_custom and entry_custom is not None:
         if _validate_required_fields(entry_custom) and register_entry_to_list(
             paper_list, entry_custom, uploaded_files_custom
         ):
-            st.button("Clear", icon=":material/clear_all:")
+            st.balloons()
+            if st.button("🔄 クリア", use_container_width=True):
+                st.rerun()
 
     _logger.debug("Register page End")
 
