@@ -83,7 +83,13 @@ def _render_bib_form() -> tuple[bool, Optional[Entry], list[UploadedFile]]:
 
         uploaded_files = pdf_upload_form(accept_multiple=True)
 
-        submitted = st.form_submit_button(type="primary")
+        submitted = st.form_submit_button(
+            "",
+            type="primary",
+            help="Submit",
+            icon=":material/send:",
+            width=100,
+        )
 
         if not submitted:
             return False, None, []
@@ -133,7 +139,13 @@ def _render_doi_form() -> tuple[bool, Optional[Entry], list[UploadedFile]]:
 
         uploaded_files = pdf_upload_form(accept_multiple=True)
 
-        submitted = st.form_submit_button(type="primary")
+        submitted = st.form_submit_button(
+            "",
+            type="primary",
+            help="Submit",
+            icon=":material/send:",
+            width=100,
+        )
 
         if not submitted:
             return False, None, []
@@ -185,7 +197,13 @@ def _render_custom_form(
 
         uploaded_files = pdf_upload_form(accept_multiple=True)
 
-        submitted = st.form_submit_button(type="primary")
+        submitted = st.form_submit_button(
+            "",
+            type="primary",
+            help="Submit",
+            icon=":material/send:",
+            width=100,
+        )
 
         if not submitted:
             return False, None, []
@@ -258,17 +276,17 @@ def main() -> None:
         if _validate_required_fields(entry_bib) and register_entry_to_list(
             paper_list, entry_bib, uploaded_files_bib
         ):
-            st.button("Clear")
+            st.button("Clear", icon=":material/clear_all:")
     elif submitted_doi and entry_doi is not None:
         if _validate_required_fields(entry_doi) and register_entry_to_list(
             paper_list, entry_doi, uploaded_files_doi
         ):
-            st.button("Clear")
+            st.button("Clear", icon=":material/clear_all:")
     elif submitted_custom and entry_custom is not None:
         if _validate_required_fields(entry_custom) and register_entry_to_list(
             paper_list, entry_custom, uploaded_files_custom
         ):
-            st.button("Clear")
+            st.button("Clear", icon=":material/clear_all:")
 
     _logger.debug("Register page End")
 

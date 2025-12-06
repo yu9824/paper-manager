@@ -195,12 +195,14 @@ def _render_pdf_viewer(pdf_files: list[Path]) -> None:
 
         # ダウンロードボタン
         st.download_button(
-            "Download",
+            "",
+            icon=":material/download:",
             data=pdf_contents,
             file_name=selected_pdf.name,
-            type="primary",
             mime="application/pdf",
             key=f"download_{selected_pdf.name}",
+            help="Download",
+            width=100,
         )
 
         # PDFビューア
@@ -281,11 +283,13 @@ def _render_export(
 
             zip_buffer.seek(0)
             st.download_button(
-                "Download",
+                "",
                 data=zip_buffer.getvalue(),
-                type="primary",
                 mime="application/zip",
+                icon=":material/download:",
                 file_name=str(filepath_base_export.with_suffix(".zip")),
+                help="Download",
+                width=100,
             )
         else:
             # 単一選択時: 既存のPDFビューアを表示
@@ -295,21 +299,25 @@ def _render_export(
 
     elif ext == "bib":
         st.download_button(
-            "Download",
+            "",
             bib_text,
             file_name=str(filepath_base_export.with_suffix(".bib")),
-            type="primary",
+            icon=":material/download:",
+            help="Download",
+            width=100,
         )
         st.code(bib_text, language="latex")
 
     elif ext == "xml":
         xml_str = bib2xml(bibdata)
         st.download_button(
-            "Download",
+            "",
             data=xml_str.encode(ENCODING),
             mime="application/xml",
             file_name=str(filepath_base_export.with_suffix(".xml")),
-            type="primary",
+            icon=":material/download:",
+            help="Download",
+            width=100,
         )
         st.code(
             xml.dom.minidom.parseString(xml_str).toprettyxml(indent="  "),
@@ -397,10 +405,23 @@ def main() -> None:
         # 編集・削除ボタン
         _col_edit, _col_delete, *_ = st.columns(8)
 
-        if _col_edit.button("Edit", type="primary"):
+        if _col_edit.button(
+            "",
+            key="edit",
+            type="primary",
+            icon=":material/edit:",
+            help="Edit entry/entries",
+            use_container_width=True,
+        ):
             edit_entry(key_selected)
 
-        elif _col_delete.button("Delete"):
+        elif _col_delete.button(
+            "",
+            key="delete",
+            icon=":material/delete:",
+            help="Delete entry/entries",
+            use_container_width=True,
+        ):
             _delete_entry(paper_list, [key_selected], flag_delete_pdf)
 
         # 削除されていない場合のみ引用・エクスポートを表示
@@ -425,7 +446,7 @@ def main() -> None:
                 f"({total_pdf_count} file(s) in total)"
             )
 
-        if st.button("Delete"):
+        if st.button("", icon=":material/delete:", use_container_width=True):
             _delete_entry(paper_list, keys_selected, flag_delete_pdf_multi)
 
         _render_export(entries)
@@ -461,9 +482,20 @@ def edit_entry(key_selected: str) -> None:
 
         _col_done_edit, _col_cancel_edit, *_ = st.columns(6)
         flag_done_edit = _col_done_edit.form_submit_button(
-            "Done", type="primary"
+            "",
+            type="primary",
+            key="done",
+            icon=":material/check:",
+            help="Done",
+            use_container_width=True,
         )
-        flag_cancel_edit = _col_cancel_edit.form_submit_button("Cancel")
+        flag_cancel_edit = _col_cancel_edit.form_submit_button(
+            "",
+            key="cancel",
+            icon=":material/cancel:",
+            help="Cancel",
+            use_container_width=True,
+        )
 
     if flag_done_edit:
         # 必須フィールドのチェック（ENTRYTYPE ごと）

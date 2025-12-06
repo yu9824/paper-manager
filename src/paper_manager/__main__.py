@@ -13,11 +13,11 @@ from streamlit.web import cli
 
 from paper_manager import __version__
 from paper_manager.helper import dummy_func
-from paper_manager.logging import get_root_logger
+from paper_manager.logging import get_library_root_logger
 
 __all__ = ("main",)
 
-root_logger = get_root_logger()
+root_logger = get_library_root_logger()
 
 DIRPATH_ROOT = Path(__file__).parent
 
