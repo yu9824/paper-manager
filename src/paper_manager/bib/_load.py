@@ -17,21 +17,43 @@ _logger = get_child_logger(__name__)
 def load_bib(
     bibtexfile_or_buffer: Union[os.PathLike, str, io.BytesIO, io.StringIO],
 ) -> "MappingProxyType[str, MappingProxyType[str, str]]":
-    """load bibtex file (.bib)
+    """BibTeXファイルまたは文字列から論文エントリを読み込む。
+
+    BibTeX形式のファイル、文字列、またはファイルオブジェクトから
+    論文エントリを読み込み、辞書形式で返します。
 
     Parameters
     ----------
     bibtexfile_or_buffer : Union[os.PathLike, str, io.BytesIO, io.StringIO]
-
+        BibTeXファイルのパス、文字列、またはファイルオブジェクト
 
     Returns
     -------
     MappingProxyType[str, MappingProxyType[str, str]]
-        Map of entries (`{cite_key: entry}`)
+        エントリの辞書（``{cite_key: entry}``の形式）
+        各エントリは、フィールド名をキーとする辞書です。
 
     Examples
     --------
-    >>> map_entries = load_bib("./path/to/sample.bib")
+    >>> from paper_manager.bib import load_bib
+    >>> from pathlib import Path
+    >>> entries = load_bib(Path("./sample.bib"))
+    >>> len(entries)
+    1
+
+    文字列から読み込む場合::
+
+        >>> from io import StringIO
+        >>> bib_text = '@article{example, title={Example}, author={John Doe}}'
+        >>> entries = load_bib(StringIO(bib_text))
+        >>> entries['example']['title']
+        'Example'
+
+    Notes
+    -----
+    - 著者名は自動的に "First Last" 形式に変換され、" and " で結合されます
+    - エントリタイプは ``ENTRYTYPE`` フィールドに追加されます
+
     """
     bib_parser = bibtex.Parser()
 

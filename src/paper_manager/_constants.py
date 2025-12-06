@@ -10,6 +10,7 @@ __all__ = (
     "DIRPATH_PDF",
     "FILEPATH_LIST",
     "FILEPATH_FIELDS",
+    "FILEPATH_CONFIG",
     "COLNAME_HAS_PDF",
     "COLNAME_YEAR",
     "COLNAME_AUTHOR",
@@ -31,12 +32,17 @@ TAG_SEPARATOR = ", "
 DIRPATH_ROOT = Path(__file__).parent
 
 DIRPATH_APP = DIRPATH_ROOT / "app"
-DIRPATH_DATA = Path(os.environ["HOME"], "Documents/paper-manager")
+_data_dir = os.environ.get("PAPER_MANAGER_DATA_DIR")
+if _data_dir:
+    DIRPATH_DATA = Path(_data_dir).expanduser()
+else:
+    DIRPATH_DATA = Path.home() / ".paper-manager"
 
 
 DIRPATH_PDF = DIRPATH_DATA / "pdf"
 FILEPATH_LIST = DIRPATH_DATA / "list.json"
 FILEPATH_FIELDS = DIRPATH_APP / "fields.json"
+FILEPATH_CONFIG = DIRPATH_DATA / "config.json"
 
 COLNAME_HAS_PDF = "PDF"
 COLNAME_YEAR = "year"

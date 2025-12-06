@@ -37,6 +37,10 @@ from paper_manager.app.components import (
     update_entry_in_list,
 )
 from paper_manager.app.helper import MAP_REQUIRED_FIELDS, config_page
+from paper_manager.app.helper._orphan_pdf import (
+    delete_orphaned_pdfs,
+    find_orphaned_pdfs,
+)
 from paper_manager.entry import Entry, PaperList
 from paper_manager.helper import split
 from paper_manager.logging import get_child_logger
@@ -132,7 +136,7 @@ def _render_citation(entry: Entry) -> tuple[str, "bibtex.BibliographyData"]:
     tuple[str, bibtex.BibliographyData]
         BibTeXテキストとパースされたBibliographyDataのタプル
     """
-    st.subheader("Citation")
+    st.subheader("📝 引用情報")
 
     # bibtex
     bib_database = BibDatabase()
@@ -149,18 +153,16 @@ def _render_citation(entry: Entry) -> tuple[str, "bibtex.BibliographyData"]:
         _citation_key, bibdata.entries[_citation_key]
     )
 
-    st.text("HTML")
-    with st.container(border=True):
-        st.html(formatted_entry.text.render_as("html"))
+    with st.expander("🌐 HTML形式の引用", expanded=True):
+        with st.container(border=True):
+            st.html(formatted_entry.text.render_as("html"))
 
-    st.text("Plain text")
-    st.code(
-        formatted_entry.text.render_as("text"),
-        language="plaintext",
-        wrap_lines=True,
-    )
-
-    st.divider()
+    with st.expander("📄 プレーンテキスト形式の引用"):
+        st.code(
+            formatted_entry.text.render_as("text"),
+            language="plaintext",
+            wrap_lines=True,
+        )
 
     return bib_text, bibdata
 
@@ -229,7 +231,7 @@ def _render_export(
     is_multi = len(entries) > 1
 
     # サブヘッダーの設定
-    st.subheader("Export")
+    st.subheader("💾 エクスポート")
 
     # BibTeX テキストを生成
     bib_database = BibDatabase()
@@ -252,10 +254,10 @@ def _render_export(
 
     radio_key = "ext_multi" if is_multi else "ext"
     ext = st.radio(
-        radio_key,
+        "エクスポート形式を選択",
         options=options_file_ext,
         horizontal=True,
-        label_visibility="hidden",
+        key=radio_key,
     )
 
     if is_multi:
@@ -283,13 +285,12 @@ def _render_export(
 
             zip_buffer.seek(0)
             st.download_button(
-                "",
+                "📦 ZIPファイルをダウンロード",
                 data=zip_buffer.getvalue(),
                 mime="application/zip",
                 icon=":material/download:",
                 file_name=str(filepath_base_export.with_suffix(".zip")),
-                help="Download",
-                width=100,
+                use_container_width=True,
             )
         else:
             # 単一選択時: 既存のPDFビューアを表示
@@ -299,30 +300,30 @@ def _render_export(
 
     elif ext == "bib":
         st.download_button(
-            "",
+            "📄 BibTeXファイルをダウンロード",
             bib_text,
             file_name=str(filepath_base_export.with_suffix(".bib")),
             icon=":material/download:",
-            help="Download",
-            width=100,
+            use_container_width=True,
         )
-        st.code(bib_text, language="latex")
+        with st.expander("📋 BibTeXプレビュー"):
+            st.code(bib_text, language="latex")
 
     elif ext == "xml":
         xml_str = bib2xml(bibdata)
         st.download_button(
-            "",
+            "📄 XMLファイルをダウンロード",
             data=xml_str.encode(ENCODING),
             mime="application/xml",
             file_name=str(filepath_base_export.with_suffix(".xml")),
             icon=":material/download:",
-            help="Download",
-            width=100,
+            use_container_width=True,
         )
-        st.code(
-            xml.dom.minidom.parseString(xml_str).toprettyxml(indent="  "),
-            language="xml",
-        )
+        with st.expander("📋 XMLプレビュー"):
+            st.code(
+                xml.dom.minidom.parseString(xml_str).toprettyxml(indent="  "),
+                language="xml",
+            )
 
 
 def _delete_entry(
@@ -370,16 +371,64 @@ def main() -> None:
 
     論文一覧の表示、選択した論文の詳細表示、編集・削除機能を提供する。
     """
-    st.header("List")
+    st.header("📚 論文リスト")
     _logger.debug("List page Start")
 
     paper_list = PaperList.from_session_state()
 
     if not paper_list:
+        st.info(
+            "📝 論文が登録されていません。「登録」ページから論文を追加してください。"
+        )
         _logger.debug("List page End")
         return
 
+    # 統計情報を表示
+    total_papers = len(paper_list)
+    total_pdfs = sum(entry.get_pdf_count() for entry in paper_list.values())
+    papers_with_pdf = sum(
+        1 for entry in paper_list.values() if entry.get_pdf_count() > 0
+    )
+    orphaned_pdfs = find_orphaned_pdfs(paper_list)
+    orphaned_count = len(orphaned_pdfs)
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("📄 総論文数", total_papers)
+    with col2:
+        st.metric("📎 PDFファイル数", total_pdfs)
+    with col3:
+        st.metric("✅ PDFあり", papers_with_pdf)
+    with col4:
+        st.metric("❌ PDFなし", total_papers - papers_with_pdf)
+    with col5:
+        st.metric("⚠️ 孤立PDF", orphaned_count)
+
+    # 孤立したPDFの警告と削除機能
+    if orphaned_count > 0:
+        st.warning(
+            f"⚠️ **{orphaned_count}個の孤立したPDFファイルが見つかりました。**\n\n"
+            "これらのPDFファイルは論文リストに紐づいていません。"
+        )
+
+        with st.expander("🔍 孤立したPDFファイルの詳細", expanded=False):
+            for i, pdf_path in enumerate(orphaned_pdfs, 1):
+                st.text(f"{i}. {pdf_path.relative_to(pdf_path.parent.parent)}")
+
+            if st.button(
+                "🗑️ すべての孤立PDFを削除",
+                type="primary",
+                key="delete_orphaned",
+                use_container_width=True,
+            ):
+                deleted = delete_orphaned_pdfs(orphaned_pdfs)
+                st.success(f"✅ {deleted}個の孤立PDFファイルを削除しました。")
+                st.rerun()
+
+    st.divider()
+
     # 論文一覧テーブルの表示
+    st.subheader("論文一覧")
     keys_selected = _render_paper_table(paper_list)
 
     if not keys_selected:
@@ -392,63 +441,112 @@ def main() -> None:
         entry = paper_list[key_selected]
         pdf_files = entry.get_pdf_files()
 
-        # リンクの表示
-        _render_link(entry)
+        st.divider()
+        st.subheader("📖 論文詳細")
+
+        # 論文情報をカード形式で表示
+        with st.container(border=True):
+            col_title, col_year = st.columns([3, 1])
+            with col_title:
+                st.markdown(f"### {entry.get('title', 'N/A')}")
+            with col_year:
+                st.markdown(f"**Year:** {entry.get('year', 'N/A')}")
+
+            if entry.get("author"):
+                st.markdown(f"**著者:** {entry['author']}")
+
+            if entry.get("journal"):
+                st.markdown(f"**ジャーナル:** {entry['journal']}")
+
+            if entry.get("DOI"):
+                doi_link = entry["DOI"]
+                if not doi_link.startswith("http"):
+                    doi_link = f"https://doi.org/{doi_link}"
+                st.markdown(f"**DOI:** [{entry['DOI']}]({doi_link})")
+
+            if entry.get(COLNAME_TAGS):
+                tags = split(entry[COLNAME_TAGS], TAG_SEPARATOR)
+                if tags:
+                    st.markdown(
+                        "**タグ:** " + ", ".join(f"`{tag}`" for tag in tags)
+                    )
+
+            # リンクの表示
+            _render_link(entry)
+
+        # アクションボタン
+        st.markdown("#### アクション")
+        col_edit, col_delete, col_export = st.columns(3)
 
         # PDF削除オプション
         flag_delete_pdf = False
         if pdf_files:
-            flag_delete_pdf = st.checkbox(
-                f"Delete PDF files ({len(pdf_files)} file(s))"
-            )
+            with st.expander(
+                f"⚠️ PDFファイル削除オプション ({len(pdf_files)} ファイル)"
+            ):
+                flag_delete_pdf = st.checkbox(
+                    f"PDFファイルを削除する ({len(pdf_files)} ファイル)",
+                    help="チェックを入れると、エントリ削除時にPDFファイルも削除されます",
+                )
 
-        # 編集・削除ボタン
-        _col_edit, _col_delete, *_ = st.columns(8)
-
-        if _col_edit.button(
-            "",
+        if col_edit.button(
+            "✏️ 編集",
             key="edit",
             type="primary",
             icon=":material/edit:",
-            help="Edit entry/entries",
             use_container_width=True,
         ):
             edit_entry(key_selected)
 
-        elif _col_delete.button(
-            "",
+        if col_delete.button(
+            "🗑️ 削除",
             key="delete",
             icon=":material/delete:",
-            help="Delete entry/entries",
             use_container_width=True,
         ):
             _delete_entry(paper_list, [key_selected], flag_delete_pdf)
 
         # 削除されていない場合のみ引用・エクスポートを表示
-        elif key_selected in set(paper_list.keys()):
+        if key_selected in set(paper_list.keys()):
+            st.divider()
             bib_text, bibdata = _render_citation(entry)
             _render_export([entry], pdf_files)
 
     # 複数行選択時: Edit など他機能は無効化し、エクスポートと一括削除のみ許可
     else:
-        st.info(
-            f"{len(keys_selected)} 件の論文が選択されています。"
-            "複数選択時は Export（bib/xml）と Delete（一括）のみ実行できます。"
-        )
+        st.divider()
+        st.subheader(f"📋 選択された論文 ({len(keys_selected)} 件)")
+
+        with st.container(border=True):
+            st.info(
+                f"**{len(keys_selected)} 件の論文が選択されています。**\n\n"
+                "複数選択時はエクスポート（BibTeX/XML）と一括削除のみ実行できます。"
+            )
+
         entries = [paper_list[key] for key in keys_selected]
 
         # 一括削除オプション（PDF の削除有無を選択）
         total_pdf_count = sum(entry.get_pdf_count() for entry in entries)
         flag_delete_pdf_multi = False
         if total_pdf_count:
-            flag_delete_pdf_multi = st.checkbox(
-                f"Delete PDF files of selected entries "
-                f"({total_pdf_count} file(s) in total)"
-            )
+            with st.expander(
+                f"⚠️ PDFファイル削除オプション ({total_pdf_count} ファイル)"
+            ):
+                flag_delete_pdf_multi = st.checkbox(
+                    f"選択されたエントリのPDFファイルを削除する ({total_pdf_count} ファイル)",
+                    help="チェックを入れると、エントリ削除時にPDFファイルも削除されます",
+                )
 
-        if st.button("", icon=":material/delete:", use_container_width=True):
+        col_delete, col_export = st.columns(2)
+        if col_delete.button(
+            "🗑️ 一括削除",
+            icon=":material/delete:",
+            use_container_width=True,
+            type="primary",
+        ):
             _delete_entry(paper_list, keys_selected, flag_delete_pdf_multi)
 
+        st.divider()
         _render_export(entries)
 
     _logger.debug("List page End")

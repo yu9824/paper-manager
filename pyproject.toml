@@ -78,3 +78,6 @@ indent-width = 4
 
 [tool.ruff.lint]
 unfixable = ["F401"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"

@@ -1,10 +1,24 @@
-"""app core.
+"""Streamlitアプリケーションのコアモジュール。
 
-You can run this app with,
+このモジュールは、paper-managerのStreamlitアプリケーションの
+主要な機能を提供します。
 
-.. code-block:: bash
+アプリケーションの起動:
+    アプリケーションを起動するには、以下のコマンドを実行します::
 
-    paper-manager run   # wrapper of 'streamlit run'
+        paper-manager run
 
+    これは ``streamlit run`` のラッパーです。
+
+    開発モードで起動する場合::
+
+        paper-manager run --debug --server.address localhost
+
+ページ構成:
+    - リスト・編集ページ: 論文一覧の表示、編集、削除
+    - 登録ページ: 新しい論文の登録（BIB、DOI、カスタム入力）
+    - バックアップページ: データのバックアップ作成
+    - 復元ページ: バックアップからのデータ復元
+    - 設定ページ: プロキシ設定などのアプリケーション設定
 
 """

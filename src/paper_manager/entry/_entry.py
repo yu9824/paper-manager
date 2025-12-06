@@ -75,11 +75,40 @@ def sanitize_filename(filename: str) -> str:
 
 
 class Entry(MutableMapping):
-    """A dictionary-like class for handling bibliographic entries.
+    """論文エントリを表す辞書風のクラス。
 
-    This class stores and manages bibliographic entry data, ensuring that values
-    are stripped of leading and trailing whitespace. It also provides methods
-    for generating unique keys and sanitized filenames.
+    このクラスは、学術論文の情報（著者、タイトル、ジャーナル、DOIなど）を
+    管理するための辞書風のインターフェースを提供します。
+
+    特徴:
+        - 辞書のようにアクセス可能（``entry["title"]``）
+        - 値の前後の空白を自動的に削除
+        - 一意なキーの生成機能
+        - PDFファイル名の生成機能
+        - 複数のPDFファイルをサポート
+
+    属性:
+        pdf_dir_name: PDFファイルを保存するディレクトリ名を生成するプロパティ
+
+    メソッド:
+        get_key: 既存のキーと重複しない一意なキーを生成
+        get_pdf_dir: PDFファイルを保存するディレクトリのパスを取得
+        get_pdf_files: このエントリに関連するPDFファイルのリストを取得
+        has_pdf: PDFファイルが存在するかどうかを確認
+        get_pdf_count: 関連するPDFファイルの数を取得
+
+    例:
+        >>> entry = Entry({
+        ...     "ENTRYTYPE": "article",
+        ...     "title": "Example Paper",
+        ...     "author": "John Doe",
+        ...     "year": "2024"
+        ... })
+        >>> entry["title"]
+        'Example Paper'
+        >>> entry.pdf_dir_name
+        '2024 - John Doe - Example Paper'
+
     """
 
     def __init__(
