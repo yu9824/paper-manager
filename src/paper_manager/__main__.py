@@ -13,7 +13,7 @@ else:
 from streamlit.web import cli
 
 from paper_manager import __version__
-from paper_manager.backup import (
+from paper_manager.app.helper._backup import (
     create_backup_zip,
     get_backup_info,
     restore_from_zip,

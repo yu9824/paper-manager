@@ -37,6 +37,10 @@ from paper_manager.app.components import (
     update_entry_in_list,
 )
 from paper_manager.app.helper import MAP_REQUIRED_FIELDS, config_page
+from paper_manager.app.helper._orphan_pdf import (
+    delete_orphaned_pdfs,
+    find_orphaned_pdfs,
+)
 from paper_manager.entry import Entry, PaperList
 from paper_manager.helper import split
 from paper_manager.logging import get_child_logger
@@ -385,8 +389,10 @@ def main() -> None:
     papers_with_pdf = sum(
         1 for entry in paper_list.values() if entry.get_pdf_count() > 0
     )
+    orphaned_pdfs = find_orphaned_pdfs(paper_list)
+    orphaned_count = len(orphaned_pdfs)
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("📄 総論文数", total_papers)
     with col2:
@@ -395,6 +401,29 @@ def main() -> None:
         st.metric("✅ PDFあり", papers_with_pdf)
     with col4:
         st.metric("❌ PDFなし", total_papers - papers_with_pdf)
+    with col5:
+        st.metric("⚠️ 孤立PDF", orphaned_count)
+
+    # 孤立したPDFの警告と削除機能
+    if orphaned_count > 0:
+        st.warning(
+            f"⚠️ **{orphaned_count}個の孤立したPDFファイルが見つかりました。**\n\n"
+            "これらのPDFファイルは論文リストに紐づいていません。"
+        )
+
+        with st.expander("🔍 孤立したPDFファイルの詳細", expanded=False):
+            for i, pdf_path in enumerate(orphaned_pdfs, 1):
+                st.text(f"{i}. {pdf_path.relative_to(pdf_path.parent.parent)}")
+
+            if st.button(
+                "🗑️ すべての孤立PDFを削除",
+                type="primary",
+                key="delete_orphaned",
+                use_container_width=True,
+            ):
+                deleted = delete_orphaned_pdfs(orphaned_pdfs)
+                st.success(f"✅ {deleted}個の孤立PDFファイルを削除しました。")
+                st.rerun()
 
     st.divider()
 

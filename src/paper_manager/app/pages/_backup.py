@@ -1,5 +1,3 @@
-import json
-import zipfile
 from datetime import datetime
 from io import BytesIO
 
@@ -7,12 +5,14 @@ import streamlit as st
 
 from paper_manager import __version__
 from paper_manager._constants import (
-    DIRPATH_DATA,
     DIRPATH_PDF,
     FILEPATH_CONFIG,
     FILEPATH_LIST,
 )
 from paper_manager.app.helper import config_page
+from paper_manager.app.helper._backup import (
+    create_backup_zip as _create_backup_zip,
+)
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
@@ -26,40 +26,12 @@ def create_backup_zip() -> BytesIO:
     BytesIO
         バックアップデータを含むzipファイルのバイトストリーム
     """
-    zip_buffer = BytesIO()
-
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        # バージョン情報を保存
-        version_info = {
-            "version": __version__,
-            "backup_date": datetime.now().isoformat(),
-        }
-        zip_file.writestr(
-            "version.json",
-            json.dumps(version_info, ensure_ascii=False, indent=2),
-        )
-
-        # list.jsonを保存
-        if FILEPATH_LIST.is_file():
-            zip_file.write(FILEPATH_LIST, "list.json")
-            _logger.debug(f"Added list.json to backup: {FILEPATH_LIST}")
-
-        # config.jsonを保存
-        if FILEPATH_CONFIG.is_file():
-            zip_file.write(FILEPATH_CONFIG, "config.json")
-            _logger.debug(f"Added config.json to backup: {FILEPATH_CONFIG}")
-
-        # PDFディレクトリを保存
-        if DIRPATH_PDF.is_dir():
-            pdf_files = list(DIRPATH_PDF.rglob("*.pdf"))
-            for pdf_file in pdf_files:
-                # 相対パスを保持（pdf/ から始まるパス）
-                arcname = pdf_file.relative_to(DIRPATH_DATA)
-                zip_file.write(pdf_file, str(arcname))
-                _logger.debug(f"Added PDF to backup: {pdf_file} -> {arcname}")
-
-    zip_buffer.seek(0)
-    return zip_buffer
+    result = _create_backup_zip()
+    if isinstance(result, BytesIO):
+        return result
+    # ファイルパスが返された場合は読み込んでBytesIOに変換
+    with open(result, "rb") as f:
+        return BytesIO(f.read())
 
 
 @config_page

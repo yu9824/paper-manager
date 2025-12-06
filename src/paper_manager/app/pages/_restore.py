@@ -57,19 +57,26 @@ def restore_from_zip(uploaded_file: BytesIO) -> tuple[bool, str]:
                     f.write(zip_file.read("list.json"))
                 _logger.info(f"Restored list.json from backup")
 
-            # config.jsonを復元
+            # config.jsonを復元（存在する場合のみ）
+            config_restored = False
             if "config.json" in zip_file.namelist():
-                # 既存のconfig.jsonをバックアップ（存在する場合）
-                if FILEPATH_CONFIG.is_file():
-                    backup_path = FILEPATH_CONFIG.with_suffix(".json.backup")
-                    shutil.copy2(FILEPATH_CONFIG, backup_path)
-                    _logger.debug(f"Backed up existing config.json to {backup_path}")
+                try:
+                    # 既存のconfig.jsonをバックアップ（存在する場合）
+                    if FILEPATH_CONFIG.is_file():
+                        backup_path = FILEPATH_CONFIG.with_suffix(".json.backup")
+                        shutil.copy2(FILEPATH_CONFIG, backup_path)
+                        _logger.debug(f"Backed up existing config.json to {backup_path}")
 
-                # 新しいconfig.jsonを書き込み
-                FILEPATH_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-                with open(FILEPATH_CONFIG, "wb") as f:
-                    f.write(zip_file.read("config.json"))
-                _logger.info("Restored config.json from backup")
+                    # 新しいconfig.jsonを書き込み
+                    FILEPATH_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+                    with open(FILEPATH_CONFIG, "wb") as f:
+                        f.write(zip_file.read("config.json"))
+                    _logger.info("Restored config.json from backup")
+                    config_restored = True
+                except Exception as e:
+                    _logger.warning(f"Failed to restore config.json: {e}")
+            else:
+                _logger.debug("config.json not found in backup, skipping")
 
             # PDFファイルを復元
             pdf_restored_count = 0
@@ -98,6 +105,8 @@ def restore_from_zip(uploaded_file: BytesIO) -> tuple[bool, str]:
                 message += f"- バックアップ時のバージョン: {version_info.get('version', 'N/A')}\n"
                 message += f"- バックアップ日時: {version_info.get('backup_date', 'N/A')}\n"
             message += f"- 復元したPDFファイル数: {pdf_restored_count}\n"
+            if config_restored:
+                message += "- config.jsonを復元しました\n"
             message += f"- 現在のバージョン: {__version__}"
 
             return True, message

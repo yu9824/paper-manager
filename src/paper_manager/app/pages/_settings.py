@@ -58,14 +58,22 @@ def main() -> None:
 
         if submitted:
             # 空文字列をNoneに変換
-            http_proxy = http_proxy.strip() if http_proxy.strip() else None
-            https_proxy = https_proxy.strip() if https_proxy.strip() else None
+            http_proxy_value = (
+                http_proxy.strip()
+                if http_proxy and http_proxy.strip()
+                else None
+            )
+            https_proxy_value = (
+                https_proxy.strip()
+                if https_proxy and https_proxy.strip()
+                else None
+            )
 
             try:
-                save_proxy_config(http_proxy, https_proxy)
+                save_proxy_config(http_proxy_value, https_proxy_value)
                 st.success("✅ プロキシ設定を保存しました。")
                 _logger.info(
-                    f"Proxy settings saved: http={http_proxy}, https={https_proxy}"
+                    f"Proxy settings saved: http={http_proxy_value}, https={https_proxy_value}"
                 )
             except Exception as e:
                 st.error(f"❌ 設定の保存に失敗しました: {str(e)}")
