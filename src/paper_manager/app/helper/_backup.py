@@ -1,4 +1,27 @@
-"""バックアップ・復元機能の共通モジュール。"""
+"""バックアップ・復元機能の共通モジュール。
+
+このモジュールは、paper-managerのデータをバックアップ・復元するための
+機能を提供します。
+
+主な機能:
+    - バックアップzipファイルの作成
+    - バックアップzipファイルからの復元
+    - バックアップ情報の取得
+
+バックアップに含まれる内容:
+    - paper-managerのバージョン情報
+    - 論文リスト（list.json）
+    - 設定ファイル（config.json）
+    - すべてのPDFファイル
+
+例:
+    >>> from paper_manager.app.helper._backup import create_backup_zip
+    >>> from pathlib import Path
+    >>> backup_path = create_backup_zip("backup.zip")
+    >>> print(backup_path)
+    backup.zip
+
+"""
 
 import json
 import shutil

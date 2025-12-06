@@ -1,4 +1,26 @@
-"""孤立したPDFファイルを検出・削除する機能。"""
+"""孤立したPDFファイルを検出・削除する機能。
+
+このモジュールは、論文リストに紐づいていない孤立したPDFファイルを
+検出・削除する機能を提供します。
+
+孤立PDFとは:
+    論文リスト（list.json）にエントリが存在しないにもかかわらず、
+    PDFディレクトリに残っているPDFファイルのことです。
+    これは、エントリが削除されたがPDFファイルが残っている場合や、
+    手動でPDFファイルが追加された場合などに発生します。
+
+主な機能:
+    - 孤立PDFファイルの検出
+    - 孤立PDFファイルの削除
+
+例:
+    >>> from paper_manager.app.helper._orphan_pdf import find_orphaned_pdfs
+    >>> from paper_manager.entry import PaperList
+    >>> paper_list = PaperList.from_file()
+    >>> orphaned = find_orphaned_pdfs(paper_list)
+    >>> print(f"Found {len(orphaned)} orphaned PDF files")
+
+"""
 
 import shutil
 from pathlib import Path

@@ -1,4 +1,24 @@
-"""プロキシ設定を管理するモジュール。"""
+"""プロキシ設定を管理するモジュール。
+
+このモジュールは、DOI取得時に使用するプロキシ設定を管理します。
+
+主な機能:
+    - プロキシ設定の取得（設定ファイルと環境変数から）
+    - プロキシ設定の保存
+    - 環境変数へのプロキシ設定の適用
+
+設定の優先順位:
+    1. 設定ファイル（``~/.paper-manager/config.json``）- 最優先
+    2. 環境変数（``HTTP_PROXY``, ``HTTPS_PROXY``）
+
+例:
+    >>> from paper_manager.app.helper._proxy import get_proxy_config, save_proxy_config
+    >>> # プロキシ設定を取得
+    >>> config = get_proxy_config()
+    >>> # プロキシ設定を保存
+    >>> save_proxy_config("http://proxy.example.com:8080", "http://proxy.example.com:8080")
+
+"""
 
 import json
 import os
