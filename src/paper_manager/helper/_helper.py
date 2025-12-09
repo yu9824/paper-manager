@@ -191,3 +191,19 @@ def split(s: str, sep: str) -> tuple[str, ...]:
     if not s:
         return ()
     return tuple(map(str.strip, s.split(sep)))
+
+
+def dummy_func(x: T, *args, **kwargs) -> T:
+    """dummy function
+
+    Parameters
+    ----------
+    x : T
+        Anything
+
+    Returns
+    -------
+    T
+        same as input
+    """
+    return x

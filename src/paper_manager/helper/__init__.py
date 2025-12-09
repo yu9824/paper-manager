@@ -11,6 +11,20 @@
 
 """
 
-from ._helper import deprecated, dummy_tqdm, is_argument, is_installed, split
+from ._helper import (
+    deprecated,
+    dummy_func,
+    dummy_tqdm,
+    is_argument,
+    is_installed,
+    split,
+)
 
-__all__ = ("deprecated", "dummy_tqdm", "is_argument", "is_installed", "split")
+__all__ = (
+    "deprecated",
+    "dummy_func",
+    "dummy_tqdm",
+    "is_argument",
+    "is_installed",
+    "split",
+)
