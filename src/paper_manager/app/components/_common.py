@@ -434,24 +434,59 @@ def update_entry_in_list(
         paper_list[key_original] = entry_updated
     else:
         # PDFディレクトリ名が変わる場合
+        # 0. 新しいpdf_dir_nameが他のエントリーと重複していないかチェック
+        existing_pdf_dirs = {
+            _entry.pdf_dir_name
+            for _key, _entry in paper_list.items()
+            if _key != key_original  # 元のエントリーを除外
+        }
+        if entry_updated.pdf_dir_name in existing_pdf_dirs:
+            st.error(
+                f"FAIL: Duplicated pdf_dir_name: {entry_updated.pdf_dir_name}"
+            )
+            return False
+
         # 1. 古いPDFディレクトリを新しい名前にリネーム
         old_pdf_dir = original_entry.get_pdf_dir()
         new_pdf_dir = entry_updated.get_pdf_dir()
-        if old_pdf_dir.is_dir() and not new_pdf_dir.exists():
-            try:
-                old_pdf_dir.rename(new_pdf_dir)
-                _logger.debug(
-                    f"PDF directory renamed: {old_pdf_dir} -> {new_pdf_dir}"
-                )
-            except OSError as e:
+
+        # 古いディレクトリが存在する場合のみリネームを試みる
+        if old_pdf_dir.is_dir():
+            # 新しいディレクトリが既に存在する場合の処理
+            if new_pdf_dir.exists():
+                # 同じpdf_dir_nameを持つ別のエントリーが存在する可能性がある
+                # 重複チェックでエラーになるはずだが、念のためエラーを返す
                 error_msg = (
-                    f"Failed to rename PDF directory:\n"
+                    f"Cannot rename PDF directory: destination already exists\n"
                     f"From: {old_pdf_dir}\n"
-                    f"To: {new_pdf_dir}"
+                    f"To: {new_pdf_dir}\n"
+                    f"This may indicate a duplicate pdf_dir_name."
                 )
-                _logger.error(f"{error_msg}: {e}")
-                st.error(f"{error_msg}\nError: {str(e)}")
-                # リネームに失敗した場合は、更新を続行するが警告を表示
+                _logger.error(error_msg)
+                st.error(error_msg)
+                return False
+            else:
+                # 新しいディレクトリが存在しない場合、リネームを実行
+                try:
+                    old_pdf_dir.rename(new_pdf_dir)
+                    _logger.debug(
+                        f"PDF directory renamed: {old_pdf_dir} -> {new_pdf_dir}"
+                    )
+                except OSError as e:
+                    error_msg = (
+                        f"Failed to rename PDF directory:\n"
+                        f"From: {old_pdf_dir}\n"
+                        f"To: {new_pdf_dir}"
+                    )
+                    _logger.error(f"{error_msg}: {e}")
+                    st.error(f"{error_msg}\nError: {str(e)}")
+                    # リネームに失敗した場合は、更新を中止
+                    return False
+        else:
+            # 古いディレクトリが存在しない場合（PDFがまだ保存されていない場合）
+            _logger.debug(
+                f"PDF directory does not exist, skipping rename: {old_pdf_dir}"
+            )
 
         # 2. 新しいキーで登録
         new_id = entry_updated.get_key(paper_list.keys())
