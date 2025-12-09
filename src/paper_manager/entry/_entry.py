@@ -21,7 +21,7 @@ from paper_manager._constants import (
     ENCODING,
     FILEPATH_LIST,
 )
-from paper_manager.helper import split
+from paper_manager.helper import deprecated, split
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
@@ -364,6 +364,8 @@ class Entry(MutableMapping):
             return []
 
         try:
+            # 後方互換性: 古い命名規則のファイルを新しい命名規則に変換
+            self._migrate_legacy_pdf_filenames(base_dir)
             return sorted(pdf_dir.glob("*.pdf"))
         except OSError as e:
             _logger.error(f"Failed to access PDF directory: {pdf_dir}: {e}")
@@ -400,11 +402,18 @@ class Entry(MutableMapping):
         return len(self.get_pdf_files(base_dir))
 
     @property
+    @deprecated(
+        "Use `pdf_dir_name` and `get_pdf_files()` for multiple PDF support. "
+        "This property is kept for backward compatibility and will be removed "
+        "in a future version."
+    )
     def pdf_filename(self) -> str:
         """Generate a sanitized filename for the entry's PDF file.
 
         .. deprecated::
             Use `pdf_dir_name` and `get_pdf_files()` for multiple PDF support.
+            This property is kept for backward compatibility and will be removed
+            in a future version.
 
         The filename format is '<year> - <first_author> - <title>.pdf'.
 
@@ -445,6 +454,93 @@ class Entry(MutableMapping):
         """
         filename = f"{index:02d}.pdf"
         return filename
+
+    @deprecated(
+        "This function is for backward compatibility and will be removed "
+        "in a future version. It converts old PDF filenames (e.g., "
+        "'<pdf_dir_name>.pdf' or '<pdf_dir_name>_01.pdf') to the new naming "
+        "convention (e.g., '00.pdf', '01.pdf')."
+    )
+    def _migrate_legacy_pdf_filenames(
+        self, base_dir: Union[Path, None] = None
+    ) -> None:
+        """Migrate legacy PDF filenames to the new naming convention.
+
+        .. deprecated::
+            This function is for backward compatibility and will be removed
+            in a future version. It converts old PDF filenames (e.g.,
+            ``'<pdf_dir_name>.pdf'`` or ``'<pdf_dir_name>_01.pdf'``) to the
+            new naming convention (e.g., ``'00.pdf'``, ``'01.pdf'``).
+
+        This function checks for PDF files with old naming patterns and
+        renames them to the new zero-padded index format.
+
+        Parameters
+        ----------
+        base_dir : Union[Path, None], optional
+            Base directory for PDF storage. If None, uses DIRPATH_PDF.
+        """
+        pdf_dir = self.get_pdf_dir(base_dir)
+        if not pdf_dir.is_dir():
+            return
+
+        try:
+            all_pdfs = list(pdf_dir.glob("*.pdf"))
+        except OSError as e:
+            _logger.error(f"Failed to access PDF directory: {pdf_dir}: {e}")
+            return
+
+        # 新しい命名規則のファイル名パターン（00.pdf, 01.pdfなど）
+        new_pattern = re.compile(r"^\d{2}\.pdf$")
+
+        # 古い命名規則のファイルを検出
+        legacy_files = []
+        new_files = []
+
+        for pdf_file in all_pdfs:
+            filename = pdf_file.name
+            if new_pattern.match(filename):
+                # 新しい命名規則のファイル
+                new_files.append(filename)
+            else:
+                # 古い命名規則のファイル
+                legacy_files.append(pdf_file)
+
+        if not legacy_files:
+            # 古いファイルがない場合は何もしない
+            return
+
+        # 既存の新しいファイル名から使用されているインデックスを取得
+        used_indices = set()
+        for filename in new_files:
+            try:
+                index = int(filename[:2])  # "00.pdf" -> 0
+                used_indices.add(index)
+            except ValueError:
+                continue
+
+        # 古いファイルを新しい命名規則に変換
+        index = 0
+        for legacy_file in legacy_files:
+            # 使用されていないインデックスを見つける
+            while index in used_indices:
+                index += 1
+
+            new_name = self._generate_pdf_filename(index)
+            new_path = pdf_dir / new_name
+
+            try:
+                legacy_file.rename(new_path)
+                _logger.debug(
+                    f"Legacy PDF filename migrated: {legacy_file.name} -> {new_name}"
+                )
+                used_indices.add(index)
+                index += 1
+            except OSError as e:
+                _logger.error(
+                    f"Failed to migrate legacy PDF filename: {legacy_file.name} -> {new_name}: {e}"
+                )
+                # エラーが発生しても次のファイルの処理を続行
 
 
 class PaperList(MutableMapping):
