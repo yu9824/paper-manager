@@ -7,7 +7,9 @@
     split: セパレータで文字列を分割
     is_installed: パッケージがインストールされているか確認
     dummy_func: ダミー関数（何もしない）
-    is_argument: コマンドライン引数かどうかを確認
+    is_argument: 関数のシグネチャに引数が存在するか確認
+    deprecated: 関数を非推奨としてマークするデコレータ
+    dummy_tqdm: tqdmのダミークラス（プログレスバーが不要な場合に使用）
 
 """
 

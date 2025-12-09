@@ -41,7 +41,7 @@ Streamlitベースのアプリケーションです。
 例:
     >>> from paper_manager import __version__
     >>> print(__version__)
-    1.0.3
+    2.0.0
 
 """
 
