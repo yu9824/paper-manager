@@ -197,13 +197,28 @@ def save_pdfs(
         return 0
 
     pdf_dir = entry.get_pdf_dir(base_dir)
-    pdf_dir.mkdir(parents=True, exist_ok=True)
+
+    # ディレクトリ作成時のエラーハンドリング
+    try:
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        error_msg = f"Failed to create PDF directory: {pdf_dir}"
+        _logger.error(f"{error_msg}: {e}")
+        st.error(f"{error_msg}\nError: {str(e)}")
+        return 0
 
     # 既存のPDFファイル名を取得しておき、重複しない新しい名前を付与する
-    existing_files = {f.name for f in pdf_dir.glob("*.pdf")}
-    index = 0
+    try:
+        existing_files = {f.name for f in pdf_dir.glob("*.pdf")}
+    except OSError as e:
+        error_msg = f"Failed to access PDF directory: {pdf_dir}"
+        _logger.error(f"{error_msg}: {e}")
+        st.error(f"{error_msg}\nError: {str(e)}")
+        return 0
 
+    index = 0
     saved_count = 0
+
     for uploaded_file in uploaded_files:
         # エントリに基づいたわかりやすいファイル名を生成
         while True:
@@ -213,8 +228,28 @@ def save_pdfs(
             index += 1
 
         filepath = pdf_dir / new_name
-        with open(filepath, mode="wb") as f:
-            f.write(uploaded_file.getvalue())
+
+        # パス長をチェック
+        full_path_str = str(filepath)
+        if len(full_path_str) > 250:  # Windows MAX_PATH制限を考慮
+            error_msg = (
+                f"File path is too long ({len(full_path_str)} characters):\n"
+                f"{filepath}\n"
+                f"Please shorten the folder name or move the base directory."
+            )
+            _logger.error(error_msg)
+            st.error(error_msg)
+            continue  # このファイルはスキップして次のファイルを試す
+
+        # ファイル保存時のエラーハンドリング
+        try:
+            with open(filepath, mode="wb") as f:
+                f.write(uploaded_file.getvalue())
+        except OSError as e:
+            error_msg = f"Failed to save PDF file: {filepath}"
+            _logger.error(f"{error_msg}: {e}")
+            st.error(f"{error_msg}\nError: {str(e)}")
+            continue  # このファイルはスキップして次のファイルを試す
 
         existing_files.add(new_name)
         _logger.debug(f"PDF saved: {filepath}")
@@ -252,32 +287,55 @@ def delete_pdfs(
         deleted_count = 0
         for filepath in specific_files:
             if filepath.is_file():
-                filepath.unlink()
-                _logger.debug(f"PDF deleted: {filepath}")
-                deleted_count += 1
+                try:
+                    filepath.unlink()
+                    _logger.debug(f"PDF deleted: {filepath}")
+                    deleted_count += 1
+                except OSError as e:
+                    error_msg = f"Failed to delete PDF file: {filepath}"
+                    _logger.error(f"{error_msg}: {e}")
+                    st.error(f"{error_msg}\nError: {str(e)}")
 
         # ディレクトリが空になったら削除
         pdf_dir = entry.get_pdf_dir(base_dir)
-        if pdf_dir.is_dir() and not any(pdf_dir.iterdir()):
-            pdf_dir.rmdir()
-            _logger.debug(f"Empty PDF directory deleted: {pdf_dir}")
+        if pdf_dir.is_dir():
+            try:
+                if not any(pdf_dir.iterdir()):
+                    pdf_dir.rmdir()
+                    _logger.debug(f"Empty PDF directory deleted: {pdf_dir}")
+            except OSError as e:
+                error_msg = f"Failed to delete empty PDF directory: {pdf_dir}"
+                _logger.error(f"{error_msg}: {e}")
+                # ディレクトリ削除の失敗は警告のみ（ファイルは削除済み）
 
         return deleted_count
 
     # 全PDFを削除（ディレクトリごと削除）
     pdf_dir = entry.get_pdf_dir(base_dir)
     if pdf_dir.is_dir():
-        file_count = len(list(pdf_dir.glob("*.pdf")))
-        shutil.rmtree(pdf_dir)
-        _logger.debug(f"PDF directory deleted: {pdf_dir}")
-        return file_count
+        try:
+            file_count = len(list(pdf_dir.glob("*.pdf")))
+            shutil.rmtree(pdf_dir)
+            _logger.debug(f"PDF directory deleted: {pdf_dir}")
+            return file_count
+        except OSError as e:
+            error_msg = f"Failed to delete PDF directory: {pdf_dir}"
+            _logger.error(f"{error_msg}: {e}")
+            st.error(f"{error_msg}\nError: {str(e)}")
+            return 0
 
     # 後方互換性: 旧形式の単一PDFファイルを削除
     legacy_pdf = base_dir / entry.pdf_filename
     if legacy_pdf.is_file():
-        legacy_pdf.unlink()
-        _logger.debug(f"Legacy PDF deleted: {legacy_pdf}")
-        return 1
+        try:
+            legacy_pdf.unlink()
+            _logger.debug(f"Legacy PDF deleted: {legacy_pdf}")
+            return 1
+        except OSError as e:
+            error_msg = f"Failed to delete legacy PDF file: {legacy_pdf}"
+            _logger.error(f"{error_msg}: {e}")
+            st.error(f"{error_msg}\nError: {str(e)}")
+            return 0
 
     return 0
 
@@ -380,10 +438,20 @@ def update_entry_in_list(
         old_pdf_dir = original_entry.get_pdf_dir()
         new_pdf_dir = entry_updated.get_pdf_dir()
         if old_pdf_dir.is_dir() and not new_pdf_dir.exists():
-            old_pdf_dir.rename(new_pdf_dir)
-            _logger.debug(
-                f"PDF directory renamed: {old_pdf_dir} -> {new_pdf_dir}"
-            )
+            try:
+                old_pdf_dir.rename(new_pdf_dir)
+                _logger.debug(
+                    f"PDF directory renamed: {old_pdf_dir} -> {new_pdf_dir}"
+                )
+            except OSError as e:
+                error_msg = (
+                    f"Failed to rename PDF directory:\n"
+                    f"From: {old_pdf_dir}\n"
+                    f"To: {new_pdf_dir}"
+                )
+                _logger.error(f"{error_msg}: {e}")
+                st.error(f"{error_msg}\nError: {str(e)}")
+                # リネームに失敗した場合は、更新を続行するが警告を表示
 
         # 2. 新しいキーで登録
         new_id = entry_updated.get_key(paper_list.keys())

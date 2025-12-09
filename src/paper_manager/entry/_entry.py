@@ -28,6 +28,11 @@ _logger = get_child_logger(__name__)
 
 KEY_PAPER_LIST = "paper_list"
 
+# パス長制限（WindowsのMAX_PATH 260文字を考慮して、安全な上限を設定）
+# base_dir + pdf_dir_name + ファイル名（例：00.pdf）の合計がこの値を超えないようにする
+MAX_PATH_LENGTH = 250  # 安全マージンを考慮
+MAX_DIRNAME_LENGTH = 200  # フォルダ名の最大長
+
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize a filename by replacing invalid characters with underscores.
@@ -228,6 +233,8 @@ class Entry(MutableMapping):
         """Generate a sanitized directory name for the entry's PDF files.
 
         The directory name format is '<year> - <first_author> - <title>'.
+        If the resulting name is too long, the title will be truncated to
+        fit within the maximum directory name length.
 
         Returns
         -------
@@ -239,9 +246,33 @@ class Entry(MutableMapping):
         if first_author == "":
             first_author = "Unknown"
         title = self.get("title", "Unknown")
-        return sanitize_filename(
-            "{} - {} - {}".format(year, first_author, title)
+
+        # 基本フォーマット
+        base_format = "{} - {} - {}"
+        dir_name = sanitize_filename(
+            base_format.format(year, first_author, title)
         )
+
+        # フォルダ名が長すぎる場合はタイトルを切り詰める
+        if len(dir_name) > MAX_DIRNAME_LENGTH:
+            # 年と著者名の長さを計算
+            prefix = f"{year} - {first_author} - "
+            max_title_length = MAX_DIRNAME_LENGTH - len(prefix)
+
+            if max_title_length > 0:
+                # タイトルを切り詰める（末尾に...を追加）
+                truncated_title = title[: max_title_length - 3] + "..."
+                dir_name = sanitize_filename(
+                    base_format.format(year, first_author, truncated_title)
+                )
+            else:
+                # それでも長すぎる場合は、年と著者名のみ
+                dir_name = sanitize_filename(f"{year} - {first_author}")
+                if len(dir_name) > MAX_DIRNAME_LENGTH:
+                    # 最後の手段：年のみ
+                    dir_name = sanitize_filename(year)
+
+        return dir_name
 
     def get_pdf_dir(self, base_dir: Union[Path, None] = None) -> Path:
         """Get the directory path for storing PDF files.
@@ -258,7 +289,17 @@ class Entry(MutableMapping):
         """
         if base_dir is None:
             base_dir = DIRPATH_PDF
-        return base_dir / self.pdf_dir_name
+
+        pdf_dir = base_dir / self.pdf_dir_name
+
+        # パス長をチェック（警告のみ、エラーは発生させない）
+        full_path_str = str(pdf_dir)
+        if len(full_path_str) > MAX_PATH_LENGTH:
+            _logger.warning(
+                f"PDF directory path is very long ({len(full_path_str)} chars): {pdf_dir}"
+            )
+
+        return pdf_dir
 
     def get_pdf_files(self, base_dir: Union[Path, None] = None) -> list[Path]:
         """Get a list of PDF files associated with this entry.
@@ -280,9 +321,23 @@ class Entry(MutableMapping):
             legacy_base_dir = base_dir or DIRPATH_PDF
             legacy_pdf = legacy_base_dir / self.pdf_filename
             if legacy_pdf.is_file():
-                pdf_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    pdf_dir.mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    _logger.error(
+                        f"Failed to create PDF directory for migration: {pdf_dir}: {e}"
+                    )
+                    # ディレクトリ作成に失敗した場合は、旧形式のファイルをそのまま返す
+                    return [legacy_pdf]
 
-                existing_files = {f.name for f in pdf_dir.glob("*.pdf")}
+                try:
+                    existing_files = {f.name for f in pdf_dir.glob("*.pdf")}
+                except OSError as e:
+                    _logger.error(
+                        f"Failed to access PDF directory: {pdf_dir}: {e}"
+                    )
+                    return [legacy_pdf]
+
                 index = 0
                 # 既存ファイルと重複しない新しいファイル名を決定
                 while True:
@@ -292,16 +347,27 @@ class Entry(MutableMapping):
                     index += 1
 
                 new_path = pdf_dir / new_name
-                legacy_pdf.rename(new_path)
-                _logger.debug(
-                    "Legacy PDF migrated: %s -> %s", legacy_pdf, new_path
-                )
-                return [new_path]
+                try:
+                    legacy_pdf.rename(new_path)
+                    _logger.debug(
+                        "Legacy PDF migrated: %s -> %s", legacy_pdf, new_path
+                    )
+                    return [new_path]
+                except OSError as e:
+                    _logger.error(
+                        f"Failed to migrate legacy PDF: {legacy_pdf} -> {new_path}: {e}"
+                    )
+                    # リネームに失敗した場合は、旧形式のファイルをそのまま返す
+                    return [legacy_pdf]
 
             # 旧形式のファイルも存在しない場合は空リスト
             return []
 
-        return sorted(pdf_dir.glob("*.pdf"))
+        try:
+            return sorted(pdf_dir.glob("*.pdf"))
+        except OSError as e:
+            _logger.error(f"Failed to access PDF directory: {pdf_dir}: {e}")
+            return []
 
     def has_pdf(self, base_dir: Union[Path, None] = None) -> bool:
         """Check if this entry has any associated PDF files.
@@ -361,8 +427,9 @@ class Entry(MutableMapping):
     def _generate_pdf_filename(self, index: int) -> str:
         """Generate a standardized PDF filename inside the PDF directory.
 
-        The filename is based on ``pdf_dir_name`` so that it is easily
-        identifiable and close to the folder name.
+        The filename is a zero-padded index to keep the file path short and
+        avoid path length errors. The folder name already contains the entry
+        information, so the filename only needs to be an index.
 
         Parameters
         ----------
@@ -373,16 +440,11 @@ class Entry(MutableMapping):
         Returns
         -------
         str
-            A sanitized filename such as
-            ``'<pdf_dir_name>.pdf'`` (for index 0) or
-            ``'<pdf_dir_name>_01.pdf'`` (for index 1).
+            A zero-padded filename such as ``'00.pdf'`` (for index 0) or
+            ``'01.pdf'`` (for index 1).
         """
-        base_name = self.pdf_dir_name
-        if index == 0:
-            filename = f"{base_name}.pdf"
-        else:
-            filename = f"{base_name}_{index:02d}.pdf"
-        return sanitize_filename(filename)
+        filename = f"{index:02d}.pdf"
+        return filename
 
 
 class PaperList(MutableMapping):
