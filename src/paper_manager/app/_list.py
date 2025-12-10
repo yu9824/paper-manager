@@ -167,13 +167,15 @@ def _render_citation(entry: Entry) -> tuple[str, "bibtex.BibliographyData"]:
     return bib_text, bibdata
 
 
-def _render_pdf_viewer(pdf_files: list[Path]) -> None:
+def _render_pdf_viewer(pdf_files: list[Path], entry: Entry) -> None:
     """複数のPDFファイルを表示する。
 
     Parameters
     ----------
     pdf_files : list[Path]
         表示するPDFファイルのリスト
+    entry : Entry
+        論文エントリ
     """
     if not pdf_files:
         st.info("No PDF files available.")
@@ -195,12 +197,20 @@ def _render_pdf_viewer(pdf_files: list[Path]) -> None:
         with open(selected_pdf, mode="rb") as f:
             pdf_contents = f.read()
 
+        # ファイル名の決定: 1枚だけの場合はディレクトリ名_{index:02d}.pdf
+        if len(pdf_files) == 1:
+            # ファイル名からインデックスを抽出（例: "00.pdf" -> 0）
+            index = int(selected_pdf.stem)
+            download_filename = f"{entry.pdf_dir_name}_{index:02d}.pdf"
+        else:
+            download_filename = selected_pdf.name
+
         # ダウンロードボタン
         st.download_button(
             "",
             icon=":material/download:",
             data=pdf_contents,
-            file_name=selected_pdf.name,
+            file_name=download_filename,
             mime="application/pdf",
             key=f"download_{selected_pdf.name}",
             help="Download",
@@ -296,7 +306,7 @@ def _render_export(
             # 単一選択時: 既存のPDFビューアを表示
             if pdf_files is None:
                 return
-            _render_pdf_viewer(list(pdf_files))
+            _render_pdf_viewer(list(pdf_files), entries[0])
 
     elif ext == "bib":
         st.download_button(
