@@ -5,7 +5,6 @@ from collections.abc import Sequence
 from copy import deepcopy
 from datetime import datetime
 from io import BytesIO
-from logging import DEBUG
 from pathlib import Path
 from typing import Union
 
@@ -628,6 +627,4 @@ def edit_entry(key_selected: str) -> None:
 
 
 if __name__ == "__main__":
-    _logger.setLevel(DEBUG)
-
     main()
