@@ -41,11 +41,11 @@ Streamlitベースのアプリケーションです。
 例:
     >>> from paper_manager import __version__
     >>> print(__version__)
-    2.1.1
+    2.1.2
 
 """
 
-__version__ = "2.1.1"
+__version__ = "2.1.2"
 __license__ = "MIT"
 __author__ = "yu9824"
 __copyright__ = "Copyright © 2024 yu9824"
