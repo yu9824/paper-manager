@@ -9,7 +9,6 @@ import streamlit as st
 from paper_manager import __version__
 from paper_manager._constants import (
     DIRPATH_DATA,
-    DIRPATH_PDF,
     ENCODING,
     FILEPATH_CONFIG,
     FILEPATH_LIST,
@@ -49,13 +48,15 @@ def restore_from_zip(uploaded_file: BytesIO) -> tuple[bool, str]:
                 if FILEPATH_LIST.is_file():
                     backup_path = FILEPATH_LIST.with_suffix(".json.backup")
                     shutil.copy2(FILEPATH_LIST, backup_path)
-                    _logger.debug(f"Backed up existing list.json to {backup_path}")
+                    _logger.debug(
+                        f"Backed up existing list.json to {backup_path}"
+                    )
 
                 # 新しいlist.jsonを書き込み
                 FILEPATH_LIST.parent.mkdir(parents=True, exist_ok=True)
                 with open(FILEPATH_LIST, "wb") as f:
                     f.write(zip_file.read("list.json"))
-                _logger.info(f"Restored list.json from backup")
+                _logger.info("Restored list.json from backup")
 
             # config.jsonを復元（存在する場合のみ）
             config_restored = False
@@ -63,9 +64,13 @@ def restore_from_zip(uploaded_file: BytesIO) -> tuple[bool, str]:
                 try:
                     # 既存のconfig.jsonをバックアップ（存在する場合）
                     if FILEPATH_CONFIG.is_file():
-                        backup_path = FILEPATH_CONFIG.with_suffix(".json.backup")
+                        backup_path = FILEPATH_CONFIG.with_suffix(
+                            ".json.backup"
+                        )
                         shutil.copy2(FILEPATH_CONFIG, backup_path)
-                        _logger.debug(f"Backed up existing config.json to {backup_path}")
+                        _logger.debug(
+                            f"Backed up existing config.json to {backup_path}"
+                        )
 
                     # 新しいconfig.jsonを書き込み
                     FILEPATH_CONFIG.parent.mkdir(parents=True, exist_ok=True)
@@ -100,7 +105,7 @@ def restore_from_zip(uploaded_file: BytesIO) -> tuple[bool, str]:
             # セッションステートを更新
             PaperList.from_file().to_session_state()
 
-            message = f"復元が完了しました。\n"
+            message = "復元が完了しました。\n"
             if version_info:
                 message += f"- バックアップ時のバージョン: {version_info.get('version', 'N/A')}\n"
                 message += f"- バックアップ日時: {version_info.get('backup_date', 'N/A')}\n"
@@ -153,7 +158,9 @@ def main() -> None:
 
     if uploaded_file is not None:
         # ファイル情報を表示
-        st.info(f"アップロードされたファイル: {uploaded_file.name} ({uploaded_file.size:,} bytes)")
+        st.info(
+            f"アップロードされたファイル: {uploaded_file.name} ({uploaded_file.size:,} bytes)"
+        )
 
         # プレビュー（zipファイルの内容を確認）
         try:
@@ -180,11 +187,15 @@ def main() -> None:
         if st.button("復元を実行", type="primary", icon=":material/restore:"):
             # ファイルポインタをリセット
             uploaded_file.seek(0)
-            success, message = restore_from_zip(BytesIO(uploaded_file.getvalue()))
+            success, message = restore_from_zip(
+                BytesIO(uploaded_file.getvalue())
+            )
 
             if success:
                 st.success(message)
-                st.info("ページを再読み込みして、復元されたデータを確認してください。")
+                st.info(
+                    "ページを再読み込みして、復元されたデータを確認してください。"
+                )
                 st.rerun()
             else:
                 st.error(message)
@@ -193,8 +204,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    from logging import DEBUG
-
-    _logger.setLevel(DEBUG)
     main()
-

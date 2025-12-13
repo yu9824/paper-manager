@@ -114,7 +114,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    from logging import DEBUG
-
-    _logger.setLevel(DEBUG)
     main()
