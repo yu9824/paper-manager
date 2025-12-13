@@ -22,7 +22,6 @@ from streamlit_pdf_viewer import pdf_viewer
 from paper_manager._constants import (
     AUTHOR_SEPARATOR,
     COLNAME_AUTHOR,
-    COLNAME_DOI,
     COLNAME_HAS_PDF,
     COLNAME_JOURNAL,
     COLNAME_TAGS,
@@ -471,12 +470,6 @@ def main() -> None:
             if entry.get(COLNAME_JOURNAL):
                 st.markdown(f"**ジャーナル:** {entry[COLNAME_JOURNAL]}")
 
-            if entry.get(COLNAME_DOI):
-                doi_link = entry[COLNAME_DOI]
-                if not doi_link.startswith("http"):
-                    doi_link = f"https://doi.org/{doi_link}"
-                st.markdown(f"**DOI:** [{entry[COLNAME_DOI]}]({doi_link})")
-
             if entry.get(COLNAME_TAGS):
                 tags = split(entry[COLNAME_TAGS], TAG_SEPARATOR)
                 if tags:
@@ -484,8 +477,8 @@ def main() -> None:
                         "**タグ:** " + ", ".join(f"`{tag}`" for tag in tags)
                     )
 
-            # リンクの表示
-            _render_link(entry)
+        # リンクの表示
+        _render_link(entry)
 
         # アクションボタン
         st.markdown("#### アクション")
