@@ -41,6 +41,7 @@ from paper_manager.app.components import (
 from paper_manager.app.helper import MAP_REQUIRED_FIELDS, config_page
 from paper_manager.app.helper._orphan_pdf import (
     delete_orphaned_pdfs,
+    find_closest_entry_for_orphaned_pdf,
     find_orphaned_pdfs,
 )
 from paper_manager.entry import Entry, PaperList
@@ -425,7 +426,32 @@ def main() -> None:
 
         with st.expander("🔍 孤立したPDFファイルの詳細", expanded=False):
             for i, pdf_path in enumerate(orphaned_pdfs, 1):
-                st.text(f"{i}. {pdf_path.relative_to(pdf_path.parent.parent)}")
+                # 最も近いエントリを検索
+                closest_match = find_closest_entry_for_orphaned_pdf(
+                    pdf_path, paper_list
+                )
+
+                # PDFファイルのパスを表示
+                pdf_display_path = pdf_path.relative_to(pdf_path.parent.parent)
+                if closest_match:
+                    entry, similarity = closest_match
+                    entry_title = entry.get(COLNAME_TITLE, "N/A")
+                    entry_author = entry.get(COLNAME_AUTHOR, "N/A")
+                    entry_year = entry.get(COLNAME_YEAR, "N/A")
+                    similarity_percent = int(similarity * 100)
+
+                    st.markdown(
+                        f"**{i}. {pdf_display_path}**\n\n"
+                        f"📌 最も近いエントリ（類似度: {similarity_percent}%）:\n"
+                        f"- **タイトル**: {entry_title}\n"
+                        f"- **著者**: {entry_author}\n"
+                        f"- **年**: {entry_year}\n"
+                        f"- **pdf_dir_name**: `{entry.pdf_dir_name}`"
+                    )
+                else:
+                    st.text(
+                        f"{i}. {pdf_display_path} (類似するエントリが見つかりませんでした)"
+                    )
 
             if st.button(
                 "🗑️ すべての孤立PDFを削除",
