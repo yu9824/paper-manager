@@ -17,6 +17,9 @@ import streamlit as st
 
 from paper_manager._constants import (
     AUTHOR_SEPARATOR,
+    COLNAME_AUTHOR,
+    COLNAME_TITLE,
+    COLNAME_YEAR,
     DIRPATH_PDF,
     ENCODING,
     FILEPATH_LIST,
@@ -147,7 +150,7 @@ class Entry(MutableMapping):
     def _normalize_key(self, key: str) -> str:
         """Normalize a key according to the entry's key naming convention.
 
-        Keys "ID" and "ENTRYTYPE" are kept in uppercase, while all other keys
+        Keys "ID", "ENTRYTYPE", and "DOI" are kept in uppercase, while all other keys
         are converted to lowercase.
 
         Parameters
@@ -158,9 +161,9 @@ class Entry(MutableMapping):
         Returns
         -------
         str
-            The normalized key (uppercase for "ID"/"ENTRYTYPE", lowercase for others).
+            The normalized key (uppercase for "ID"/"ENTRYTYPE"/"DOI", lowercase for others).
         """
-        if key.upper() in {"ID", "ENTRYTYPE"}:
+        if key.upper() in {"ID", "ENTRYTYPE", "DOI"}:
             return key.upper()
         return key.lower()
 
@@ -246,13 +249,15 @@ class Entry(MutableMapping):
         st_keys = set(keys)
 
         first_author = (
-            self["author"].split(AUTHOR_SEPARATOR)[0]
-            if "author" in self
+            self[COLNAME_AUTHOR].split(AUTHOR_SEPARATOR)[0]
+            if COLNAME_AUTHOR in self
             else "Unknown"
         )
         while (
             key := "{0}{1}_{2}".format(
-                first_author.replace(" ", ""), self.get("year", "YYYY"), i
+                first_author.replace(" ", ""),
+                self.get(COLNAME_YEAR, "YYYY"),
+                i,
             )
         ) in st_keys:
             i += 1
@@ -271,11 +276,11 @@ class Entry(MutableMapping):
         str
             A sanitized directory name for the entry.
         """
-        year = self.get("year", "YYYY")
-        first_author = split(self.get("author", ""), AUTHOR_SEPARATOR)[0]
+        year = self.get(COLNAME_YEAR, "YYYY")
+        first_author = split(self.get(COLNAME_AUTHOR, ""), AUTHOR_SEPARATOR)[0]
         if first_author == "":
             first_author = "Unknown"
-        title = self.get("title", "Unknown")
+        title = self.get(COLNAME_TITLE, "Unknown")
 
         # 基本フォーマット
         base_format = "{} - {} - {}"
@@ -416,9 +421,7 @@ class Entry(MutableMapping):
         try:
             existing_files = {f.name for f in pdf_dir.glob("*.pdf")}
         except OSError as e:
-            _logger.error(
-                f"Failed to access PDF directory: {pdf_dir}: {e}"
-            )
+            _logger.error(f"Failed to access PDF directory: {pdf_dir}: {e}")
             return [legacy_pdf]
 
         # 既存ファイルと重複しない新しいファイル名を決定
@@ -495,13 +498,13 @@ class Entry(MutableMapping):
         str
             A sanitized filename for the entry.
         """
-        year = self.get("year", "YYYY")
+        year = self.get(COLNAME_YEAR, "YYYY")
         first_author = (
-            self["author"].split(AUTHOR_SEPARATOR)[0]
-            if "author" in self
+            self[COLNAME_AUTHOR].split(AUTHOR_SEPARATOR)[0]
+            if COLNAME_AUTHOR in self
             else "Unknown"
         )
-        title = self["title"]
+        title = self[COLNAME_TITLE]
         return sanitize_filename(
             "{} - {} - {}.pdf".format(year, first_author, title)
         )
