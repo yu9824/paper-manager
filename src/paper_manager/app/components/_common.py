@@ -8,7 +8,9 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from paper_manager._constants import (
     AUTHOR_SEPARATOR,
+    COLNAME_AUTHOR,
     COLNAME_TAGS,
+    COLNAME_YEAR,
     DIRPATH_PDF,
     TAG_SEPARATOR,
 )
@@ -82,7 +84,7 @@ def custom_entry(entry: Entry) -> Entry:
         )
 
         placeholder = "Required" if required else ""
-        if field == "year":
+        if field == COLNAME_YEAR:
             assert isinstance(default, (str, int, type(None)))
             int_default: Optional[int]
             if default:
@@ -107,7 +109,7 @@ def custom_entry(entry: Entry) -> Entry:
             elif field in entry:
                 _ = entry.pop(field)
 
-        elif field == "author":
+        elif field == COLNAME_AUTHOR:
             assert isinstance(default, (str, type(None), list))
             if isinstance(default, str):
                 if default:

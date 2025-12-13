@@ -23,7 +23,10 @@ from paper_manager._constants import (
     AUTHOR_SEPARATOR,
     COLNAME_AUTHOR,
     COLNAME_HAS_PDF,
+    COLNAME_JOURNAL,
     COLNAME_TAGS,
+    COLNAME_TITLE,
+    COLNAME_YEAR,
     COLNAMES_DISPLAY,
     ENCODING,
     TAG_SEPARATOR,
@@ -457,21 +460,15 @@ def main() -> None:
         with st.container(border=True):
             col_title, col_year = st.columns([3, 1])
             with col_title:
-                st.markdown(f"### {entry.get('title', 'N/A')}")
+                st.markdown(f"### {entry.get(COLNAME_TITLE, 'N/A')}")
             with col_year:
-                st.markdown(f"**Year:** {entry.get('year', 'N/A')}")
+                st.markdown(f"**Year:** {entry.get(COLNAME_YEAR, 'N/A')}")
 
-            if entry.get("author"):
-                st.markdown(f"**著者:** {entry['author']}")
+            if entry.get(COLNAME_AUTHOR):
+                st.markdown(f"**著者:** {entry[COLNAME_AUTHOR]}")
 
-            if entry.get("journal"):
-                st.markdown(f"**ジャーナル:** {entry['journal']}")
-
-            if entry.get("DOI"):
-                doi_link = entry["DOI"]
-                if not doi_link.startswith("http"):
-                    doi_link = f"https://doi.org/{doi_link}"
-                st.markdown(f"**DOI:** [{entry['DOI']}]({doi_link})")
+            if entry.get(COLNAME_JOURNAL):
+                st.markdown(f"**ジャーナル:** {entry[COLNAME_JOURNAL]}")
 
             if entry.get(COLNAME_TAGS):
                 tags = split(entry[COLNAME_TAGS], TAG_SEPARATOR)
@@ -480,8 +477,8 @@ def main() -> None:
                         "**タグ:** " + ", ".join(f"`{tag}`" for tag in tags)
                     )
 
-            # リンクの表示
-            _render_link(entry)
+        # リンクの表示
+        _render_link(entry)
 
         # アクションボタン
         st.markdown("#### アクション")
@@ -499,7 +496,7 @@ def main() -> None:
                 )
 
         if col_edit.button(
-            "✏️ 編集",
+            "編集",
             key="edit",
             type="primary",
             icon=":material/edit:",
@@ -508,7 +505,7 @@ def main() -> None:
             edit_entry(key_selected)
 
         if col_delete.button(
-            "🗑️ 削除",
+            "削除",
             key="delete",
             icon=":material/delete:",
             use_container_width=True,

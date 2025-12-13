@@ -5,6 +5,16 @@ import streamlit as st
 from crossref.restful import Works
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
+from paper_manager._constants import (
+    COLNAME_AUTHOR,
+    COLNAME_DOI,
+    COLNAME_JOURNAL,
+    COLNAME_NUMBER,
+    COLNAME_PAGES,
+    COLNAME_TITLE,
+    COLNAME_VOLUME,
+    COLNAME_YEAR,
+)
 from paper_manager.app.components import (
     custom_entry,
     pdf_upload_form,
@@ -40,19 +50,19 @@ def _create_entry_from_doi_metadata(metadata: dict) -> Entry:
     return Entry(
         {
             "ENTRYTYPE": entrytype4doi(metadata["type"]),
-            "title": metadata["title"][0],
-            "author": " and ".join(
+            COLNAME_TITLE: metadata["title"][0],
+            COLNAME_AUTHOR: " and ".join(
                 [
                     author["given"] + " " + author["family"]
                     for author in metadata["author"]
                 ]
             ),
-            "journal": metadata["container-title"][0],
-            "year": str(metadata["published"]["date-parts"][0][0]),
-            "volume": metadata.get("volume", ""),
-            "number": metadata.get("issue", ""),
-            "pages": metadata.get("page", ""),
-            "DOI": metadata["DOI"],
+            COLNAME_JOURNAL: metadata["container-title"][0],
+            COLNAME_YEAR: str(metadata["published"]["date-parts"][0][0]),
+            COLNAME_VOLUME: metadata.get("volume", ""),
+            COLNAME_NUMBER: metadata.get("issue", ""),
+            COLNAME_PAGES: metadata.get("page", ""),
+            COLNAME_DOI: metadata["DOI"],
         }
     )
 
