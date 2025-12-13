@@ -5,6 +5,8 @@
 
 This is my own paper-manager with streamlit.
 
+![logo](https://github.com/yu9824/paper-manager/blob/main/docs_src/_static/site_logo.png?raw=true)
+
 ## 主な機能
 
 - **論文管理**: 論文情報（著者、タイトル、ジャーナル、DOIなど）の登録・編集・削除
