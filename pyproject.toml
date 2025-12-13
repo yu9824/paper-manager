@@ -53,7 +53,6 @@ Documentation = "https://yu9824.github.io/paper-manager/"
 # PyPI = "https://pypi.org/project/paper-manager/"
 Source = "https://github.com/yu9824/paper-manager"
 Tracker = "https://github.com/yu9824/paper-manager/issues"
-Changelog = "https://github.com/yu9824/paper-manager/blob/main/CHANGELOG.md"
 
 [project.scripts]
 paper-manager = "paper_manager.__main__:entrypoint"
