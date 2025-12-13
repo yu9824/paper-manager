@@ -140,11 +140,29 @@ class Entry(MutableMapping):
         """
         super().__init__()
         self.__mapping = {
-            _key.upper()
-            if _key.upper() in {"ID", "ENTRYTYPE"}
-            else _key.lower(): _value.strip()
-            for _key, _value in __mapping.items()
+            self._normalize_key(key): value.strip()
+            for key, value in __mapping.items()
         }
+
+    def _normalize_key(self, key: str) -> str:
+        """Normalize a key according to the entry's key naming convention.
+
+        Keys "ID" and "ENTRYTYPE" are kept in uppercase, while all other keys
+        are converted to lowercase.
+
+        Parameters
+        ----------
+        key : str
+            The key to normalize.
+
+        Returns
+        -------
+        str
+            The normalized key (uppercase for "ID"/"ENTRYTYPE", lowercase for others).
+        """
+        if key.upper() in {"ID", "ENTRYTYPE"}:
+            return key.upper()
+        return key.lower()
 
     def __getitem__(self, key: str) -> str:
         """Retrieve the value associated with the given key.
@@ -341,51 +359,10 @@ class Entry(MutableMapping):
         """
         pdf_dir = self.get_pdf_dir(base_dir)
         if not pdf_dir.is_dir():
-            # 後方互換性: 旧形式の単一PDFファイルをチェックし、
-            # 見つかった場合は現在のフォルダ方式に従ってリネームして移動する
-            legacy_base_dir = base_dir or DIRPATH_PDF
-            legacy_pdf = legacy_base_dir / self.pdf_filename
-            if legacy_pdf.is_file():
-                try:
-                    pdf_dir.mkdir(parents=True, exist_ok=True)
-                except OSError as e:
-                    _logger.error(
-                        f"Failed to create PDF directory for migration: {pdf_dir}: {e}"
-                    )
-                    # ディレクトリ作成に失敗した場合は、旧形式のファイルをそのまま返す
-                    return [legacy_pdf]
-
-                try:
-                    existing_files = {f.name for f in pdf_dir.glob("*.pdf")}
-                except OSError as e:
-                    _logger.error(
-                        f"Failed to access PDF directory: {pdf_dir}: {e}"
-                    )
-                    return [legacy_pdf]
-
-                index = 0
-                # 既存ファイルと重複しない新しいファイル名を決定
-                while True:
-                    new_name = self._generate_pdf_filename(index)
-                    if new_name not in existing_files:
-                        break
-                    index += 1
-
-                new_path = pdf_dir / new_name
-                try:
-                    legacy_pdf.rename(new_path)
-                    _logger.debug(
-                        "Legacy PDF migrated: %s -> %s", legacy_pdf, new_path
-                    )
-                    return [new_path]
-                except OSError as e:
-                    _logger.error(
-                        f"Failed to migrate legacy PDF: {legacy_pdf} -> {new_path}: {e}"
-                    )
-                    # リネームに失敗した場合は、旧形式のファイルをそのまま返す
-                    return [legacy_pdf]
-
-            # 旧形式のファイルも存在しない場合は空リスト
+            # 後方互換性: 旧形式の単一PDFファイルを移行
+            migrated = self._migrate_legacy_single_pdf(base_dir)
+            if migrated is not None:
+                return migrated
             return []
 
         try:
@@ -395,6 +372,77 @@ class Entry(MutableMapping):
         except OSError as e:
             _logger.error(f"Failed to access PDF directory: {pdf_dir}: {e}")
             return []
+
+    def _migrate_legacy_single_pdf(
+        self, base_dir: Union[Path, None] = None
+    ) -> Union[list[Path], None]:
+        """Migrate a legacy single PDF file to the new directory-based format.
+
+        旧形式の単一PDFファイル（base_dir/pdf_filename形式）を新しい形式
+        （base_dir/pdf_dir_name/00.pdf形式）に移行します。
+
+        Parameters
+        ----------
+        base_dir : Union[Path, None], optional
+            Base directory for PDF storage. If None, uses DIRPATH_PDF.
+
+        Returns
+        -------
+        Union[list[Path], None]
+            - 移行が成功した場合: 移行後のPDFファイルパスのリスト
+            - 移行が失敗した場合: 旧形式のPDFファイルパスのリスト（エラー時）
+            - 旧形式のファイルが存在しない場合: None
+        """
+        legacy_base_dir = base_dir or DIRPATH_PDF
+        legacy_pdf = legacy_base_dir / self.pdf_filename
+
+        if not legacy_pdf.is_file():
+            # 旧形式のファイルが存在しない
+            return None
+
+        pdf_dir = self.get_pdf_dir(base_dir)
+
+        # ディレクトリを作成
+        try:
+            pdf_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            _logger.error(
+                f"Failed to create PDF directory for migration: {pdf_dir}: {e}"
+            )
+            # ディレクトリ作成に失敗した場合は、旧形式のファイルをそのまま返す
+            return [legacy_pdf]
+
+        # 既存のPDFファイル名を取得
+        try:
+            existing_files = {f.name for f in pdf_dir.glob("*.pdf")}
+        except OSError as e:
+            _logger.error(
+                f"Failed to access PDF directory: {pdf_dir}: {e}"
+            )
+            return [legacy_pdf]
+
+        # 既存ファイルと重複しない新しいファイル名を決定
+        index = 0
+        while True:
+            new_name = self._generate_pdf_filename(index)
+            if new_name not in existing_files:
+                break
+            index += 1
+
+        # ファイルを移動
+        new_path = pdf_dir / new_name
+        try:
+            legacy_pdf.rename(new_path)
+            _logger.debug(
+                "Legacy PDF migrated: %s -> %s", legacy_pdf, new_path
+            )
+            return [new_path]
+        except OSError as e:
+            _logger.error(
+                f"Failed to migrate legacy PDF: {legacy_pdf} -> {new_path}: {e}"
+            )
+            # リネームに失敗した場合は、旧形式のファイルをそのまま返す
+            return [legacy_pdf]
 
     def has_pdf(self, base_dir: Union[Path, None] = None) -> bool:
         """Check if this entry has any associated PDF files.
