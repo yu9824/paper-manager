@@ -2,7 +2,7 @@ import io
 from typing import Optional, Union
 
 import streamlit as st
-from crossref.restful import Works  # type: ignore[import-untyped]
+from crossref.restful import Works
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from paper_manager.app.components import (

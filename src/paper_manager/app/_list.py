@@ -10,14 +10,14 @@ from typing import Union
 
 import pandas as pd
 import streamlit as st
-from bib2xml import bib2xml  # type: ignore[import-untyped]
-from bibtexparser.bibdatabase import (  # type: ignore[import-untyped]
+from bib2xml import bib2xml
+from bibtexparser.bibdatabase import (
     BibDatabase,
 )
-from bibtexparser.bwriter import BibTexWriter  # type: ignore[import-untyped]
-from pybtex.database.input import bibtex  # type: ignore[import-untyped]
-from pybtex.style.formatting.plain import Style  # type: ignore[import-untyped]
-from streamlit_pdf_viewer import pdf_viewer  # type: ignore[import-untyped]
+from bibtexparser.bwriter import BibTexWriter
+from pybtex.database.input import bibtex
+from pybtex.style.formatting.plain import Style
+from streamlit_pdf_viewer import pdf_viewer
 
 from paper_manager._constants import (
     AUTHOR_SEPARATOR,
