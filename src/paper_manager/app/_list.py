@@ -496,7 +496,7 @@ def main() -> None:
                 )
 
         if col_edit.button(
-            "✏️ 編集",
+            "編集",
             key="edit",
             type="primary",
             icon=":material/edit:",
@@ -505,7 +505,7 @@ def main() -> None:
             edit_entry(key_selected)
 
         if col_delete.button(
-            "🗑️ 削除",
+            "削除",
             key="delete",
             icon=":material/delete:",
             use_container_width=True,
