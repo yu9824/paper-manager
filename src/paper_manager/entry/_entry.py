@@ -307,6 +307,10 @@ class Entry(MutableMapping):
                     # 最後の手段：年のみ
                     dir_name = sanitize_filename(year)
 
+        # Windowsの制限: ディレクトリ名の最後のピリオド（.）やスペースを削除
+        # macOS/Linuxでも互換性のため同様に処理
+        dir_name = dir_name.rstrip(". ")
+
         return dir_name
 
     def get_pdf_dir(self, base_dir: Union[Path, None] = None) -> Path:
