@@ -1,0 +1,589 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>プロキシ設定ガイド &#8212; paper-manager 2.1.4 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+<link href="../_static/styles/bootstrap.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+
+  
+  <link href="../_static/vendor/fontawesome/6.5.2/css/all.min.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.2/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.2/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.2/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=eba8b062" />
+    <link rel="stylesheet" type="text/css" href="../_static/mystnb.8ecb98da25f57f5357bf6f572d296f466b2cfe2517ffebfabe82451661e28f02.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/jupyter-sphinx.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/thebelab.css" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b" />
+  <script src="../_static/vendor/fontawesome/6.5.2/js/all.min.js?digest=dfe6caa3a7d634c4db9b"></script>
+
+    <script src="../_static/documentation_options.js?v=b08273cf"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=887ef09a"></script>
+    <script src="../_static/thebelab-helper.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@jupyter-widgets/html-manager@^1.0.1/dist/embed-amd.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'guides/proxy_settings';</script>
+    <link rel="icon" href="../_static/favicon.png"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="prev" title="バックアップ・復元ガイド" href="backup_restore.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          id="pst-primary-sidebar-checkbox"/>
+  <label class="overlay overlay-primary" for="pst-primary-sidebar-checkbox"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          id="pst-secondary-sidebar-checkbox"/>
+  <label class="overlay overlay-secondary" for="pst-secondary-sidebar-checkbox"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/site_logo.png" class="logo__image only-light" alt="paper-manager 2.1.4 documentation - Home"/>
+    <script>document.write(`<img src="../_static/site_logo_dark.png" class="logo__image only-dark" alt="paper-manager 2.1.4 documentation - Home"/>`);</script>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+ <script>
+ document.write(`
+   <button class="btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../modules.html">paper_manager</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../paper_manager.html">paper_manager package</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../paper_manager.app.html">paper_manager.app package</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="../paper_manager.app.components.html">paper_manager.app.components package</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../paper_manager.app.helper.html">paper_manager.app.helper package</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3"><a class="reference internal" href="../paper_manager.bib.html">paper_manager.bib package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../paper_manager.entry.html">paper_manager.entry package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../paper_manager.helper.html">paper_manager.helper package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../paper_manager.logging.html">paper_manager.logging package</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Tutorials</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tutorials/index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/logging.html">Logging Tutorial</a></li>
+</ul>
+</details></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">ガイド</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">ガイド</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="usage.html">使用方法ガイド</a></li>
+<li class="toctree-l2"><a class="reference internal" href="backup_restore.html">バックアップ・復元ガイド</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">プロキシ設定ガイド</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../_sources/guides/proxy_settings.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<script>
+document.write(`
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="theme-switch fa-solid fa-sun fa-lg" data-mode="light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg" data-mode="dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"></i>
+  </button>
+`);
+</script>
+
+
+<script>
+document.write(`
+  <button class="btn btn-sm pst-navbar-icon search-button search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+  </button>
+`);
+</script>
+<button class="sidebar-toggle secondary-toggle btn btn-sm" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>プロキシ設定ガイド</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">プロキシ設定の必要性</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">設定方法</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#web">Webアプリケーションから設定</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#url">プロキシURLの形式</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">環境変数から設定</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">設定の優先順位</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">設定ファイルの場所</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">プロキシ設定の確認</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id8">プロキシ設定の削除</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id9">トラブルシューティング</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#doi">DOI取得が失敗する場合</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id10">プロキシ設定が反映されない場合</a></li>
+</ul>
+</li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="id1">
+<h1>プロキシ設定ガイド<a class="headerlink" href="#id1" title="Link to this heading">#</a></h1>
+<p>paper-managerでは、プロキシサーバーを使用してDOIからメタデータを取得できます。このガイドでは、プロキシ設定の方法について説明します。</p>
+<section id="id2">
+<h2>プロキシ設定の必要性<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
+<p>プロキシ設定が必要な場合：</p>
+<ul class="simple">
+<li><p>企業や大学のネットワークでプロキシサーバーを使用している場合</p></li>
+<li><p>DOI取得時にプロキシ経由でアクセスする必要がある場合</p></li>
+</ul>
+</section>
+<section id="id3">
+<h2>設定方法<a class="headerlink" href="#id3" title="Link to this heading">#</a></h2>
+<section id="web">
+<h3>Webアプリケーションから設定<a class="headerlink" href="#web" title="Link to this heading">#</a></h3>
+<ol class="arabic simple">
+<li><p>アプリケーションの「設定」ページに移動</p></li>
+<li><p>「プロキシ設定」セクションで以下を入力：</p>
+<ul class="simple">
+<li><p><strong>HTTPプロキシ</strong>: HTTPプロキシのURL（例: <code class="docutils literal notranslate"><span class="pre">http://proxy.example.com:8080</span></code>）</p></li>
+<li><p><strong>HTTPSプロキシ</strong>: HTTPSプロキシのURL（空欄の場合はHTTPプロキシと同じ）</p></li>
+</ul>
+</li>
+<li><p>「設定を保存」ボタンをクリック</p></li>
+</ol>
+</section>
+<section id="url">
+<h3>プロキシURLの形式<a class="headerlink" href="#url" title="Link to this heading">#</a></h3>
+<p>プロキシURLは以下の形式で指定します：</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="p">[</span><span class="n">username</span><span class="p">:</span><span class="n">password</span><span class="o">@</span><span class="p">]</span><span class="n">proxy</span><span class="o">.</span><span class="n">example</span><span class="o">.</span><span class="n">com</span><span class="p">:</span><span class="n">port</span>
+</pre></div>
+</div>
+<p>例：</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">http://proxy.example.com:8080</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">http://user:pass&#64;proxy.example.com:8080</span></code></p></li>
+</ul>
+</section>
+<section id="id4">
+<h3>環境変数から設定<a class="headerlink" href="#id4" title="Link to this heading">#</a></h3>
+<p>環境変数を使用してプロキシを設定することもできます：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Linux/macOS</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">HTTP_PROXY</span><span class="o">=</span>http://proxy.example.com:8080
+<span class="nb">export</span><span class="w"> </span><span class="nv">HTTPS_PROXY</span><span class="o">=</span>http://proxy.example.com:8080
+
+<span class="c1"># Windows (コマンドプロンプト)</span>
+<span class="nb">set</span><span class="w"> </span><span class="nv">HTTP_PROXY</span><span class="o">=</span>http://proxy.example.com:8080
+<span class="nb">set</span><span class="w"> </span><span class="nv">HTTPS_PROXY</span><span class="o">=</span>http://proxy.example.com:8080
+</pre></div>
+</div>
+</section>
+</section>
+<section id="id5">
+<h2>設定の優先順位<a class="headerlink" href="#id5" title="Link to this heading">#</a></h2>
+<p>プロキシ設定は以下の優先順位で適用されます：</p>
+<ol class="arabic simple">
+<li><p><strong>設定ファイル</strong> (<code class="docutils literal notranslate"><span class="pre">~/.paper-manager/config.json</span></code>) - 最優先</p></li>
+<li><p><strong>環境変数</strong> (<code class="docutils literal notranslate"><span class="pre">HTTP_PROXY</span></code>, <code class="docutils literal notranslate"><span class="pre">HTTPS_PROXY</span></code>)</p></li>
+</ol>
+<p>設定ファイルにプロキシ設定がある場合、環境変数よりも優先されます。</p>
+</section>
+<section id="id6">
+<h2>設定ファイルの場所<a class="headerlink" href="#id6" title="Link to this heading">#</a></h2>
+<p>プロキシ設定は以下のファイルに保存されます：</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">~/.</span><span class="n">paper</span><span class="o">-</span><span class="n">manager</span><span class="o">/</span><span class="n">config</span><span class="o">.</span><span class="n">json</span>
+</pre></div>
+</div>
+<p>設定ファイルの内容例：</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;proxy&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;http&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;http://proxy.example.com:8080&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;https&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;http://proxy.example.com:8080&quot;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="id7">
+<h2>プロキシ設定の確認<a class="headerlink" href="#id7" title="Link to this heading">#</a></h2>
+<p>設定ページで現在のプロキシ設定を確認できます。設定ファイルと環境変数の両方が表示されます。</p>
+</section>
+<section id="id8">
+<h2>プロキシ設定の削除<a class="headerlink" href="#id8" title="Link to this heading">#</a></h2>
+<p>プロキシ設定を削除するには：</p>
+<ol class="arabic simple">
+<li><p>設定ページでHTTPプロキシとHTTPSプロキシのフィールドを空欄にする</p></li>
+<li><p>「設定を保存」ボタンをクリック</p></li>
+</ol>
+<p>これにより、設定ファイルからプロキシ設定が削除され、環境変数のみが使用されます。</p>
+</section>
+<section id="id9">
+<h2>トラブルシューティング<a class="headerlink" href="#id9" title="Link to this heading">#</a></h2>
+<section id="doi">
+<h3>DOI取得が失敗する場合<a class="headerlink" href="#doi" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>プロキシURLが正しいか確認してください</p></li>
+<li><p>プロキシサーバーが動作しているか確認してください</p></li>
+<li><p>認証情報が必要な場合は、URLに含めてください（<code class="docutils literal notranslate"><span class="pre">http://user:pass&#64;proxy.example.com:8080</span></code>）</p></li>
+<li><p>ファイアウォールやセキュリティソフトがプロキシ接続をブロックしていないか確認してください</p></li>
+</ul>
+</section>
+<section id="id10">
+<h3>プロキシ設定が反映されない場合<a class="headerlink" href="#id10" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>設定を保存した後、アプリケーションを再起動してください</p></li>
+<li><p>設定ファイルの内容を確認してください</p></li>
+<li><p>環境変数が設定されている場合は、設定ファイルの値が優先されることを確認してください</p></li>
+</ul>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="backup_restore.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">バックアップ・復元ガイド</p>
+      </div>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+  <div class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav class="bd-toc-nav page-toc">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">プロキシ設定の必要性</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">設定方法</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#web">Webアプリケーションから設定</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#url">プロキシURLの形式</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">環境変数から設定</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">設定の優先順位</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">設定ファイルの場所</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">プロキシ設定の確認</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id8">プロキシ設定の削除</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id9">トラブルシューティング</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#doi">DOI取得が失敗する場合</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id10">プロキシ設定が反映されない場合</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By yu9824
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2025, yu9824.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b"></script>
+<script src="../_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
