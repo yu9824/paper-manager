@@ -10,7 +10,7 @@ dependencies = [
     "crossrefapi == 1.6.0",
     # "crossrefapi @ git+https://github.com/fabiobatalha/crossrefapi.git@1.6.1",
     "pandas",
-    "streamlit >=1.50.0",                                         # st.multiselect
+    "streamlit >=1.59.0",                                         # st.multiselect
     "bibtexparser",
     "streamlit-pdf-viewer",
     "pybtex",                                                     # https://pybtex.org/
