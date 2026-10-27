@@ -120,7 +120,7 @@
   - _Requirements: 8.6, 8.7_
 
 - [ ] 4. components と CLI の単体テスト
-- [ ] 4.1 (P) PDF の保存・削除のテストを書く
+- [x] 4.1 (P) PDF の保存・削除のテストを書く
   - 複数の PDF が連番で保存され既存の番号と重複しないこと、0 件なら何も保存されないこと、パス長の上限を超えるファイルはエラー通知とともに飛ばされ残りは処理されることを検証する
   - 特定ファイルだけの削除と空フォルダの削除、全削除でのフォルダごとの削除と件数、旧形式の単一 PDF の削除を検証する
   - PDF の保存・削除のテストがすべて成功する
@@ -225,3 +225,5 @@
 - 3.3: `find_orphaned_pdfs` は読み取り専用でなく、各エントリの `get_pdf_files()` が旧形式 PDF をエントリのフォルダへ移行する副作用がある（紐づく旧形式 PDF を孤立にしないための仕様どおり）。`PaperList.__init__` が PDF ディレクトリを作るため、「PDF ディレクトリなし」の状態は論文リストを作ってから `rmdir` して作る。削除失敗の再現は `Path.unlink` の `monkeypatch` 差し替えで行う（chmod は環境依存のため不使用）。private 関数 `_calculate_similarity` の直接テストは design.md が許可している
 - 3.3: **KB 候補（観察のみ。最終報告で挙げる）**: (1) PDF フォルダと同名の旧形式 PDF がルート直下に共存すると（フォルダがあるため移行されず）紐づく旧形式 PDF が孤立と判定され、UI の「すべての孤立PDFを削除」で消える（再現済み）。(2) `delete_orphaned_pdfs` は渡されたパスが `DIRPATH_PDF` 配下か検証せず、フォルダを渡すと PDF 以外も `rmtree` する（現状の UI は `find_orphaned_pdfs` の戻り値のファイルだけを渡すので届かない）
 - 3.4: `entrytype4doi` の docstring が実装と矛盾している（`entrytype4doi("article") -> "journal"` と書かれているが、引数は Crossref のタイプで、`"article"` は変換表に無く警告付きで `"misc"` を返す）。要件 8.7 には適合しておりバグではなく docstring の不正確さのみ（最終報告で docstring 修正の提案として触れる）。テストは `"article"` を入力に使わない。変換表は `journal-article`→`article`、`proceedings-article`→`inproceedings`、`book`→`book` の 3 件のみ
+- 4.1: `tests/test_components.py` は 4.2/4.3 が末尾に追記する。補助は同モジュール内の `entry` / `other_entry` / `pdf_root` fixture と `make_uploads` / `make_pdfs` / `pdf_names` / `padded_base_dir`。`delete_pdfs` の `specific_files` はファイル名でなく `list[Path]`。パス長の上限 250 は `save_pdfs` 内に直書き（`len(str(filepath)) > 250`）で、`padded_base_dir` が `base_dir` を伸ばして境界を作る。`save_pdfs` はスキップしても `index` を進めないため、本番の入力では「飛ばしたあとに別のファイルが保存される」状況を作れない（`_generate_pdf_filename` を細工した人工的なスタブでのみ可能で、テストにしていない）。`pytestmark` の `filterwarnings`（`pdf_filename` / `_migrate_legacy_pdf_filenames`）は module 全体に効く。`st_messages` を使うテストと AppTest を使うテストは別関数にする
+- 4.1: 観察のみ（KB 候補としては重大度が低い）: `save_pdfs` は全ファイルがパス長超過で飛ばされても先に `mkdir` するため空のフォルダが残る（データ損失なし）
