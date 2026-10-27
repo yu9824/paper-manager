@@ -80,7 +80,7 @@
   - _Boundary: test_bib_
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 13.1, 13.2_
 
-- [ ] 2.5 (P) 汎用ユーティリティのテストを書く
+- [x] 2.5 (P) 汎用ユーティリティのテストを書く
   - 文字列の分割、非推奨デコレータ（警告・戻り値・説明文の注記）、インストール有無の判定、引数の有無の判定、進捗表示の代替、ダミー関数を検証する
   - 汎用ユーティリティのテストがすべて成功する
   - _Boundary: test_helper_
@@ -219,3 +219,4 @@
 - 2.3: **KB 候補（観察のみ。xfail にしていない。最終報告で挙げる）**: (1) `list.json` が切り詰められて日本語マルチバイト文字の途中で切れると `PaperList.from_file` が `UnicodeDecodeError` で落ち、警告も出ない（`except json.JSONDecodeError` では捕捉できない）。書き込み中断が最も現実的な原因。(2) 妥当な JSON だがオブジェクトでない（`[]`, `"x"`, `1`）と `AttributeError`。(3) **ユーザーデータ安全**: 壊れた `list.json` を置いてトップページを 1 回描画すると、警告のあと `config_page`（`_config.py` の `from_file()` → `to_session_state()` → 実行後の `from_session_state().to_file()`）が `{}` で `list.json` を上書きし、バックアップも作られない（AppTest で再現）。要件 3.3 の範囲外で、期待する振る舞いが spec で未決のため xfail にしていない
 - 2.3: `st_messages` を使うテストは AppTest と併用しない。保存ファイルに日本語が文字のまま入る（`ensure_ascii=False`, UTF-8）ことは product.md の「人間が読める `list.json`」に基づく検証
 - 2.4: `load_bib` の入力は `io.StringIO` / `io.BytesIO` / `Path` / `str`（`str` は本文でなくファイルパス扱い）。素の `bytes`・`bytearray` は `TypeError`。戻り値の `ID` は付かず、引用キーの小文字化は戻り値の辞書キーに現れる（`ID` は `_common.py` の登録時に付与）。**KB 候補（観察のみ）**: 1 語の著者名（`Cher`, `{ACME Collaboration}`）の整形結果が先頭空白付きになり、`John Smith and others` は空白が 2 つになる。`TypeError` のメッセージが入力型でなく `type(bib_parser)` を出している
+- 2.5: `dummy_tqdm` は tqdm を import せず有無の分岐を持たない（`sys.modules['tqdm']=None` でも動く）。観察のみ: `with dummy_tqdm(...)` は `TypeError`（`__getattr__` が特殊メソッドに効かない。要件 5.5 に `with` は無く `src/` に呼び出し箇所も無い）。`is_installed("a.b")` は親パッケージ不在で `ModuleNotFoundError`。`split("  ", ",")` は `("",)`、末尾の区切りは空要素が残る
