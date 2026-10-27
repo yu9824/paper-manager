@@ -56,7 +56,7 @@
   - _Boundary: test_entry_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 13.1, 13.2, 14.2_
 
-- [ ] 2.2 論文エントリの PDF 一覧と旧形式の移行のテストを書く
+- [x] 2.2 論文エントリの PDF 一覧と旧形式の移行のテストを書く
   - PDF 一覧が番号順に返ること、PDF がなければ空であること、有無と件数が一覧と一致することを検証する
   - 旧形式の単一 PDF と旧命名規則の PDF が、既存ファイルを上書きせずに新形式へ移行されることを検証する（非推奨警告は許容する）
   - 保存先の基準ディレクトリを指定した場合に、既定の PDF ディレクトリが変化しないことを検証する
@@ -215,3 +215,4 @@
 - 5.3 向け: `_register.py` の `_create_entry_from_doi_metadata` は `metadata["container-title"][0]` を無条件に参照する（空だと IndexError）。`crossref_article` は `container-title` を必ず含めるので回避されるが、空の場合を検証するなら 13.4 に従い KNOWN BUG 候補として扱う
 - 2.1: 新規バグ KB7（仮称）を `tests/test_entry.py::test_name_stays_within_200_chars_when_prefix_leaves_almost_no_room` に strict xfail で記録済み。接頭辞 `<year> - <first_author> - ` が 198〜199 文字のとき `pdf_dir_name` が 200 文字を超える（`title[:max_title_length - 3]` が負のインデックスになるため。要件 2.4 違反。Repro: year=2020、著者名 188/189 文字、タイトル 300 文字）。**6.1 で design.md の既知バグ表に行を追記する**。このため tasks.md の 2.1 完了条件の xfailed は 2 件ではなく 3 件、6.1 の既知の失敗の件数は 12 件ではなく 13 件になる
 - 2.1: `get_key` は `author=""` を `Unknown` にしない（`2020_0`）が、`pdf_dir_name` は `author=""` で IndexError（KB2a と同根）。観察のみで xfail にしていない。OS 判定の差し替えは `paper_manager.entry._entry.platform` を `SimpleNamespace(system=...)` に `monkeypatch` で差し替える（`tests/test_entry.py` の `set_os`）。xfail の reason は `"KNOWN BUG: "`（コロン付き）で始める（レビューで指摘された）
+- 2.2: KB2b（タイトルなしの `get_pdf_files`）は PDF フォルダが存在しないときだけ再現する（旧形式の単一 PDF を探す分岐が `pdf_filename` を評価するため）。6.1 で design の KB2b の行にこの条件を補足してよい。観察のみ（xfail にしていない）: 旧単一 PDF は PDF フォルダが既にあると移行されない（ファイルは消えず上書きもされないが一覧に出ない）。複数の旧命名ファイルの番号割当は `glob` 順で不定（上書きなし・データ保全は満たすので仕様の範囲内。テストは内容の集合で比較）。`_migrate_legacy_single_pdf` の衝突回避は公開 API 経由では到達不能
