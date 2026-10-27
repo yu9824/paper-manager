@@ -87,7 +87,7 @@
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
 
 - [ ] 3. アプリ helper の単体テスト
-- [ ] 3.1 (P) バックアップ・復元のテストを書く
+- [x] 3.1 (P) バックアップ・復元のテストを書く
   - バックアップの内容（バージョン情報・論文リスト・設定・PDF の相対パス）、一部が欠けた状態での作成、出力先の指定の有無による違いを検証する
   - サンプルデータのバックアップを空のデータディレクトリへ復元すると、論文リスト・設定・PDF の構成とバイト列が一致することを検証する
   - 既存ファイルの退避、成功時のメッセージ、不正な zip での失敗とデータ不変、バックアップ情報の取得を検証する
@@ -220,3 +220,4 @@
 - 2.3: `st_messages` を使うテストは AppTest と併用しない。保存ファイルに日本語が文字のまま入る（`ensure_ascii=False`, UTF-8）ことは product.md の「人間が読める `list.json`」に基づく検証
 - 2.4: `load_bib` の入力は `io.StringIO` / `io.BytesIO` / `Path` / `str`（`str` は本文でなくファイルパス扱い）。素の `bytes`・`bytearray` は `TypeError`。戻り値の `ID` は付かず、引用キーの小文字化は戻り値の辞書キーに現れる（`ID` は `_common.py` の登録時に付与）。**KB 候補（観察のみ）**: 1 語の著者名（`Cher`, `{ACME Collaboration}`）の整形結果が先頭空白付きになり、`John Smith and others` は空白が 2 つになる。`TypeError` のメッセージが入力型でなく `type(bib_parser)` を出している
 - 2.5: `dummy_tqdm` は tqdm を import せず有無の分岐を持たない（`sys.modules['tqdm']=None` でも動く）。観察のみ: `with dummy_tqdm(...)` は `TypeError`（`__getattr__` が特殊メソッドに効かない。要件 5.5 に `with` は無く `src/` に呼び出し箇所も無い）。`is_installed("a.b")` は親パッケージ不在で `ModuleNotFoundError`。`split("  ", ",")` は `("",)`、末尾の区切りは空要素が残る
+- 3.1: KB3 の xfail は design の KnownBugConvention（`raises=` は付けない）から逸脱して `raises=AssertionError` を付けた。fixture の安全検査（到達先が一時ルート内・データディレクトリ外・禁止パス外・事前に存在しない）が `pytest.fail`（`Failed` は `AssertionError` ではない）で失敗したとき、`raises` なしだと XFAIL に化けて安全検査の壊れを隠すため。XPASS(strict) の挙動（13.3）は損なわれない。**6.1 で design.md の KnownBugConvention に例外として追記する**。KB3 の到達先は `data_paths.root.parent / "escaped.pdf"`（`pdf/../../escaped.pdf`）で、teardown で必ず削除される。`pages/_restore.py` にも同じ実装がある（このタスクの対象外）。観察のみ: `get_backup_info` は不正な zip でも `_logger.exception` で ERROR とトレースバックを出す。`restore_from_zip` は存在しないパスでは `(False, "復元中にエラーが発生しました: ...")` を返す
