@@ -23,7 +23,7 @@
   - 各テストの開始時点で、データディレクトリが空で存在し、作業ディレクトリがテスト専用の一時ディレクトリになり、プロキシ関連の環境変数がない（恒常的な検証は 1.3 のテストが担う）
   - _Requirements: 1.4, 1.5, 1.6, 1.7, 14.2_
 
-- [ ] 1.3 隔離の仕組みを検証するテストを書く
+- [x] 1.3 隔離の仕組みを検証するテストを書く
   - ガード関数が、一時ディレクトリの外のパス、実データディレクトリ、実行前に指定されていたパスを拒否し、一時ディレクトリの配下のパスを受け入れることを検証する
   - データの保存先を示す 4 つのパスが、一時ディレクトリの配下にあることを検証する
   - 外部ホストへの接続が専用の例外で失敗することと、作業ディレクトリがテスト専用の一時ディレクトリであることを検証する
@@ -209,3 +209,4 @@
 - 実行は PATH 上の python ではなく conda 環境 `paper-manager` を使う: `/Users/yu9824/opt/miniforge3/envs/paper-manager/bin/python -m pytest -xs`（ruff は未導入）
 - `paper_manager` を import するコードは conftest の「隔離の確立」より後に置く（先に import されるとガードがセッションを止める）。conftest 内の import は `# noqa: E402` か遅延 import にする
 - 1.2: `getaddrinfo` は localhost も含め無条件で遮断される（`NetworkBlockedError`）。`socket.connect_ex` は遮断対象外。ライブラリのルートロガーは level のみ復元し、handlers / propagate は復元しない（変更するテストは自分で戻す）。`st.session_state.clear()` が bare mode の ScriptRunContext 警告ログを `-s` 出力に出すが無害
+- 1.3: テストモジュールから `from conftest import ...` で conftest の名前を使える（pytest 既定の prepend import mode 前提。`--import-mode=importlib` では収集時に失敗する）。ログレベルなどの「元の値」は期待値を決め打ちせず、収集時に取得した基準値と比較する。復元を検証するテストは `monkeypatch` を使わず直接変更する（`monkeypatch` が自分で戻してしまうため）
