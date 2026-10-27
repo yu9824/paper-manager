@@ -112,7 +112,7 @@
   - _Boundary: test_app_orphan_pdf_
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 13.1, 13.2_
 
-- [ ] 3.4 (P) フィールド定義とエントリタイプ変換のテストを書く
+- [x] 3.4 (P) フィールド定義とエントリタイプ変換のテストを書く
   - 8 種類のエントリタイプが読み込まれ、必須フィールドの集合が定義ファイルを独立に読み込んだ結果と一致すること（misc は必須なし）を検証する
   - Crossref のエントリタイプの変換と、未知のタイプが misc になることを検証する
   - フィールド定義のテストがすべて成功する
@@ -224,3 +224,4 @@
 - 3.2: 環境変数の復元は子プロセスの pytest（`pytest.main(plugins=[Observer])`）で確認する（順序付きの 2 テストでは、conftest が各テスト開始時に 4 変数を削除するため復元漏れが隠れる）。`[set-outside]` は `monkeypatch` の undo が外側の値を戻すため conftest の `_restore_environ` の欠落を検出できず、検出するのは `[unset-outside]`。**KB 候補（観察のみ。最終報告で挙げる）**: `save_proxy_config` は既存の `config.json` が壊れていると警告ログだけで読み込みを諦め、空の設定から書き直す（プロキシ以外の項目が失われ、バックアップも作られない。2.3 の KB 候補（3）と同種のユーザーデータ保護上の懸念。現状 `config.json` に入るのは `proxy` のみなので実害は小さい）。手編集した `{"proxy": {"http": ""}}` では `get_proxy_config()` が `{"http": ""}` を返し環境変数のプロキシが隠れる（UI 経由では到達不能）
 - 3.3: `find_orphaned_pdfs` は読み取り専用でなく、各エントリの `get_pdf_files()` が旧形式 PDF をエントリのフォルダへ移行する副作用がある（紐づく旧形式 PDF を孤立にしないための仕様どおり）。`PaperList.__init__` が PDF ディレクトリを作るため、「PDF ディレクトリなし」の状態は論文リストを作ってから `rmdir` して作る。削除失敗の再現は `Path.unlink` の `monkeypatch` 差し替えで行う（chmod は環境依存のため不使用）。private 関数 `_calculate_similarity` の直接テストは design.md が許可している
 - 3.3: **KB 候補（観察のみ。最終報告で挙げる）**: (1) PDF フォルダと同名の旧形式 PDF がルート直下に共存すると（フォルダがあるため移行されず）紐づく旧形式 PDF が孤立と判定され、UI の「すべての孤立PDFを削除」で消える（再現済み）。(2) `delete_orphaned_pdfs` は渡されたパスが `DIRPATH_PDF` 配下か検証せず、フォルダを渡すと PDF 以外も `rmtree` する（現状の UI は `find_orphaned_pdfs` の戻り値のファイルだけを渡すので届かない）
+- 3.4: `entrytype4doi` の docstring が実装と矛盾している（`entrytype4doi("article") -> "journal"` と書かれているが、引数は Crossref のタイプで、`"article"` は変換表に無く警告付きで `"misc"` を返す）。要件 8.7 には適合しておりバグではなく docstring の不正確さのみ（最終報告で docstring 修正の提案として触れる）。テストは `"article"` を入力に使わない。変換表は `journal-article`→`article`、`proceedings-article`→`inproceedings`、`book`→`book` の 3 件のみ
