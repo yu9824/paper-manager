@@ -48,7 +48,7 @@
   - _Requirements: 1.7, 3.3, 9.12, 11.5, 12.2, 12.4, 12.9_
 
 - [ ] 2. ドメイン層の単体テスト
-- [ ] 2.1 (P) 論文エントリの正規化・識別子・フォルダ名のテストを書く
+- [x] 2.1 (P) 論文エントリの正規化・識別子・フォルダ名のテストを書く
   - キーの正規化と値の前後の空白除去、識別子の形式・重複回避・欠落時の既定値、フォルダ名の形式と欠落時の既定値、200 文字を超える場合の切り詰めと末尾の扱いを検証する
   - ファイル名の置換規則を、OS の判定を差し替えて Windows 用とそれ以外の両方について検証する
   - 既知バグ（KB2a: 著者のないエントリのフォルダ名、KB5: Windows で `"` が置換されない）を、本来あるべき振る舞いを期待する strict な xfail として、理由（不具合内容と再現条件）付きで記録する
@@ -213,3 +213,5 @@
 - 1.4: `make_entry` は既定値を消せない。著者なし・タイトルなしのエントリ（KB2a/KB2b）は `del entry["author"]` / `del entry["title"]` で作る。孤立 PDF のフォルダ名は `sample_data.orphan_pdf.parent.name`。`Entry.get_pdf_files()` はフォルダがあると `DeprecationWarning` を出す（警告はエラー扱いではない）。サンプルの `without_pdf` エントリには PDF フォルダを作らない
 - 1.5: `crossref_article(doi, type)` は design の Service Interface に無い第 2 引数 `type`（Crossref の type 文字列。`"book"` で `publisher` 不足を再現）を持つ。`run_page` はページの例外を送出せず `at.exception` に残すので、テスト側で assert する。`st_messages` は AppTest と併用不可。登録ページには、ラベル `DOI` の TextInput が 2 つ（`doi_form` と `custom_form`）、送信ボタン `📤 登録` が 3 つ（出現順 BIB・DOI・CUSTOM）あるため、ラベルだけでなく `form_id` か出現順で特定する
 - 5.3 向け: `_register.py` の `_create_entry_from_doi_metadata` は `metadata["container-title"][0]` を無条件に参照する（空だと IndexError）。`crossref_article` は `container-title` を必ず含めるので回避されるが、空の場合を検証するなら 13.4 に従い KNOWN BUG 候補として扱う
+- 2.1: 新規バグ KB7（仮称）を `tests/test_entry.py::test_name_stays_within_200_chars_when_prefix_leaves_almost_no_room` に strict xfail で記録済み。接頭辞 `<year> - <first_author> - ` が 198〜199 文字のとき `pdf_dir_name` が 200 文字を超える（`title[:max_title_length - 3]` が負のインデックスになるため。要件 2.4 違反。Repro: year=2020、著者名 188/189 文字、タイトル 300 文字）。**6.1 で design.md の既知バグ表に行を追記する**。このため tasks.md の 2.1 完了条件の xfailed は 2 件ではなく 3 件、6.1 の既知の失敗の件数は 12 件ではなく 13 件になる
+- 2.1: `get_key` は `author=""` を `Unknown` にしない（`2020_0`）が、`pdf_dir_name` は `author=""` で IndexError（KB2a と同根）。観察のみで xfail にしていない。OS 判定の差し替えは `paper_manager.entry._entry.platform` を `SimpleNamespace(system=...)` に `monkeypatch` で差し替える（`tests/test_entry.py` の `set_os`）。xfail の reason は `"KNOWN BUG: "`（コロン付き）で始める（レビューで指摘された）
