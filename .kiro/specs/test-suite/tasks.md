@@ -15,7 +15,7 @@
   - 環境変数を設定せずに `pytest -xs` を実行すると、データの保存先を示す 4 つのパスがすべて一時ディレクトリの配下になり、既存の 2 テストが成功する
   - _Requirements: 1.1, 1.2, 1.3, 13.3, 14.4_
 
-- [ ] 1.2 テストごとの初期化と復元を整える
+- [x] 1.2 テストごとの初期化と復元を整える
   - 各テストの前に、データディレクトリを空にして作り直し、作業ディレクトリをテスト専用の一時ディレクトリへ移し、プロキシ関連の環境変数を消す
   - 各テストの前に、外部ネットワークへの接続と名前解決を、専用の例外を送出する処理に差し替える
   - 各テストの後に、環境変数全体・ライブラリのログレベル・画面の状態（bare mode の session state）をテスト前の状態に戻す
@@ -208,3 +208,4 @@
 - 1.1: conftest 読み込み中の `pytest.exit` は pytest に usage error として包まれ、終了コードは `returncode` に関わらず 4 になる（設計の `returncode=1` は効かない）。ガード違反でテスト 0 件・理由表示・非ゼロ終了という要件 1.3 は満たす
 - 実行は PATH 上の python ではなく conda 環境 `paper-manager` を使う: `/Users/yu9824/opt/miniforge3/envs/paper-manager/bin/python -m pytest -xs`（ruff は未導入）
 - `paper_manager` を import するコードは conftest の「隔離の確立」より後に置く（先に import されるとガードがセッションを止める）。conftest 内の import は `# noqa: E402` か遅延 import にする
+- 1.2: `getaddrinfo` は localhost も含め無条件で遮断される（`NetworkBlockedError`）。`socket.connect_ex` は遮断対象外。ライブラリのルートロガーは level のみ復元し、handlers / propagate は復元しない（変更するテストは自分で戻す）。`st.session_state.clear()` が bare mode の ScriptRunContext 警告ログを `-s` 出力に出すが無害

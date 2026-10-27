@@ -14,11 +14,14 @@
 import importlib
 import os
 import shutil
+import socket
 import sys
 import tempfile
 import warnings
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import ExitStack
 from pathlib import Path
+from typing import Any, NamedTuple, NoReturn
 
 import pytest
 
@@ -30,10 +33,15 @@ _DATA_PATH_NAMES = (
     "FILEPATH_LIST",
     "FILEPATH_CONFIG",
 )
+_PROXY_ENV_NAMES = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 
 
 class IsolationError(RuntimeError):
     """データの保存先がテスト用に隔離されていない場合の例外."""
+
+
+class NetworkBlockedError(RuntimeError):
+    """テスト中に外部ネットワークへアクセスしようとした場合の例外."""
 
 
 def check_isolation(
@@ -153,8 +161,25 @@ def _establish_isolation() -> Path:
 
 # --- 隔離の確立 -----------------------------------------------------------
 # この行より後で、paper_manager を import してよい。
+# _FORBIDDEN_PATHS は、_establish_isolation が検査に使うものと同じ値。
+# テストごとの初期化 (_isolate_each_test) でも再検査するために保持する。
+_FORBIDDEN_PATHS = _collect_forbidden_paths(os.environ, Path.home())
 _TEMP_ROOT = _establish_isolation()
 # --------------------------------------------------------------------------
+
+import streamlit as st  # noqa: E402
+
+from paper_manager import _constants  # noqa: E402
+from paper_manager.logging import get_library_root_logger  # noqa: E402
+
+
+class DataPaths(NamedTuple):
+    """隔離されたデータの保存先を示す 4 つのパス."""
+
+    root: Path
+    pdf: Path
+    list_file: Path
+    config_file: Path
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
@@ -169,3 +194,113 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             RuntimeWarning,
             stacklevel=1,
         )
+
+
+@pytest.fixture
+def data_paths() -> DataPaths:
+    """データの保存先を示す 4 つのパスを返す.
+
+    Returns
+    -------
+    DataPaths
+        ``paper_manager._constants`` の ``DIRPATH_DATA``・
+        ``DIRPATH_PDF``・``FILEPATH_LIST``・``FILEPATH_CONFIG``。
+        すべてセッション専用の一時ディレクトリの配下にある。
+    """
+    return DataPaths(
+        root=_constants.DIRPATH_DATA,
+        pdf=_constants.DIRPATH_PDF,
+        list_file=_constants.FILEPATH_LIST,
+        config_file=_constants.FILEPATH_CONFIG,
+    )
+
+
+def _reset_data_dir() -> None:
+    """データディレクトリを空にして作り直す.
+
+    Raises
+    ------
+    IsolationError
+        データディレクトリが一時ディレクトリの配下にない、または
+        禁止パスと重なる場合。このとき何も削除しない。
+    """
+    data_dir = _constants.DIRPATH_DATA
+    check_isolation(data_dir, _TEMP_ROOT, _FORBIDDEN_PATHS)
+    if data_dir.exists():
+        shutil.rmtree(data_dir)
+    data_dir.mkdir(parents=True)
+
+
+def _block_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """外部ネットワークへの接続と名前解決を ``NetworkBlockedError`` にする.
+
+    ``socket.socket.connect`` は、AF_INET / AF_INET6 の場合だけ遮断する。
+    それ以外 (AF_UNIX など) は本来の動作に通す。
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        差し替えに使う。テストの後に元へ戻る。
+    """
+    original_connect = socket.socket.connect
+
+    def blocked_connect(self: socket.socket, address: Any) -> None:
+        if self.family in (socket.AF_INET, socket.AF_INET6):
+            raise NetworkBlockedError(
+                f"network access is blocked in tests: {address[0]}"
+            )
+        return original_connect(self, address)
+
+    def blocked_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> NoReturn:
+        raise NetworkBlockedError(
+            f"network access is blocked in tests: {host}"
+        )
+
+    monkeypatch.setattr(socket.socket, "connect", blocked_connect)
+    monkeypatch.setattr(socket, "getaddrinfo", blocked_getaddrinfo)
+
+
+def _restore_environ(saved: Mapping[str, str]) -> None:
+    """``os.environ`` を保存した内容へ戻す (追加・変更・削除のすべて)."""
+    os.environ.clear()
+    os.environ.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_each_test(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[None]:
+    """各テストの前に初期化し、後に元の状態へ戻す.
+
+    前:
+
+    - データディレクトリを空にして作り直す
+    - 作業ディレクトリを ``tmp_path`` へ移す
+    - プロキシ関連の環境変数を消す
+    - 外部ネットワークへの接続と名前解決を遮断する
+
+    後 (テストや前処理が例外で失敗しても行う):
+
+    - ``os.environ`` をテスト前の内容へ戻す
+    - ライブラリのルートロガーのレベルを戻す
+    - bare mode の session state を消す
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        作業ディレクトリ・環境変数・ネットワークの差し替えに使う。
+    tmp_path : Path
+        テスト専用の一時ディレクトリ。作業ディレクトリになる。
+    """
+    with ExitStack() as restore:
+        restore.callback(st.session_state.clear)
+        root_logger = get_library_root_logger()
+        restore.callback(root_logger.setLevel, root_logger.level)
+        restore.callback(_restore_environ, dict(os.environ))
+
+        _reset_data_dir()
+        monkeypatch.chdir(tmp_path)
+        for name in _PROXY_ENV_NAMES:
+            monkeypatch.delenv(name, raising=False)
+        _block_network(monkeypatch)
+        yield
