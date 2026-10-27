@@ -31,7 +31,7 @@
   - 隔離の検証テストがすべて成功する
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7_
 
-- [ ] 1.4 テストデータを作る共有 fixture を整える
+- [x] 1.4 テストデータを作る共有 fixture を整える
   - 最小限の PDF の中身と、それを指定のパスに書き出す補助を用意する
   - アップロードされたファイルの代わりに使える、ファイル名付きのバイト列オブジェクトを用意する
   - 既定値（記事タイプ、著者、タイトル、掲載誌、年）を持ち、任意のフィールドを上書きできるエントリ生成 fixture を用意する
@@ -210,3 +210,4 @@
 - `paper_manager` を import するコードは conftest の「隔離の確立」より後に置く（先に import されるとガードがセッションを止める）。conftest 内の import は `# noqa: E402` か遅延 import にする
 - 1.2: `getaddrinfo` は localhost も含め無条件で遮断される（`NetworkBlockedError`）。`socket.connect_ex` は遮断対象外。ライブラリのルートロガーは level のみ復元し、handlers / propagate は復元しない（変更するテストは自分で戻す）。`st.session_state.clear()` が bare mode の ScriptRunContext 警告ログを `-s` 出力に出すが無害
 - 1.3: テストモジュールから `from conftest import ...` で conftest の名前を使える（pytest 既定の prepend import mode 前提。`--import-mode=importlib` では収集時に失敗する）。ログレベルなどの「元の値」は期待値を決め打ちせず、収集時に取得した基準値と比較する。復元を検証するテストは `monkeypatch` を使わず直接変更する（`monkeypatch` が自分で戻してしまうため）
+- 1.4: `make_entry` は既定値を消せない。著者なし・タイトルなしのエントリ（KB2a/KB2b）は `del entry["author"]` / `del entry["title"]` で作る。孤立 PDF のフォルダ名は `sample_data.orphan_pdf.parent.name`。`Entry.get_pdf_files()` はフォルダがあると `DeprecationWarning` を出す（警告はエラー扱いではない）。サンプルの `without_pdf` エントリには PDF フォルダを作らない

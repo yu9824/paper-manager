@@ -1,4 +1,4 @@
-"""pytest の共通設定: 実データからの隔離 (IsolationHarness).
+"""pytest の共通設定: 実データからの隔離 (IsolationHarness) と共有 fixture.
 
 ``paper_manager._constants`` はデータの保存先を import 時に確定する。
 そのため、``paper_manager`` を初めて import するより前に環境変数
@@ -12,13 +12,15 @@
 """
 
 import importlib
+import io
+import json
 import os
 import shutil
 import socket
 import sys
 import tempfile
 import warnings
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, NamedTuple, NoReturn
@@ -170,6 +172,7 @@ _TEMP_ROOT = _establish_isolation()
 import streamlit as st  # noqa: E402
 
 from paper_manager import _constants  # noqa: E402
+from paper_manager.entry import Entry, PaperList  # noqa: E402
 from paper_manager.logging import get_library_root_logger  # noqa: E402
 
 
@@ -304,3 +307,174 @@ def _isolate_each_test(
             monkeypatch.delenv(name, raising=False)
         _block_network(monkeypatch)
         yield
+
+
+# --- TestDataFactory ------------------------------------------------------
+# エントリ・PDF・サンプルデータを、隔離されたデータディレクトリに作る。
+
+# 最小限の PDF の中身. ``%PDF-`` で始まるだけで、描画はできない。
+PDF_BYTES = b"%PDF-1.4\n%test\n"
+
+_ENTRY_DEFAULTS = {
+    "ENTRYTYPE": "article",
+    "author": "Alice Smith",
+    "title": "A Study of Testing",
+    "journal": "Journal of Testing",
+    "year": "2020",
+}
+_SAMPLE_CONFIG = {
+    "proxy": {
+        "http": "http://proxy.example.com:8080",
+        "https": "http://proxy.example.com:8443",
+    }
+}
+
+
+def write_pdf(path: Path, content: bytes = PDF_BYTES) -> Path:
+    """``path`` に PDF の中身を書き出す.
+
+    親ディレクトリがなければ作る。既存のファイルは上書きする。
+
+    Parameters
+    ----------
+    path : Path
+        書き出し先のファイルパス。
+    content : bytes, default PDF_BYTES
+        書き出す中身。
+
+    Returns
+    -------
+    Path
+        書き出したファイルのパス (``path`` と同じ)。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return path
+
+
+class FakeUpload(io.BytesIO):
+    """アップロードされたファイル (``UploadedFile``) の代わりに使う.
+
+    ``getvalue()`` などのバイト列の読み出しは ``io.BytesIO`` のものを使い、
+    アップロードされたファイルと同じく ``name`` を持つ。
+
+    Parameters
+    ----------
+    name : str
+        アップロードされたファイルの名前。
+    content : bytes
+        ファイルの中身。
+    """
+
+    name: str
+
+    def __init__(self, name: str, content: bytes) -> None:
+        super().__init__(content)
+        self.name = name
+
+
+class SampleData(NamedTuple):
+    """``sample_data`` が作ったデータ."""
+
+    paper_list: PaperList  # ``data_paths.list_file`` に保存済み
+    with_pdf_key: str  # 00.pdf と 01.pdf を持つエントリのキー
+    without_pdf_key: str  # PDF を持たないエントリのキー
+    orphan_pdf: Path  # どのエントリにも紐づかない PDF (pdf/<フォルダ>/00.pdf)
+
+
+@pytest.fixture
+def make_entry() -> Callable[..., Entry]:
+    """既定値を持つエントリを作る関数を返す.
+
+    既定値は ``ENTRYTYPE=article`` と ``author``・``title``・``journal``・
+    ``year``。キーワード引数で、既定値の上書きと、他のフィールドの追加が
+    できる。キーの大文字・小文字は ``Entry`` が正規化する。
+
+    Returns
+    -------
+    Callable[..., Entry]
+        ``make_entry(**fields) -> Entry``。呼ぶたびに別のエントリを返す。
+    """
+
+    def _make_entry(**fields: str) -> Entry:
+        return Entry({**_ENTRY_DEFAULTS, **fields})
+
+    return _make_entry
+
+
+def _register_entry(paper_list: PaperList, entry: Entry) -> str:
+    """``entry`` に識別子を付けて ``paper_list`` に加え、そのキーを返す."""
+    key = entry.get_key(paper_list.keys())
+    entry["ID"] = key
+    paper_list[key] = entry
+    return key
+
+
+@pytest.fixture
+def sample_data(
+    data_paths: DataPaths, make_entry: Callable[..., Entry]
+) -> SampleData:
+    """データディレクトリにサンプルデータを作る.
+
+    作るもの:
+
+    - ``list.json``: PDF を 2 件持つエントリ (日本語のタイトル) と、
+      PDF を持たないエントリ
+    - ``config.json``: プロキシ設定
+    - PDF 3 件: 上記の 1 つ目のエントリの ``00.pdf``・``01.pdf``
+      (中身はそれぞれ異なる) と、どのエントリにも紐づかない孤立 PDF 1 件
+
+    PDF の置き場所は、``Entry.get_pdf_dir`` から導出する。
+
+    Parameters
+    ----------
+    data_paths : DataPaths
+        データの保存先。
+    make_entry : Callable[..., Entry]
+        エントリを作る関数。
+
+    Returns
+    -------
+    SampleData
+        作った論文リストと、各エントリのキー、孤立 PDF のパス。
+    """
+    with_pdf = make_entry(
+        author="Taro Yamada",
+        title="深層学習による画像認識の研究",
+        year="2021",
+    )
+    without_pdf = make_entry(
+        author="Bob Jones", title="An Entry Without Any PDF", year="2022"
+    )
+    deleted = make_entry(
+        author="Carol Orphan", title="A Deleted Paper", year="2018"
+    )
+
+    paper_list = PaperList({})
+    with_pdf_key = _register_entry(paper_list, with_pdf)
+    without_pdf_key = _register_entry(paper_list, without_pdf)
+    paper_list.to_file(data_paths.list_file)
+
+    data_paths.config_file.write_text(
+        json.dumps(_SAMPLE_CONFIG, ensure_ascii=False, indent=2),
+        encoding=_constants.ENCODING,
+    )
+
+    pdf_dir = with_pdf.get_pdf_dir(data_paths.pdf)
+    for index in range(2):
+        write_pdf(
+            pdf_dir / f"{index:02d}.pdf",
+            PDF_BYTES + f"%with-pdf {index:02d}\n".encode("ascii"),
+        )
+    # 論文リストに登録していないエントリのフォルダ = 孤立 PDF
+    orphan_pdf = write_pdf(
+        deleted.get_pdf_dir(data_paths.pdf) / "00.pdf",
+        PDF_BYTES + b"%orphan 00\n",
+    )
+
+    return SampleData(
+        paper_list=paper_list,
+        with_pdf_key=with_pdf_key,
+        without_pdf_key=without_pdf_key,
+        orphan_pdf=orphan_pdf,
+    )
