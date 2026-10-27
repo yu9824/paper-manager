@@ -39,7 +39,7 @@
   - サンプルデータ fixture を使うと、データディレクトリに論文リスト・設定・PDF 3 件（うち孤立 1 件）が作られる
   - _Requirements: 2.6, 6.1, 6.4, 8.1, 9.1, 11.2_
 
-- [ ] 1.5 外部依存の代替と、画面を実行する共有ヘルパーを整える
+- [x] 1.5 外部依存の代替と、画面を実行する共有ヘルパーを整える
   - Crossref の DOI 取得を、指定した固定のメタデータ（または取得失敗）を返す処理に差し替え、問い合わせた DOI を記録する fixture を用意する。固定のメタデータを作る補助は、エントリタイプを指定できるようにする（記事を既定とし、必須項目の不足の検証に使う書籍も作れる）
   - ファイルアップロード欄を、ラベルの接頭辞に応じて指定したファイル（単体・一覧・なし）を返し、一致しないラベルは本来の動作に任せる処理に差し替える fixture を用意する
   - エラー・警告・成功の通知を記録する処理に差し替える fixture を用意する（画面テストとは併用しない）
@@ -211,3 +211,5 @@
 - 1.2: `getaddrinfo` は localhost も含め無条件で遮断される（`NetworkBlockedError`）。`socket.connect_ex` は遮断対象外。ライブラリのルートロガーは level のみ復元し、handlers / propagate は復元しない（変更するテストは自分で戻す）。`st.session_state.clear()` が bare mode の ScriptRunContext 警告ログを `-s` 出力に出すが無害
 - 1.3: テストモジュールから `from conftest import ...` で conftest の名前を使える（pytest 既定の prepend import mode 前提。`--import-mode=importlib` では収集時に失敗する）。ログレベルなどの「元の値」は期待値を決め打ちせず、収集時に取得した基準値と比較する。復元を検証するテストは `monkeypatch` を使わず直接変更する（`monkeypatch` が自分で戻してしまうため）
 - 1.4: `make_entry` は既定値を消せない。著者なし・タイトルなしのエントリ（KB2a/KB2b）は `del entry["author"]` / `del entry["title"]` で作る。孤立 PDF のフォルダ名は `sample_data.orphan_pdf.parent.name`。`Entry.get_pdf_files()` はフォルダがあると `DeprecationWarning` を出す（警告はエラー扱いではない）。サンプルの `without_pdf` エントリには PDF フォルダを作らない
+- 1.5: `crossref_article(doi, type)` は design の Service Interface に無い第 2 引数 `type`（Crossref の type 文字列。`"book"` で `publisher` 不足を再現）を持つ。`run_page` はページの例外を送出せず `at.exception` に残すので、テスト側で assert する。`st_messages` は AppTest と併用不可。登録ページには、ラベル `DOI` の TextInput が 2 つ（`doi_form` と `custom_form`）、送信ボタン `📤 登録` が 3 つ（出現順 BIB・DOI・CUSTOM）あるため、ラベルだけでなく `form_id` か出現順で特定する
+- 5.3 向け: `_register.py` の `_create_entry_from_doi_metadata` は `metadata["container-title"][0]` を無条件に参照する（空だと IndexError）。`crossref_article` は `container-title` を必ず含めるので回避されるが、空の場合を検証するなら 13.4 に従い KNOWN BUG 候補として扱う

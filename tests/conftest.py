@@ -11,6 +11,7 @@
 まま確定してしまう (ガードが検出してセッションを止める)。
 """
 
+import copy
 import importlib
 import io
 import json
@@ -23,7 +24,7 @@ import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Any, NamedTuple, NoReturn
+from typing import Any, NamedTuple, NoReturn, Optional, Union
 
 import pytest
 
@@ -170,7 +171,10 @@ _TEMP_ROOT = _establish_isolation()
 # --------------------------------------------------------------------------
 
 import streamlit as st  # noqa: E402
+from crossref.restful import Works  # noqa: E402
+from streamlit.testing.v1 import AppTest  # noqa: E402
 
+import paper_manager  # noqa: E402
 from paper_manager import _constants  # noqa: E402
 from paper_manager.entry import Entry, PaperList  # noqa: E402
 from paper_manager.logging import get_library_root_logger  # noqa: E402
@@ -478,3 +482,220 @@ def sample_data(
         without_pdf_key=without_pdf_key,
         orphan_pdf=orphan_pdf,
     )
+
+
+# --- ExternalFakes --------------------------------------------------------
+# Crossref・ファイルアップロード欄・UI 通知を、テストから制御できる代替に
+# 差し替える。差し替えはすべて ``monkeypatch`` で行い、テストの後に元へ戻る。
+# AppTest はページのスクリプトを同じプロセスで実行するため、モジュール属性
+# の差し替えはページにも効く。
+
+CrossrefMetadata = dict[str, Any]
+Uploads = Union[FakeUpload, list[FakeUpload], None]
+
+
+def crossref_article(
+    doi: str = "10.1234/test", type: str = "journal-article"
+) -> CrossrefMetadata:
+    """Crossref の固定メタデータを作る.
+
+    登録ページの DOI 経路が参照するキー (``type``・``title``・
+    ``author``・``container-title``・``published``・``DOI``) を持つ。
+    ``volume``・``issue``・``page`` は含まない。
+
+    Parameters
+    ----------
+    doi : str, default "10.1234/test"
+        メタデータの ``DOI``。
+    type : str, default "journal-article"
+        Crossref のエントリタイプ。``"book"`` を指定すると、必須項目
+        ``publisher`` が不足するエントリになる (必須項目の不足の検証用)。
+
+    Returns
+    -------
+    CrossrefMetadata
+        登録ページを通すと、``type=journal-article`` の場合は次のエントリに
+        なる。
+
+        - ``title``: ``Fixed Metadata from Crossref``
+        - ``author``: ``Jane Doe and John Roe``
+        - ``journal``: ``Journal of Fixed Metadata``
+        - ``year``: ``2021``
+        - ``DOI``: ``doi``
+    """
+    return {
+        "type": type,
+        "DOI": doi,
+        "title": ["Fixed Metadata from Crossref"],
+        "author": [
+            {"given": "Jane", "family": "Doe"},
+            {"given": "John", "family": "Roe"},
+        ],
+        "container-title": ["Journal of Fixed Metadata"],
+        "published": {"date-parts": [[2021, 5, 17]]},
+    }
+
+
+@pytest.fixture
+def fake_crossref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[Optional[CrossrefMetadata]], list[str]]:
+    """Crossref の DOI 取得を、固定の応答を返す処理に差し替える関数を返す.
+
+    返された関数 ``install(metadata)`` を呼ぶと
+    ``crossref.restful.Works.doi`` が差し替わる。呼ぶまでは何も変わらない。
+    ``install`` を再び呼ぶと、前の ``install`` の差し替えを置き換える。
+
+    - ``metadata`` が辞書: 問い合わせた DOI にかかわらず、その複製を返す
+    - ``metadata`` が ``None``: ``None`` を返す (取得失敗。実際の
+      ``Works.doi`` も、見つからない DOI に対して ``None`` を返す)
+
+    Returns
+    -------
+    Callable[[Optional[CrossrefMetadata]], list[str]]
+        ``install(metadata) -> list[str]``。返す一覧には、``Works.doi`` が
+        呼ばれるたびに、問い合わせた DOI が順に加わる。
+    """
+
+    def install(metadata: Optional[CrossrefMetadata]) -> list[str]:
+        requested: list[str] = []
+
+        def fake_doi(
+            self: Works, doi: str, only_message: bool = True
+        ) -> Optional[CrossrefMetadata]:
+            requested.append(doi)
+            return copy.deepcopy(metadata)
+
+        monkeypatch.setattr(Works, "doi", fake_doi)
+        return requested
+
+    return install
+
+
+@pytest.fixture
+def fake_file_uploader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[Mapping[str, Uploads]], None]:
+    """ファイルアップロード欄を、指定のファイルを返す処理に差し替える関数を返す.
+
+    返された関数 ``install(uploads)`` を呼ぶと ``streamlit.file_uploader``
+    が差し替わる。``uploads`` は「ラベルの接頭辞 → 返すファイル」の
+    対応で、ラベルが ``startswith`` で一致した最初の接頭辞の値を、
+    ``accept_multiple_files`` の指定にかかわらず、そのまま返す。
+
+    - ``FakeUpload``: 単体を返す (``accept_multiple_files=True`` でも単体の
+      ままなので、「単一でも一覧で返る」の検証に使える)
+    - ``list[FakeUpload]``: 一覧を返す
+    - ``None``: ファイル未選択として ``None`` を返す
+
+    どの接頭辞にも一致しないラベルは、元の ``streamlit.file_uploader`` に
+    引数ごと渡す (本来の動作)。``install`` を再び呼ぶと、前の対応を
+    置き換える。元の関数は、最初の ``install`` を呼んだ時点のものを使う。
+
+    Returns
+    -------
+    Callable[[Mapping[str, Uploads]], None]
+        ``install(uploads) -> None``。
+    """
+    originals: list[Callable[..., Any]] = []
+
+    def install(uploads: Mapping[str, Uploads]) -> None:
+        if not originals:
+            originals.append(st.file_uploader)
+        original = originals[0]
+        table = dict(uploads)
+
+        def fake_file_uploader(label: str, *args: Any, **kwargs: Any) -> Any:
+            for prefix, files in table.items():
+                if label.startswith(prefix):
+                    return files
+            return original(label, *args, **kwargs)
+
+        monkeypatch.setattr(st, "file_uploader", fake_file_uploader)
+
+    return install
+
+
+class StMessages(NamedTuple):
+    """``st_messages`` が記録した UI 通知の本文 (呼ばれた順)."""
+
+    error: list[str]
+    warning: list[str]
+    success: list[str]
+
+
+def _make_recorder(sink: list[str]) -> Callable[..., None]:
+    """通知の本文を ``sink`` に記録するだけの関数を作る."""
+
+    def record(body: Any, *args: Any, **kwargs: Any) -> None:
+        sink.append(str(body))
+
+    return record
+
+
+@pytest.fixture
+def st_messages(monkeypatch: pytest.MonkeyPatch) -> StMessages:
+    """``st.error`` / ``st.warning`` / ``st.success`` を記録する処理に差し替える.
+
+    差し替えた関数は、呼ばれた本文を文字列にして記録するだけで、
+    画面には何も表示しない。bare mode (``streamlit run`` の外) では
+    これらの関数は何もしないため、通知の内容を観測する手段になる。
+
+    ``AppTest`` を使うテストでは併用しない。ページの要素が生成されなく
+    なるため、``at.error`` などの要素が空になる。画面テストでは
+    ``AppTest`` の要素を見る。
+
+    Returns
+    -------
+    StMessages
+        ``error``・``warning``・``success`` の各一覧。テストの後に
+        差し替えは元へ戻る。
+    """
+    messages = StMessages(error=[], warning=[], success=[])
+    for name in StMessages._fields:
+        monkeypatch.setattr(st, name, _make_recorder(getattr(messages, name)))
+    return messages
+
+
+# --- PageRunner -----------------------------------------------------------
+# 論文リストページ (_list.py) を起点に、対象のページへ移って AppTest で
+# 実行する。サブページを AppTest.from_file で直接開くと、config_page の
+# st.page_link が StreamlitPageNotFoundError になる (st.page_link は
+# エントリポイントからの相対パスで解決されるため)。
+
+APP_DIR = Path(paper_manager.__file__).parent / "app"
+# 論文リストページ (None) と 4 つのサブページ。_list.py からの相対パス。
+PAGES: tuple[Optional[str], ...] = (
+    None,
+    "pages/_register.py",
+    "pages/_backup.py",
+    "pages/_restore.py",
+    "pages/_settings.py",
+)
+APP_TIMEOUT_SECONDS = 30.0
+
+
+def run_page(page: Optional[str]) -> AppTest:
+    """論文リストページを起点に ``page`` へ移り、1 回実行する.
+
+    ``AppTest.from_file`` で論文リストページを開き、``page`` が ``None``
+    でなければ ``switch_page`` で移ってから ``run`` する。
+
+    Parameters
+    ----------
+    page : Optional[str]
+        ``PAGES`` の要素。``None`` は論文リストページ。
+
+    Returns
+    -------
+    AppTest
+        1 回実行済みの ``AppTest``。呼び出し側はウィジェットを操作して
+        ``run()`` を呼べる。例外が起きても送出されず、``at.exception`` に
+        残る。
+    """
+    at = AppTest.from_file(
+        str(APP_DIR / "_list.py"), default_timeout=APP_TIMEOUT_SECONDS
+    )
+    if page is not None:
+        at.switch_page(page)
+    return at.run()
