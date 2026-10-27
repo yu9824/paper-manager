@@ -11,7 +11,7 @@ dependencies = [
     # "crossrefapi @ git+https://github.com/fabiobatalha/crossrefapi.git@1.6.1",
     "pandas <3.0.0",
     "streamlit >=1.50.0",                                         # st.multiselect
-    "bibtexparser <2.0.0",
+    "bibtexparser <3.0.0",
     "streamlit-pdf-viewer",
     "pybtex",                                                     # https://pybtex.org/
     "bib2xml @ git+https://github.com/yu9824/bib2xml.git@v0.2.0",
