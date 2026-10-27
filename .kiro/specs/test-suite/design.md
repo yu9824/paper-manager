@@ -452,7 +452,7 @@ def run_page(page: Optional[str]) -> AppTest: ...
 本 spec の成果物自体がテストのため、ここでは「テストスイートが正しく機能していること」を確かめる観点を示す。
 
 - **隔離の検証（test_isolation）**: `check_isolation` が、一時ルートの外と禁止パスを拒否すること。`DataPaths` の 4 つのパスが一時ルートの配下にあること。`socket.create_connection(("example.com", 80))` が `NetworkBlockedError` になること。cwd が `tmp_path` であること
-- **既知バグの規約の確認**: 実装の完了時に `pytest -xs -rxX` を実行し、xfailed の件数が KnownBugConvention の表の行数と一致し、XPASS が 0 件であることを確認する
+- **既知バグの規約の確認**: 実装の完了時に `pytest -xs -rxX` を実行し、xfailed のテストが KnownBugConvention の表のすべての行に対応し（KB1 は backup と restore の 2 件）、XPASS が 0 件であることを確認する
 - **実データを汚さないことの確認**: 実装の完了時に、`~/.paper-manager` で `find -newer` を実行し、テストの実行中に更新されたファイルが 0 件であることを確認する。テストの実行前後で `git status --porcelain` に差分が増えないことも確認する（1.1、1.6）
 - **バージョン互換の確認**: 手元（Python 3.12、Streamlit 1.66）で成功したうえで、CI の全マトリクス（Python 3.9 / Streamlit 1.50 を含む）で成功することを確認する（14.1）
 
