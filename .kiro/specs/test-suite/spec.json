@@ -1,0 +1,22 @@
+{
+  "feature_name": "test-suite",
+  "created_at": "2026-10-27T10:34:13Z",
+  "updated_at": "2026-10-27T10:42:50Z",
+  "language": "ja",
+  "phase": "requirements-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": false
+    },
+    "design": {
+      "generated": false,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false
+}
