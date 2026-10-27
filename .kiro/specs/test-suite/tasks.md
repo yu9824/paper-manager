@@ -65,7 +65,7 @@
   - 2.1 と同じテストファイルを編集するため、2.1 の後に行う
   - _Requirements: 2.6, 2.7, 2.8, 2.9, 13.1, 13.2_
 
-- [ ] 2.3 (P) 論文リストの永続化のテストを書く
+- [x] 2.3 (P) 論文リストの永続化のテストを書く
   - ファイルへの保存と読み込みの往復で、キー・エントリ内容・非 ASCII 文字が保たれることを検証する
   - ファイルがない場合は空になり、JSON が壊れている場合は空になったうえで警告が通知されることを検証する
   - 画面の状態への書き込みと読み出しの往復、および未設定時に空になることを検証する
@@ -216,3 +216,5 @@
 - 2.1: 新規バグ KB7（仮称）を `tests/test_entry.py::test_name_stays_within_200_chars_when_prefix_leaves_almost_no_room` に strict xfail で記録済み。接頭辞 `<year> - <first_author> - ` が 198〜199 文字のとき `pdf_dir_name` が 200 文字を超える（`title[:max_title_length - 3]` が負のインデックスになるため。要件 2.4 違反。Repro: year=2020、著者名 188/189 文字、タイトル 300 文字）。**6.1 で design.md の既知バグ表に行を追記する**。このため tasks.md の 2.1 完了条件の xfailed は 2 件ではなく 3 件、6.1 の既知の失敗の件数は 12 件ではなく 13 件になる
 - 2.1: `get_key` は `author=""` を `Unknown` にしない（`2020_0`）が、`pdf_dir_name` は `author=""` で IndexError（KB2a と同根）。観察のみで xfail にしていない。OS 判定の差し替えは `paper_manager.entry._entry.platform` を `SimpleNamespace(system=...)` に `monkeypatch` で差し替える（`tests/test_entry.py` の `set_os`）。xfail の reason は `"KNOWN BUG: "`（コロン付き）で始める（レビューで指摘された）
 - 2.2: KB2b（タイトルなしの `get_pdf_files`）は PDF フォルダが存在しないときだけ再現する（旧形式の単一 PDF を探す分岐が `pdf_filename` を評価するため）。6.1 で design の KB2b の行にこの条件を補足してよい。観察のみ（xfail にしていない）: 旧単一 PDF は PDF フォルダが既にあると移行されない（ファイルは消えず上書きもされないが一覧に出ない）。複数の旧命名ファイルの番号割当は `glob` 順で不定（上書きなし・データ保全は満たすので仕様の範囲内。テストは内容の集合で比較）。`_migrate_legacy_single_pdf` の衝突回避は公開 API 経由では到達不能
+- 2.3: **KB 候補（観察のみ。xfail にしていない。最終報告で挙げる）**: (1) `list.json` が切り詰められて日本語マルチバイト文字の途中で切れると `PaperList.from_file` が `UnicodeDecodeError` で落ち、警告も出ない（`except json.JSONDecodeError` では捕捉できない）。書き込み中断が最も現実的な原因。(2) 妥当な JSON だがオブジェクトでない（`[]`, `"x"`, `1`）と `AttributeError`。(3) **ユーザーデータ安全**: 壊れた `list.json` を置いてトップページを 1 回描画すると、警告のあと `config_page`（`_config.py` の `from_file()` → `to_session_state()` → 実行後の `from_session_state().to_file()`）が `{}` で `list.json` を上書きし、バックアップも作られない（AppTest で再現）。要件 3.3 の範囲外で、期待する振る舞いが spec で未決のため xfail にしていない
+- 2.3: `st_messages` を使うテストは AppTest と併用しない。保存ファイルに日本語が文字のまま入る（`ensure_ascii=False`, UTF-8）ことは product.md の「人間が読める `list.json`」に基づく検証
