@@ -96,7 +96,7 @@
   - _Boundary: test_app_backup_
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 13.1, 13.2_
 
-- [ ] 3.2 (P) プロキシ設定のテストを書く
+- [x] 3.2 (P) プロキシ設定のテストを書く
   - 設定ファイルの優先、環境変数の大文字・小文字の両方からの取得、HTTPS 未設定時の HTTP へのフォールバック、未設定時の空、壊れた設定ファイルでのフォールバックを検証する
   - 保存時に他の設定項目が保たれること、両方を空にするとプロキシ設定が消えること、環境への適用で 4 つの環境変数が設定されることを検証する
   - プロキシ設定のテストがすべて成功し、テスト後に環境変数が元に戻っている
@@ -221,3 +221,4 @@
 - 2.4: `load_bib` の入力は `io.StringIO` / `io.BytesIO` / `Path` / `str`（`str` は本文でなくファイルパス扱い）。素の `bytes`・`bytearray` は `TypeError`。戻り値の `ID` は付かず、引用キーの小文字化は戻り値の辞書キーに現れる（`ID` は `_common.py` の登録時に付与）。**KB 候補（観察のみ）**: 1 語の著者名（`Cher`, `{ACME Collaboration}`）の整形結果が先頭空白付きになり、`John Smith and others` は空白が 2 つになる。`TypeError` のメッセージが入力型でなく `type(bib_parser)` を出している
 - 2.5: `dummy_tqdm` は tqdm を import せず有無の分岐を持たない（`sys.modules['tqdm']=None` でも動く）。観察のみ: `with dummy_tqdm(...)` は `TypeError`（`__getattr__` が特殊メソッドに効かない。要件 5.5 に `with` は無く `src/` に呼び出し箇所も無い）。`is_installed("a.b")` は親パッケージ不在で `ModuleNotFoundError`。`split("  ", ",")` は `("",)`、末尾の区切りは空要素が残る
 - 3.1: KB3 の xfail は design の KnownBugConvention（`raises=` は付けない）から逸脱して `raises=AssertionError` を付けた。fixture の安全検査（到達先が一時ルート内・データディレクトリ外・禁止パス外・事前に存在しない）が `pytest.fail`（`Failed` は `AssertionError` ではない）で失敗したとき、`raises` なしだと XFAIL に化けて安全検査の壊れを隠すため。XPASS(strict) の挙動（13.3）は損なわれない。**6.1 で design.md の KnownBugConvention に例外として追記する**。KB3 の到達先は `data_paths.root.parent / "escaped.pdf"`（`pdf/../../escaped.pdf`）で、teardown で必ず削除される。`pages/_restore.py` にも同じ実装がある（このタスクの対象外）。観察のみ: `get_backup_info` は不正な zip でも `_logger.exception` で ERROR とトレースバックを出す。`restore_from_zip` は存在しないパスでは `(False, "復元中にエラーが発生しました: ...")` を返す
+- 3.2: 環境変数の復元は子プロセスの pytest（`pytest.main(plugins=[Observer])`）で確認する（順序付きの 2 テストでは、conftest が各テスト開始時に 4 変数を削除するため復元漏れが隠れる）。`[set-outside]` は `monkeypatch` の undo が外側の値を戻すため conftest の `_restore_environ` の欠落を検出できず、検出するのは `[unset-outside]`。**KB 候補（観察のみ。最終報告で挙げる）**: `save_proxy_config` は既存の `config.json` が壊れていると警告ログだけで読み込みを諦め、空の設定から書き直す（プロキシ以外の項目が失われ、バックアップも作られない。2.3 の KB 候補（3）と同種のユーザーデータ保護上の懸念。現状 `config.json` に入るのは `proxy` のみなので実害は小さい）。手編集した `{"proxy": {"http": ""}}` では `get_proxy_config()` が `{"http": ""}` を返し環境変数のプロキシが隠れる（UI 経由では到達不能）
