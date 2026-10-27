@@ -215,3 +215,21 @@
   - Python 3.9 / Streamlit 1.50 で `switch_page` 後のページ描画と `at.get("page_link")` が手元と同じ結果になるか（手元で確認するには Python 3.9 の新しい環境が必要で、作成には承認が必要）
   - 不正な BibTeX テキストを pybtex が例外にするか、空として返すか（12.3。例外になる場合は新しい既知バグとして記録する）
   - bare mode の `st.session_state` をテスト間で確実に消す方法
+
+---
+
+# Design Phase Updates（2026-10-27）
+
+## Gap Analysis の Research Needed の解消状況
+| 項目 | 結果 | design への反映 |
+|------|------|-----------------|
+| 不正な BibTeX テキストの扱い（12.3） | `hello` のような非 BibTeX テキストは 0 件として返り、ページは「有効なエントリが見つかりませんでした。」と表示する。閉じ括弧のない `@article{k, title={T}` は `pybtex.scanner.PrematureEOF` を送出し、登録ページが例外で落ちる（AppTest で `at.exception` を確認） | 12.3 のテストには `hello` を使う。構文エラーの場合は新しい既知バグ **KB6** として記録する（13.4） |
+| bare mode の `st.session_state` の消去 | `st.session_state.clear()` で消える（手元で確認） | IsolationHarness がテストの後に `clear()` を呼ぶ |
+| Streamlit 1.50.0 の AppTest の API | `from_function(script, *, default_timeout, args, kwargs)`、`switch_page`、`get`、`Multiselect` / `NumberInput` / `Selectbox` / `TextArea` / `TextInput` / `Button` / `Exception` / `Title` / `Error` / `Warning` / `Success` の各要素が、1.50.0 のソースに存在する | Allowed Dependencies で、使ってよい API をこれらに限定する |
+| Python 3.9 / Streamlit 1.50 での実際の挙動 | 未確認（手元にない環境で、作成には承認が必要） | Testing Strategy で、CI の全マトリクスで確認することにする |
+
+## 追加の検証
+- サンプルデータ（日本語タイトル、PDF 2 件のエントリ、PDF のないエントリ、孤立 PDF、プロキシ設定）を入れた状態でも、5 ページすべてが例外なく描画され、`list.json` の内容は実行前後で変わらない（手元の Python 3.12 / Streamlit 1.66.1）
+
+## Consulted Guidance
+- `kiro-spec-design` の `design-principles.md`、`design-discovery-light.md`、`design-synthesis.md`、`design-review-gate.md` に従った。gap analysis の Option B と、横断的な選択肢の推奨（データの隔離 (i)、アップロード (ii)、UI 通知 (i)、ネットワーク遮断 (i)、既知バグの置き場所 (i)）を、そのまま設計判断として採用した
