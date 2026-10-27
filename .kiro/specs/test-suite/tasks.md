@@ -103,7 +103,7 @@
   - _Boundary: test_app_proxy_
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
 
-- [ ] 3.3 (P) 孤立 PDF の検出・削除のテストを書く
+- [x] 3.3 (P) 孤立 PDF の検出・削除のテストを書く
   - フォルダ内の孤立 PDF と旧形式の孤立 PDF が検出され、紐づく PDF は検出されないこと、PDF ディレクトリがなければ 0 件であることを検証する
   - 最も近いエントリの類似度の範囲・完全一致・空リストでの該当なしを検証する
   - 削除件数、空になったフォルダの削除、PDF ディレクトリ自体が残ること、一部の削除失敗後も続行することを検証する
@@ -222,3 +222,5 @@
 - 2.5: `dummy_tqdm` は tqdm を import せず有無の分岐を持たない（`sys.modules['tqdm']=None` でも動く）。観察のみ: `with dummy_tqdm(...)` は `TypeError`（`__getattr__` が特殊メソッドに効かない。要件 5.5 に `with` は無く `src/` に呼び出し箇所も無い）。`is_installed("a.b")` は親パッケージ不在で `ModuleNotFoundError`。`split("  ", ",")` は `("",)`、末尾の区切りは空要素が残る
 - 3.1: KB3 の xfail は design の KnownBugConvention（`raises=` は付けない）から逸脱して `raises=AssertionError` を付けた。fixture の安全検査（到達先が一時ルート内・データディレクトリ外・禁止パス外・事前に存在しない）が `pytest.fail`（`Failed` は `AssertionError` ではない）で失敗したとき、`raises` なしだと XFAIL に化けて安全検査の壊れを隠すため。XPASS(strict) の挙動（13.3）は損なわれない。**6.1 で design.md の KnownBugConvention に例外として追記する**。KB3 の到達先は `data_paths.root.parent / "escaped.pdf"`（`pdf/../../escaped.pdf`）で、teardown で必ず削除される。`pages/_restore.py` にも同じ実装がある（このタスクの対象外）。観察のみ: `get_backup_info` は不正な zip でも `_logger.exception` で ERROR とトレースバックを出す。`restore_from_zip` は存在しないパスでは `(False, "復元中にエラーが発生しました: ...")` を返す
 - 3.2: 環境変数の復元は子プロセスの pytest（`pytest.main(plugins=[Observer])`）で確認する（順序付きの 2 テストでは、conftest が各テスト開始時に 4 変数を削除するため復元漏れが隠れる）。`[set-outside]` は `monkeypatch` の undo が外側の値を戻すため conftest の `_restore_environ` の欠落を検出できず、検出するのは `[unset-outside]`。**KB 候補（観察のみ。最終報告で挙げる）**: `save_proxy_config` は既存の `config.json` が壊れていると警告ログだけで読み込みを諦め、空の設定から書き直す（プロキシ以外の項目が失われ、バックアップも作られない。2.3 の KB 候補（3）と同種のユーザーデータ保護上の懸念。現状 `config.json` に入るのは `proxy` のみなので実害は小さい）。手編集した `{"proxy": {"http": ""}}` では `get_proxy_config()` が `{"http": ""}` を返し環境変数のプロキシが隠れる（UI 経由では到達不能）
+- 3.3: `find_orphaned_pdfs` は読み取り専用でなく、各エントリの `get_pdf_files()` が旧形式 PDF をエントリのフォルダへ移行する副作用がある（紐づく旧形式 PDF を孤立にしないための仕様どおり）。`PaperList.__init__` が PDF ディレクトリを作るため、「PDF ディレクトリなし」の状態は論文リストを作ってから `rmdir` して作る。削除失敗の再現は `Path.unlink` の `monkeypatch` 差し替えで行う（chmod は環境依存のため不使用）。private 関数 `_calculate_similarity` の直接テストは design.md が許可している
+- 3.3: **KB 候補（観察のみ。最終報告で挙げる）**: (1) PDF フォルダと同名の旧形式 PDF がルート直下に共存すると（フォルダがあるため移行されず）紐づく旧形式 PDF が孤立と判定され、UI の「すべての孤立PDFを削除」で消える（再現済み）。(2) `delete_orphaned_pdfs` は渡されたパスが `DIRPATH_PDF` 配下か検証せず、フォルダを渡すと PDF 以外も `rmtree` する（現状の UI は `find_orphaned_pdfs` の戻り値のファイルだけを渡すので届かない）
