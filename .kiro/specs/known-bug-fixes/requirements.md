@@ -61,7 +61,8 @@ paper-manager の既知バグ（test-suite spec の KB1〜KB10）、利用者か
 3. When 論文に著者がない、または著者が空である, the Paper Manager shall 著者を `Unknown` として PDF フォルダ名を作る（KB2a）
 4. When 論文にタイトルがない, the Paper Manager shall 例外にならずに、その論文の PDF の有無と件数を表示する（KB2b）
 5. While Windows 上で動作している, the Paper Manager shall PDF フォルダ名に含まれる `"` を `_` に置き換える（KB5）
-6. The Paper Manager shall 修正前に作成できていた PDF フォルダ名（各 OS で作成できた名前）を変えない
+6. The Paper Manager shall 修正前に作成できていた PDF フォルダ名（各 OS で作成できた名前）のうち、KB7 の範囲（2.1 によって名前が変わるもの）以外を変えない
+7. If 修正前の規則で作られた名前の PDF フォルダが、修正後の名前と異なる名前で存在する（KB7 の範囲）, then the Paper Manager shall 既存の PDF を上書きせずにそのフォルダを修正後の名前へ移し、移すまでの間もそのフォルダを孤立 PDF として扱わない
 
 ### Requirement 3: 大文字小文字だけが違う PDF フォルダ名
 **Objective:** As a 論文を登録・更新する利用者, I want 大文字小文字だけが違うタイトルの論文を同じ論文として扱うこと, so that 別々の論文が同じ PDF フォルダを共有して PDF が消えることがない
