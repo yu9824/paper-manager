@@ -127,7 +127,7 @@
   - _Boundary: test_components_
   - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
 
-- [ ] 4.2 論文の登録・更新のテストを書く
+- [x] 4.2 論文の登録・更新のテストを書く
   - 登録時の識別子の付与、論文リストへの追加、添付 PDF の保存、ファイルと画面の状態の両方への反映を検証する
   - フォルダ名が重複する登録の拒否と重複エラーの通知、論文リストが変わらないことを検証する
   - フォルダ名が変わらない更新と変わる更新（フォルダの改名、PDF の保持、識別子の再生成）、重複や改名先の既存による更新の拒否を検証する
@@ -227,3 +227,5 @@
 - 3.4: `entrytype4doi` の docstring が実装と矛盾している（`entrytype4doi("article") -> "journal"` と書かれているが、引数は Crossref のタイプで、`"article"` は変換表に無く警告付きで `"misc"` を返す）。要件 8.7 には適合しておりバグではなく docstring の不正確さのみ（最終報告で docstring 修正の提案として触れる）。テストは `"article"` を入力に使わない。変換表は `journal-article`→`article`、`proceedings-article`→`inproceedings`、`book`→`book` の 3 件のみ
 - 4.1: `tests/test_components.py` は 4.2/4.3 が末尾に追記する。補助は同モジュール内の `entry` / `other_entry` / `pdf_root` fixture と `make_uploads` / `make_pdfs` / `pdf_names` / `padded_base_dir`。`delete_pdfs` の `specific_files` はファイル名でなく `list[Path]`。パス長の上限 250 は `save_pdfs` 内に直書き（`len(str(filepath)) > 250`）で、`padded_base_dir` が `base_dir` を伸ばして境界を作る。`save_pdfs` はスキップしても `index` を進めないため、本番の入力では「飛ばしたあとに別のファイルが保存される」状況を作れない（`_generate_pdf_filename` を細工した人工的なスタブでのみ可能で、テストにしていない）。`pytestmark` の `filterwarnings`（`pdf_filename` / `_migrate_legacy_pdf_filenames`）は module 全体に効く。`st_messages` を使うテストと AppTest を使うテストは別関数にする
 - 4.1: 観察のみ（KB 候補としては重大度が低い）: `save_pdfs` は全ファイルがパス長超過で飛ばされても先に `mkdir` するため空のフォルダが残る（データ損失なし）
+- 4.2: 登録・更新の補助は `tests/test_components.py` の「論文の登録・更新: 補助」にまとまっている（`ListState` / `Stored` / `as_fields` / `read_state` / `assert_list_is` / `seed_paper_list` / `edited` / `pdf_tree` / `stored`）。`register_entry_to_list` / `update_entry_in_list` は `bool` を返す。`to_session_state` は内部の辞書を直接格納するため、前提の論文リストは session state から読み直した別オブジェクトにして保存漏れを検出する。更新でタイトルだけ変えると新しい識別子は旧キーと異なるよう採番される（`_0` ではなく `_1`）
+- 4.2: **KB 候補（新規・ユーザーデータ保護に関わる。観察のみで xfail にしていない。最終報告で挙げる）**: 大文字・小文字を区別しないファイルシステム（macOS APFS 既定、Windows）で、`pdf_dir_name` の重複判定は大文字・小文字を区別するが実フォルダは区別されない。(i) 登録: 既存エントリ（PDF あり）とタイトルが大文字・小文字だけ違うエントリは重複と判定されず登録でき、添付 PDF が既存エントリのフォルダに保存されて両エントリが互いの PDF を見る（片方の PDF 削除でもう片方のフォルダごと消える恐れ。重大度高）。(ii) 更新: PDF のあるエントリのタイトルを大文字・小文字だけ変えると `new_pdf_dir.exists()` が真になり「Cannot rename PDF directory: destination already exists」で拒否される（データ損失はない）。macOS で再現済み、Linux（CI）では再現しないため決定論的な xfail にはできない（記録するならファイルシステムを実行時に判定する条件付き xfail）。その他の観察のみ: 元の PDF フォルダが無く改名先に同名の孤立 PDF フォルダがあると更新は成功し孤立フォルダが紐づく。未移行の旧形式単一 PDF を持つエントリで関数を直接呼んでタイトルを変えると旧 PDF が取り残される（実画面の編集フローは先に `get_pdf_files()` で移行するため UI からは届かない）。拒否された登録でも渡した `entry` に `ID` が書き込まれる
