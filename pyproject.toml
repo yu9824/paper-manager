@@ -60,6 +60,10 @@ paper-manager = "paper_manager.__main__:entrypoint"
 # [project.gui-scripts]
 # paper-manager = "paper_manager.__main__:entrypoint"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+xfail_strict = true
+
 [tool.setuptools]
 package-dir = { "" = "src" }
 
