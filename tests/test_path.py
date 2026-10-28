@@ -18,6 +18,12 @@
 - 差し替え口 (``_convert`` / ``_unconvert``): ``to_fs_path`` /
   ``to_display_path`` が呼び出し時にモジュールの属性を参照するため、名前で
   import した呼び出し側にも差し替えが効くこと (要件 12.3 の前提)
+- Windows のパスの扱いの模倣 (fixture ``windows_like_paths``): 有効にすると
+  ``to_fs_path`` の結果が ``//`` で始まる別の形になり、``to_display_path``
+  で元の形に戻ること。変換後のパスと変換前のパスの比較が一致せず、
+  ``relative_to`` が ``ValueError`` になること (prefix の混在の再現)。
+  変換後のパスへのファイル操作が成功すること。fixture を使わないテストでは
+  変換が元に戻っていること (要件 12.3)
 - フォルダ名の比較キー (``folder_name_key``): 大文字小文字だけ、または
   Unicode 正規化だけが違う名前が同じキーになり、別の名前は別のキーになる
   こと。文字列だけから決まり、OS やファイルシステムに依存しない (要件 3.4)
@@ -25,12 +31,15 @@
 ``_to_extended_length`` と ``_from_extended_length`` は純粋な文字列変換で、
 ``ntpath`` はどの OS でも動くため、Windows 以外でも検証できる。ドライブ相対
 や相対パスの解決だけはカレントディレクトリと OS に依存するため、結果の
-期待を ``os.name`` で分ける。
+期待を ``os.name`` で分ける。``windows_like_paths`` は Windows では
+スキップされる (本物の変換が働くため)。
 """
 
 import ntpath
 import os
+import shutil
 import unicodedata
+import zipfile
 from pathlib import Path
 from typing import Union
 
@@ -337,6 +346,124 @@ def test_windows_converters_through_public_functions(
 
     assert str(fs_path) == _PREFIX + "C:\\data\\pdf"
     assert to_display_path(fs_path) == "C:\\data\\pdf"
+
+
+# --- windows_like_paths (要件 12.3) ---------------------------------------
+# 別名変換: 絶対パスに正規化してから、前に ``/`` を 1 つ足す (``/x`` を
+# ``//x`` にする)。逆変換は先頭の ``//`` を ``/`` に戻す。
+
+_windows_like = pytest.mark.usefixtures("windows_like_paths")
+
+
+@_windows_like
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("/data/pdf", id="absolute"),
+        pytest.param("/data/a/../pdf", id="absolute-with-dot-dot"),
+        pytest.param("rel/a", id="relative"),
+        pytest.param(Path("/データ/論文"), id="path-object"),
+    ],
+)
+def test_windows_like_paths_changes_form_and_display_restores_it(
+    path: Union[str, Path],
+) -> None:
+    """変換後のパスは ``//`` で始まる別の形になり、表示用の逆変換で戻る."""
+    absolute = os.path.abspath(path)
+
+    fs_path = to_fs_path(path)
+
+    assert isinstance(fs_path, Path)
+    assert str(fs_path) == "/" + absolute
+    assert fs_path.root == "//"
+    assert fs_path != Path(absolute)
+    assert to_display_path(fs_path) == absolute
+
+
+@_windows_like
+def test_windows_like_paths_is_idempotent() -> None:
+    """変換済みのパスはそのまま、変換前のパスの表示は変わらない."""
+    once = to_fs_path("/data/pdf")
+
+    assert str(to_fs_path(once)) == str(once)
+    assert to_display_path("/data/pdf") == "/data/pdf"
+
+
+@_windows_like
+def test_windows_like_paths_reproduces_prefix_mixing(tmp_path: Path) -> None:
+    """変換前と変換後のパスは同じ場所でも、比較・相対パスで一致しない.
+
+    Windows の拡張長のパスと同じく、prefix の混在が不具合になる。変換後の
+    空間どうしなら、比較も ``relative_to`` も成り立つ。
+    """
+    root = tmp_path / "pdf"
+    (root / "a").mkdir(parents=True)
+
+    fs_root = to_fs_path(root)
+    fs_child = next(fs_root.iterdir())
+
+    assert fs_root.samefile(root)
+    assert fs_root != root
+    assert fs_root not in {root}
+    with pytest.raises(ValueError):
+        fs_child.relative_to(root)
+    with pytest.raises(ValueError):
+        (root / "a").relative_to(fs_root)
+
+    assert fs_child == fs_root / "a"
+    assert fs_child.relative_to(fs_root) == Path("a")
+    assert to_fs_path(root / "a").relative_to(fs_root) == Path("a")
+
+
+@_windows_like
+def test_windows_like_paths_file_operations_succeed(tmp_path: Path) -> None:
+    """変換後のパスへの作成・書き込み・一覧・改名・削除が成功する."""
+    data = tmp_path / "data"
+    fs_data = to_fs_path(data)
+    fs_folder = fs_data / "pdf" / "2020 - Smith - 論文"
+    fs_folder.mkdir(parents=True)
+    (fs_folder / "00.pdf").write_bytes(b"%PDF-00")
+    with open(fs_folder / "01.pdf", "wb") as f:
+        f.write(b"%PDF-01")
+    (fs_folder / "01.pdf").rename(fs_folder / "02.pdf")
+
+    assert sorted(fs_data.glob("pdf/*/*.pdf")) == [
+        fs_folder / "00.pdf",
+        fs_folder / "02.pdf",
+    ]
+    folder = data / "pdf" / "2020 - Smith - 論文"
+    assert (folder / "00.pdf").read_bytes() == b"%PDF-00"
+    assert (folder / "02.pdf").read_bytes() == b"%PDF-01"
+
+    fs_zip = to_fs_path(tmp_path / "backup.zip")
+    with zipfile.ZipFile(fs_zip, "w") as zf:
+        for pdf in sorted(fs_data.rglob("*.pdf")):
+            zf.write(pdf, pdf.relative_to(fs_data).as_posix())
+    with zipfile.ZipFile(tmp_path / "backup.zip") as zf:
+        assert zf.namelist() == [
+            "pdf/2020 - Smith - 論文/00.pdf",
+            "pdf/2020 - Smith - 論文/02.pdf",
+        ]
+
+    (fs_folder / "02.pdf").unlink()
+    assert not (folder / "02.pdf").exists()
+    shutil.rmtree(fs_data)
+    assert not data.exists()
+
+
+@_non_windows_only
+def test_conversion_is_restored_without_windows_like_paths() -> None:
+    """fixture を使わないテストでは、パスを変えない変換に戻っている.
+
+    上の ``windows_like_paths`` のテストより後に置き、差し替えがテストの
+    後に戻ることを既定の順序でも確かめる。
+    """
+    convert, unconvert = _path._select_converters(os.name)
+
+    assert _path._convert is convert
+    assert _path._unconvert is unconvert
+    assert str(to_fs_path("/data/pdf")) == "/data/pdf"
+    assert to_display_path(Path("/data/pdf")) == "/data/pdf"
 
 
 # --- folder_name_key (要件 3.4) -------------------------------------------

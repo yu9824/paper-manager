@@ -176,6 +176,7 @@ from streamlit.runtime.pages_manager import PagesManager  # noqa: E402
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 import paper_manager  # noqa: E402
+import paper_manager.helper._path as _path_adapter  # noqa: E402
 from paper_manager import _constants  # noqa: E402
 from paper_manager.entry import Entry, PaperList  # noqa: E402
 from paper_manager.logging import get_library_root_logger  # noqa: E402
@@ -684,6 +685,111 @@ def st_messages(monkeypatch: pytest.MonkeyPatch) -> StMessages:
     for name in StMessages._fields:
         monkeypatch.setattr(st, name, _make_recorder(getattr(messages, name)))
     return messages
+
+
+# --- WindowsLikePaths -----------------------------------------------------
+# ファイル操作用のパスへの変換 (paper_manager.helper._path の差し替え口
+# ``_convert`` / ``_unconvert``) を、Windows を模した別名変換に差し替える。
+
+# POSIX は先頭のちょうど 2 つの ``/`` を処理系定義とし、3 つ以上は 1 つと
+# 同じに扱う (``os.path.normpath`` も同じ規則)
+_ALIAS_ROOT = "//"
+
+
+def _to_windows_like_path(path: str) -> str:
+    r"""絶対パスに正規化してから、前に ``/`` を 1 つ足す (別名変換).
+
+    Windows の変換 (``ntpath.abspath`` で正規化してから ``\\?\`` を
+    付ける) を模す。``/x/y`` は ``//x/y`` になる。相対パスと ``..`` は
+    ``os.path.abspath`` で解決してから足す。
+
+    Parameters
+    ----------
+    path : str
+        変換するパス。
+
+    Returns
+    -------
+    str
+        ``//`` で始まる絶対パス。既に ``//`` で始まるパスは正規化だけ
+        して返す (冪等)。
+    """
+    full = os.path.abspath(path)
+    if full.startswith(_ALIAS_ROOT):
+        return full
+    return "/" + full
+
+
+def _from_windows_like_path(path: str) -> str:
+    """:func:`_to_windows_like_path` の逆変換 (先頭の ``//`` を ``/`` に戻す).
+
+    Parameters
+    ----------
+    path : str
+        元に戻すパス。
+
+    Returns
+    -------
+    str
+        先頭がちょうど ``//`` のパスは ``/`` で始まるパス。それ以外の
+        パスはそのまま返す。
+    """
+    if path.startswith(_ALIAS_ROOT) and not path.startswith("///"):
+        return path[1:]
+    return path
+
+
+@pytest.fixture
+def windows_like_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    r"""ファイル操作用のパスの扱いを、Windows を模した別名変換に差し替える.
+
+    autouse ではない。必要なテストで ``windows_like_paths`` を引数に取るか、
+    ``@pytest.mark.usefixtures("windows_like_paths")`` で有効にする。
+    差し替えはテストの後に元へ戻る。
+
+    模すもの: Windows では ``to_fs_path`` の結果 (``\\?\C:\...``) が、
+    同じ場所を指すのに変換前のパス (``C:\...``) と形が異なる。そのため、
+    変換後のパスと変換前のパス (``DIRPATH_PDF`` など) を比べたり
+    (``==``、集合への所属)、``relative_to`` で相対パスを求めたりすると
+    一致しない (prefix の混在による不具合)。この fixture は
+    ``paper_manager.helper._path._convert`` を、絶対パスの前に ``/`` を
+    1 つ足す別名変換 (``/x`` を ``//x`` にする。相対パスと ``..`` は
+    ``os.path.abspath`` で解決してから) に、``_unconvert`` をその逆
+    (先頭の ``//`` を ``/`` に戻す) に差し替える。
+
+    - Linux と macOS では ``//x`` は ``/x`` と同じ場所を指すため、変換後の
+      パスへのファイル操作 (作成、書き込み、一覧、改名、削除、zip の
+      読み書き) は成功する
+    - pathlib では ``//`` は別のルート (``Path("//x").root == "//"``) で、
+      ``Path("//x") != Path("/x")``、``Path("//x/a").relative_to("/x")`` は
+      ``ValueError`` になる。``glob`` や ``iterdir`` で得た子のパスも
+      ``//`` で始まるため、混在の不具合を CI の Linux で再現できる
+    - ``to_display_path(to_fs_path(p)) == os.path.abspath(p)`` になる
+      (Windows の変換と同じ形の事後条件)
+
+    模さないもの: 本物の ``\\?\`` のパスの入出力 (``/`` 区切りや ``..`` を
+    解釈しないこと、ドライブと UNC の扱い)、MAX_PATH (260 文字) の上限、
+    大文字小文字を区別しないファイルシステム。また ``Path.resolve()`` と
+    ``os.path.realpath`` は ``//x`` を ``/x`` に戻す (別名が外れる) ため、
+    変換後のパスの空間にとどまるかの確認には使えない。
+    ``os.path.relpath`` と ``os.path.commonpath`` も空の成分を無視するので、
+    別名では混在を再現しない (Windows の ``ntpath`` では ValueError になる)。
+
+    Windows では、``//`` が UNC のパスを意味して別名にならず、本物の変換が
+    既に働いているため、この fixture を使うテストはスキップする。
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        差し替えに使う。テストの後に元へ戻る。
+    """
+    if os.name == "nt":
+        pytest.skip(
+            "windows_like_paths models Windows paths on POSIX; on Windows "
+            "the real extended-length conversion is already active"
+        )
+    monkeypatch.setattr(_path_adapter, "_convert", _to_windows_like_path)
+    monkeypatch.setattr(_path_adapter, "_unconvert", _from_windows_like_path)
 
 
 # --- PageRunner -----------------------------------------------------------

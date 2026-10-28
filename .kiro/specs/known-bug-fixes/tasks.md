@@ -17,7 +17,7 @@
   - 純粋な文字列変換の単体テスト（ドライブ付き、`/` 区切り、`..`、UNC、変換済み、ドライブ相対）と比較キーのテストが、どの OS でも成功する
   - _Requirements: 1.1, 1.3, 1.4, 3.4_
 
-- [ ] 1.2 Windows のパスの扱いを CI の Linux で模すテストの仕組みを用意する
+- [x] 1.2 Windows のパスの扱いを CI の Linux で模すテストの仕組みを用意する
   - 変換の実体を「絶対パスの前に区切りを 1 つ足す」別名変換に差し替える fixture を、共有のテスト基盤に追加する（Linux と macOS では同じ場所を指すが、パスの比較では別のルートとして扱われる）
   - fixture を有効にすると、変換後のパスと変換前のパスの比較や相対パスの計算が一致しなくなること（prefix の混在による不具合を再現できること）を、テストで確かめる
   - fixture を使うテストが成功し、使わない既存のテストはすべてそのまま成功する
@@ -192,3 +192,4 @@
 
 ## Implementation Notes
 - 1.1: `paper_manager.helper` から `to_fs_path` / `to_display_path` / `folder_name_key` を再エクスポートした。差し替え口は `paper_manager.helper._path._convert` / `_unconvert`（呼び出し時に参照されるので、名前で import した側にも効く）。純粋な変換は `_to_extended_length` / `_from_extended_length`。`to_fs_path("")` は ValueError（空のパスは渡さない）。Python 3.9 / 3.10 の `ntpath.normpath` は `\\?\` 付きのパスを変えないが、3.11 以降は正規化する（変換は prefix を付ける前に abspath するので結果は同じ）。比較キーの既知の差: U+0131（ı）と i / I は NTFS 風の比較では同じ名前だが、比較キーでは別になる（トルコ語などのタイトルで、Windows ではフォルダを共有しうる。設計どおりで範囲外）
+- 1.2: `tests/conftest.py` の opt-in の fixture `windows_like_paths` は、変換を `/x` → `//x` の別名に差し替える（pathlib では `root == "//"` で別のルートになり、`==`・集合・`relative_to` が一致しない。ファイル操作は同じ場所を指して成功する）。**変換後の空間にとどまるかの確認に `Path.resolve()` / `os.path.realpath` / `os.path.relpath` / `os.path.commonpath` を使わない**（別名が外れて混在を再現しない）。Windows では skip する。Linux で `//x` が `/x` を指すことは CI（6.2）で確認する
