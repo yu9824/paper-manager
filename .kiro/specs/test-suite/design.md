@@ -154,7 +154,7 @@ sequenceDiagram
     Conftest->>Conftest: remove temp root
 ```
 
-- ガードが失敗した場合は `pytest.exit(..., returncode=1)` でセッション全体を止め、テストを 1 件も実行しない（1.3）
+- ガードが失敗した場合は `pytest.exit(..., returncode=1)` でセッション全体を止め、テストを 1 件も実行しない（1.3）。conftest の読み込み中に送出された `pytest.exit` は pytest により usage error に包まれるため、`returncode` の値にかかわらず終了コードは 4 になる（非ゼロで停止し、理由を表示し、テストを 0 件実行する点は変わらない。実装時に判明）
 - 実行前に `PAPER_MANAGER_DATA_DIR` が設定されていた場合、その値を禁止パスに加えたうえで上書きする（1.1）
 
 ### ページ実行
@@ -236,6 +236,7 @@ sequenceDiagram
   - `HTTP_PROXY`・`HTTPS_PROXY`・`http_proxy`・`https_proxy` を削除する
   - `socket.socket.connect`（AF_INET / AF_INET6 のみ）と `socket.getaddrinfo` を、`NetworkBlockedError` を送出する関数に差し替える
   - `os.environ` の写しと、ライブラリのルートロガーのレベルを保存する
+  - `streamlit.runtime.pages_manager.PagesManager.uses_pages_directory` を `None` に戻す（`monkeypatch.setattr(..., raising=False)`）。Streamlit 1.50 ではこの値がプロセス共有で、最初に走った AppTest が決める。`AppTest.from_file(_list.py)` が先なら後続の `from_function` が、`from_function` が先なら後続の `from_file` / `switch_page` が失敗するため、テストごとに初期化する（実装時に判明。1.66 では再現しない）
 - テストの後には、`os.environ` を写しの内容に戻し、ロガーのレベルを戻し、`st.session_state.clear()` で bare mode の session state を消す
 - プロダクションのモジュール属性は差し替えない（データパスは環境変数だけで決まる）
 
@@ -331,8 +332,11 @@ def sample_data(
 ```python
 CrossrefMetadata = dict[str, Any]
 
-def crossref_article(doi: str = "10.1234/test") -> CrossrefMetadata: ...
-# journal-article metadata with title, author, container-title, published
+def crossref_article(
+    doi: str = "10.1234/test", type: str = "journal-article"
+) -> CrossrefMetadata: ...
+# metadata with title, author, container-title, published;
+# type is the Crossref type ("book" gives an entry that lacks publisher)
 
 @pytest.fixture
 def fake_crossref(
@@ -399,14 +403,14 @@ def run_page(page: Optional[str]) -> AppTest: ...
 
 **Responsibilities & Constraints**
 - `@pytest.mark.xfail(reason="KNOWN BUG: <不具合の内容>. Repro: <再現条件>")` を付ける。`pyproject.toml` の `xfail_strict = true` によって strict になる（13.3）
-- `raises=` は付けない。期待する振る舞いを assert し、現状の例外も期待との不一致も「既知の失敗」として扱う
+- `raises=` は付けない。期待する振る舞いを assert し、現状の例外も期待との不一致も「既知の失敗」として扱う。例外は KB3 のみ: 再現の安全検査（到達先が一時ルート内か等）を `pytest.fail` で行うため、`raises=AssertionError` を付けて、安全検査の失敗が XFAIL に化けないようにしている（XPASS(strict) の挙動は変わらない）
 - テストは、対応するドメインのテストモジュールに置く
 
 | ID | 不具合 | 置き場所 | 期待する振る舞い（assert する内容） |
 |----|------|--------|----------------------------|
-| KB1 | CLI の backup / restore が `SystemExit(2)` になる | test_cli | `main(["backup", "-o", p])` で `p` が作られる。`main(["restore", p, "--force"])` で `list.json` が復元される |
+| KB1 | CLI の backup / restore が `SystemExit(2)` になる。**二層構造**: (一層目) `main()` が `--client.showSidebarNavigation false` を全サブコマンドに付与し、サブパーサーが `unrecognized arguments` で拒否する。(二層目) `main()` のサブパーサーが `-o` / `backup_file` / `--force` を消費し、`backup()` / `restore()` には未知の引数しか渡さない。XPASS にするには、付与を止めたうえで解析済みの引数を転送する必要がある | test_cli | `main(["backup", "-o", p])` で `p` が作られる。`main(["restore", p, "--force"])` でデータ（`list.json` を含む）が復元される |
 | KB2a | 著者のないエントリの PDF フォルダ名生成で `IndexError` | test_entry | `pdf_dir_name == "2020 - Unknown - T"` |
-| KB2b | タイトルのないエントリの PDF 一覧取得で `KeyError` | test_entry | `get_pdf_files() == []` |
+| KB2b | タイトルのないエントリの PDF 一覧取得で `KeyError`（PDF フォルダが存在しないときだけ再現する。旧形式の単一 PDF を探す分岐が `pdf_filename` を評価するため） | test_entry | `get_pdf_files() == []` |
 | KB2c | 著者のない BibTeX の読み込みで `KeyError` | test_bib | 例外にならず、`author` が空または存在しない |
 | KB3 | 復元時にデータディレクトリの外へ書き込まれる | test_app_backup | `pdf/../../escaped.pdf` を含む zip を復元しても、データディレクトリの外にファイルが作られない |
 | KB4a | 手動入力の著者が `, ` 区切りで保存される | test_components | 著者 2 名を入力すると `"A B and C D"` になる |
@@ -414,10 +418,15 @@ def run_page(page: Optional[str]) -> AppTest: ...
 | KB4c | 複合姓・ミドルネームが欠落する | test_bib | `van der Waals, Johannes Diderik` に `van der Waals` と `Johannes Diderik` が含まれる |
 | KB4d | 孤立 PDF の削除にフォルダを渡すと件数が 0 になる | test_app_orphan_pdf | PDF 2 件を含むフォルダを渡すと 2 が返る |
 | KB5 | Windows 用の置換規則に `"` が含まれない | test_entry | `platform.system()` を `"Windows"` に差し替えると、`"` が `_` に置換される |
-| KB6 | 不正な BibTeX 構文で登録ページが例外で落ちる（設計フェーズで判明、13.4） | test_register_flow | `@article{k, title={T}`（閉じ括弧なし）を登録すると、ページ例外にならずにエラーが表示され、論文リストが変わらない |
+| KB6 | 不正な BibTeX 構文で登録ページが例外で落ちる（設計フェーズで判明、13.4。`pybtex.scanner.PrematureEOF`） | test_register_flow | `@article{k, title={T}`（閉じ括弧なし）を登録すると、ページ例外にならずにエラーが 1 つ表示され、論文リストが変わらない |
+| KB7 | `pdf_dir_name` が、接頭辞 `<year> - <first_author> - ` が 198 または 199 文字のとき 200 文字を大きく超える（約 497 文字。残りの長さが 2 または 1 になり、`title[:max_title_length - 3]` が負のインデックスになってタイトルがほぼ全文残る。要件 2.4 違反。実装中に判明、13.4） | test_entry | year=`2020`、著者名 188 または 189 文字、タイトル 300 文字でも `pdf_dir_name` が 200 文字以内 |
+| KB8 | `--client.showSidebarNavigation=true` のような `=` 形式の明示指定を `main()` が認識せず（`"--client.showSidebarNavigation" not in set(unknown)` がトークン完全一致のため）、`--client.showSidebarNavigation false` を重複して付与する。後ろが勝つので、ユーザーの `true` が無視される（要件 10.3。実装中に判明、13.4） | test_cli | `=` 形式で明示指定した引数が重複なしでそのまま渡される |
+| KB9 | `paper-manager version` が常に終了コード 2 になる（KB1 と同根。`version` にも `--client.showSidebarNavigation false` が付与され、`streamlit version` がそのオプションを受け付けない。`-v` / `--version` は正常。実装中に判明、13.4） | test_cli | `main(["version"])` が Streamlit のバージョンを表示して終了コード 0 になる |
+| KB10 | DOI の問い合わせ（`Works.doi`）が `requests.exceptions.ConnectionError`（オフライン・タイムアウト・プロキシ誤設定）を送出すると、`_render_doi_form` が捕捉せず登録ページが例外で落ち、エラーも表示されない（KB6 と同形。要件 12.5。実装中に判明、13.4） | test_register_flow | ページ例外にならずにエラーが 1 つ表示され、論文リストが変わらない |
 
 **Implementation Notes**
-- Validation: 実装中に新しいバグが見つかった場合（13.4）は、同じ規約で追加し、上表に行を追記する
+- Validation: 実装中に新しいバグが見つかった場合（13.4）は、同じ規約で追加し、上表に行を追記する（KB7〜KB10 は実装中に追記した。xfailed の総数は KB1 の 2 件を含めて 16 件）
+- Notes: 上表の KB4a は、` and ` 区切りの著者を持つ既存エントリの編集フォームが `author` を `, ` 区切りで返すため、編集の Done で `update_entry_in_list` の改名経路に入り、PDF フォルダ名が変わる（コード上の挙動）
 - Risks: 修正 spec が別のバグも同時に直すと、関係のない xfail が `XPASS(strict)` になる。その場合は、その spec が該当するマーカーも外す
 
 ### テストモジュール群（summary-only）
@@ -433,8 +442,8 @@ def run_page(page: Optional[str]) -> AppTest: ...
 - **test_app_fields**: 8.6 は `fields.json` を独立に読み込み、`MAP_REQUIRED_FIELDS` と照合する
 - **test_components**: 9.3 は `base_dir` に長いディレクトリを指定して、パスを 250 文字超にする。9.11、KB4a、KB4b は、`custom_entry` を呼ぶスクリプトを `AppTest.from_function` で実行し、結果を `st.session_state` に書き出して読む。年は明示的に入力する（14.2：今日の日付に依存しない）
 - **test_cli**: 10.2 は `paper_manager.__main__.cli.main_run` / `main_version` を、引数を記録する関数に差し替える。10.5 は `backup([])` を呼び、cwd（`tmp_path`）に `paper-manager-backup_\d{8}_\d{6}\.zip` に一致するファイルが 1 件作られることを検証する。10.7 は `builtins.input` を差し替える。10.8 は、zip ではない既存のファイルを指定する
-- **test_pages_smoke**: `PAGES` × {空データ, `sample_data`} でパラメータ化する。`at.exception` が空であること、`at.title` に `PAPER MANAGER` が含まれること、`at.get("page_link")` が 5 件であること、`list.json` の内容（`json.load` した辞書）が実行前後で等しいことを検証する。空データでは実行中に `list.json` が作られるため、実行前に存在しなければ空の辞書として比べる
-- **test_register_flow**: ウィジェットはラベルで特定する（`DOI`、`BibTeX形式のテキストを入力`、`エントリタイプを選択`）。送信ボタンは同じラベル `📤 登録` が 3 つあるため、出現順（BIB、DOI、CUSTOM）のインデックスで特定する。12.3 の「有効なエントリを含まない」には、構文として成立する非 BibTeX テキスト（`hello`）を使う（構文エラーになるテキストは KB6）。12.7 の DOI 経路は、`type: "book"`（`publisher` が欠落）の固定応答を使う
+- **test_pages_smoke**: `PAGES` × {空データ, `sample_data`} でパラメータ化する。`at.exception` が空であること、`at.title` に `PAPER MANAGER` が含まれること、`at.get("page_link")` が 5 件で、ラベル（`リスト・編集` / `登録` / `バックアップ` / `復元` / `設定`）の順序と遷移先 `proto.page` の重複なしを満たすこと（1.50 では `PageLink` が無く `UnknownElement` になるため `.value` でなく `.proto` を使う）、各ページ自身の `st.header` が表示されること（`switch_page` が効かず全ページが論文リストページになっても、タイトルとナビゲーションは共通のため通ってしまうのを防ぐ）、`list.json` の内容（`json.load` した辞書）が実行前後で等しいことを検証する。空データでは実行中に `list.json` が作られるため、実行前に存在しなければ空の辞書として比べる
+- **test_register_flow**: ウィジェットは、所属するフォームの `proto.form_id`（`bib_form` / `doi_form` / `custom_form`）で特定する（`DOI` の text_input は DOI フォームと手動入力フォームに 2 つ、送信ボタン `📤 登録` は 3 つあり、ラベルだけでは決まらない。出現順より堅牢で、Streamlit 1.66 / 1.50 の両方で動く。実装時に変更）。12.3 の「有効なエントリを含まない」には、構文として成立する非 BibTeX テキスト（`hello`）を使う（構文エラーになるテキストは KB6）。12.7 の DOI 経路は、`type: "book"`（`publisher` が欠落）の固定応答を使う
 
 ## Error Handling
 

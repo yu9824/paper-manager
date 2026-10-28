@@ -184,7 +184,7 @@
   - _Requirements: 12.4, 12.5, 12.6, 12.7, 12.9_
 
 - [ ] 6. 全体の検証
-- [ ] 6.1 スイート全体の実行と既知バグの台帳を照合する
+- [x] 6.1 スイート全体の実行と既知バグの台帳を照合する
   - 既知の失敗の内訳を表示するオプション付きでスイート全体を実行し、既知の失敗が設計の既知バグ表のすべての行に対応し（KB1 は backup と restore の 2 件で、現時点では計 12 件）、想定外の成功が 0 件で、それ以外のテストがすべて成功することを確認する
   - 実装中に新しく見つかったバグがあれば、同じ規約で記録したうえで設計の既知バグ表に行を追記する
   - lint（ruff）をテストコードに対して実行する。ruff は開発環境に入っていないため、使えない場合はこの確認を飛ばしたことを報告する（インストールにはユーザーの承認が必要）
@@ -242,3 +242,5 @@
 - 5.3: **新規バグ KB10（仮称）を strict xfail で記録（design.md の KB 表への追記は 6.1）**: DOI の問い合わせ（`Works.doi`）が `requests.exceptions.ConnectionError`（オフライン・タイムアウト・プロキシ誤設定）を送出すると、`_render_doi_form` が捕捉せず登録ページが例外で落ち、エラーも表示されない（要件 12.5 に反する。`_register.py` の `works.doi(doi)` が try の外）。KB6 と同形。**xfailed の総数は 16 件**（KB1×2、KB2a / KB2b / KB2c、KB3、KB4a / KB4b / KB4c / KB4d、KB5、KB6、KB7、KB8、KB9、KB10）。6.1 の「既知の失敗の件数」は 16 件に更新する。`fake_crossref` は dict / None しか扱えないので、通信例外は `monkeypatch` で `Works.doi` を差し替える
 - 5.3: **KB 候補（観察のみ。最終報告で挙げる）**: (1) DOI 経路は `publisher` と `booktitle` を Crossref 応答から取り込まないため、実際の書籍（`book`）と会議録（`proceedings-article`）の DOI が常に `('publisher') is/are necessary.` / `('booktitle') is/are necessary.` で拒否され、DOI フォームから補う手段がない（手動入力か BibTeX で登録するしかない）。`test_doi_with_missing_required_fields_is_rejected` は設計が指定する `type="book"` の固定応答（`publisher` 不足）でこの挙動に依存するので、直すときは入力を差し替える。(2) `type="book"` で `container-title` が `[]`・`author` なし・`published` なしの応答だと `IndexError` / `KeyError` で登録ページが落ちる（実 Crossref の `book` は `container-title` が空のことが多い）。(3) DOI 経路は応答にない volume / number / pages を空文字 `""` で保存する（BibTeX と手動入力は保存しない。テストは `ignore_blank` で保存の有無に結合しない）。(4) 空白だけの DOI は `if not doi` を通り Crossref に問い合わせる。(5) 手動入力の必須不足エラーの順序は集合順で不定、文言が日英不統一
 - 5.3: PDF アップロード欄のラベル `PDF file(s) (.pdf)` は 3 フォーム共通で、`fake_file_uploader` の接頭辞では送信フォームの欄だけを区別できない（別フォームの `uploaded_files_*` を渡すコピペ回帰はテストで検出できない。強化するなら呼び出し順 BIB → DOI → CUSTOM で返す fake を test モジュール内に置く）。手動入力の必須不足のテストは article / book / inbook を使い、inproceedings の `booktitle` 不足は検証していない
+- 6.1: xfailed は 16 件（KB1×2、KB2a / KB2b / KB2c、KB3、KB4a / KB4b / KB4c / KB4d、KB5、KB6、KB7、KB8、KB9、KB10）で、design.md の既知バグ表の全行と 1 対 1 に対応する。XPASS は 0 件、reason はすべて `KNOWN BUG:` で始まる。実装中に判明した KB7〜KB10 と、実装で食い違った設計記述（KB1 の二層構造、KB2b の再現条件、KB6 の再現入力、KB3 の `raises=AssertionError` の例外、隔離ガードの終了コード 4、`PagesManager.uses_pages_directory` のテストごとの初期化、`crossref_article` の `type` 引数、登録ページのウィジェット特定を `form_id` に変更、スモークテストの追加検証）を design.md に反映した
+- 6.1: lint は開発環境（conda 環境 `paper-manager`）に ruff が無いため、別の conda 環境（`py312`）にある既存の ruff 0.14.13 を、プロジェクトの `ruff.toml` で読み取り専用に実行した（`--no-cache`、インストールはしていない）。`ruff check --config ruff.toml tests` と `src tests` はいずれも All checks passed。`ruff format --check` は全角文字を幅 2 と数えるため数ファイルに整形差分が出るが、CI は ruff を実行しない
