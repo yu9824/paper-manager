@@ -198,7 +198,7 @@
   - 実データ・作業ツリーが変化せず、繰り返しや個別の実行でも同じ結果になる
   - _Requirements: 1.1, 1.6, 14.2_
 
-- [ ] 6.3 CI の全 Python バージョンで成功することを確認する
+- [x] 6.3 CI の全 Python バージョンで成功することを確認する
   - ブランチの push についてユーザーの承認を得てから push し、CI の全マトリクス（Python 3.9〜3.13）の結果を確認する。Python 3.9 では Streamlit 1.50 になるため、ここで初めて設計の互換性の前提が検証される
   - 失敗した場合は、原因を特定してテスト側で対処する（プロダクションコードは変更しない）。手元で Python 3.9 / Streamlit 1.50 を再現するには新しい conda 環境が必要で、作成にはユーザーの承認が必要
   - CI の全 Python バージョンでテストが成功している
@@ -245,3 +245,4 @@
 - 6.1: xfailed は 16 件（KB1×2、KB2a / KB2b / KB2c、KB3、KB4a / KB4b / KB4c / KB4d、KB5、KB6、KB7、KB8、KB9、KB10）で、design.md の既知バグ表の全行と 1 対 1 に対応する。XPASS は 0 件、reason はすべて `KNOWN BUG:` で始まる。実装中に判明した KB7〜KB10 と、実装で食い違った設計記述（KB1 の二層構造、KB2b の再現条件、KB6 の再現入力、KB3 の `raises=AssertionError` の例外、隔離ガードの終了コード 4、`PagesManager.uses_pages_directory` のテストごとの初期化、`crossref_article` の `type` 引数、登録ページのウィジェット特定を `form_id` に変更、スモークテストの追加検証）を design.md に反映した
 - 6.1: lint は開発環境（conda 環境 `paper-manager`）に ruff が無いため、別の conda 環境（`py312`）にある既存の ruff 0.14.13 を、プロジェクトの `ruff.toml` で読み取り専用に実行した（`--no-cache`、インストールはしていない）。`ruff check --config ruff.toml tests` と `src tests` はいずれも All checks passed。`ruff format --check` は全角文字を幅 2 と数えるため数ファイルに整形差分が出るが、CI は ruff を実行しない
 - 6.2: 手元（Streamlit 1.66.1、conda 環境 `paper-manager`）で確認した。(1) スイート全体を 2 回続けて実行し、どちらも 662 passed + 16 xfailed で xfail の内訳も同一。(2) 14 のテストモジュールを個別に実行した合計が 662 passed + 16 xfailed で全体と一致。(3) `~/.paper-manager` はファイル一覧・更新時刻・サイズが実行前後で同一で、実行中に更新されたファイルは 0 件。(4) リポジトリは `git status`・HEAD が実行前後で同一で、zip などの生成物も一時ディレクトリの取り残しもない。(5) Streamlit 1.50.0 でも全体を既定順・逆順・ランダム順で実行して 662 passed + 16 xfailed（スクラッチの `PYTHONPATH` 方式）
+- 6.3: ユーザーの承認を得て `test/add-unit-tests` を push し、CI（run 40627948861、`pytest -xs`）の全マトリクスが成功した。Python 3.9 は Streamlit 1.50.0、3.10 は 1.65.0、3.11〜3.13 は 1.66.1 が入り、すべて 662 passed + 16 xfailed（XPASS 0）。設計の互換性の前提（Python 3.9 / Streamlit 1.50）は CI で検証できた。この記録のコミットは push していない
