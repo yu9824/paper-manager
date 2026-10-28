@@ -158,7 +158,7 @@
   - _Requirements: 10.5, 10.6, 10.7, 10.8, 13.1, 13.2_
 
 - [ ] 5. 画面のスモークテストと登録フローの結合テスト
-- [ ] 5.1 (P) 全ページのスモークテストを書き、既存のページ起動テストを統合する
+- [x] 5.1 (P) 全ページのスモークテストを書き、既存のページ起動テストを統合する
   - 5 ページを、空データとサンプルデータのそれぞれで実行し、例外がないこと、共通のタイトルと 5 つのナビゲーションが表示されること、論文リストの内容が実行前後で変わらないことを検証する
   - 既存の論文リストページの起動テストはスモークテストに包含されるため削除し、pybtex の読み込み確認テストは残す
   - 10 通りのスモークテストがすべて成功する
@@ -236,3 +236,4 @@
 - 4.4: Streamlit の起動は `paper_manager.__main__.cli` を `main_run` / `main_version` だけを持つ名前空間に丸ごと差し替えて避ける（他の起動経路は AttributeError）。補助は `tests/test_cli.py` の `streamlit_calls` / `library_logger` / `_run_forwarded` / `_version_forwarded`。4.5 は末尾にセクションを追記し、モジュール docstring に backup / restore と KB1 を足す。`--debug` のログレベル復元は 3.2 と同じ子プロセスの pytest + Observer で確認する。10.1 は `-v` / `--version`（サブコマンド `version` は 10.2 の対象）。`run -h` / `--help` は Streamlit に渡される
 - 4.5: **KB1 は二層構造**（6.1 で design.md の KB1 の行に反映する）。(一層目) `main()` が `--client.showSidebarNavigation false` を backup / restore にも付与し、サブパーサーが `unrecognized arguments` で終了コード 2。(二層目) `main()` のサブパーサーが `-o` / `backup_file` / `--force` を消費し、`backup()` / `restore()` には未知の引数しか渡さない。一層目だけ直すと backup は `-o` を無視して cwd に既定名で作り、restore は `backup_file` が足りず終了コード 2 のまま。2 層を直すと KB1×2 が XPASS(strict) になり、付与を run のみにすると KB9 も同時に XPASS する（KB8 は `=` 形式の問題なので別）。単一 ID のまま reason に両層を明記する。通常テストは `cli_main.backup(args)` / `cli_main.restore(args)` に引数リストを直接渡す（KB1 を踏まない）。`input()` は `builtins.input` の差し替え。キャンセルは終了コード 0、失敗は終了コード 1。確認入力は大文字小文字を無視（実装の `.lower()` を固定）。観察のみ: 確認の `input()` は try の外にあり、EOF（非対話実行）では `EOFError` のトレースバックになる
 - 4.5: xfailed の総数は 14 件。5.3 の KB6 を加えて最終的に 15 件になる見込み
+- 5.1: `tests/test_app.py` を削除（旧 `test_app` は `AppTest.from_file(_list.py).run()` を呼ぶだけで何も assert しておらず、新しい `[empty-list]` / `[sample-list]` が包含する）。`tests/test_import.py` の `test_import_pybtex` は残した。Streamlit 1.50 には `PageLink` クラスが無く `at.get("page_link")` が `UnknownElement` を返すため `.value` ではなく `.proto.label` / `.proto.page` を使う。ナビゲーションのラベル順（`リスト・編集` / `登録` / `バックアップ` / `復元` / `設定`）と遷移先の重複なしを検証する。タイトルとナビゲーションは全ページ共通のため、`switch_page` が効かず全ページが論文リストページになっても通ってしまうので、ページ自身の `st.header` も検証する。11.4 の「変わらない」は `list.json` を `json.load` した辞書（キーとエントリ内容）の比較で、空データでは実行後に `config_page` が `{}` を書くが保存された論文は 0 件のままなので変更なしとみなす（モジュール docstring に明記）
