@@ -1,4 +1,6 @@
+import errno
 import json
+import logging
 import os
 import platform
 import re
@@ -24,17 +26,133 @@ from paper_manager._constants import (
     ENCODING,
     FILEPATH_LIST,
 )
-from paper_manager.helper import deprecated, split
+from paper_manager.helper import (
+    deprecated,
+    split,
+    to_display_path,
+    to_fs_path,
+)
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
 
 KEY_PAPER_LIST = "paper_list"
+# 画面に出した PDF の移行・アクセスの警告 (同じ警告を繰り返さないための記録)
+KEY_SHOWN_PDF_WARNINGS = "shown_pdf_warnings"
 
-# パス長制限（WindowsのMAX_PATH 260文字を考慮して、安全な上限を設定）
-# base_dir + pdf_dir_name + ファイル名（例：00.pdf）の合計がこの値を超えないようにする
-MAX_PATH_LENGTH = 250  # 安全マージンを考慮
 MAX_DIRNAME_LENGTH = 200  # フォルダ名の最大長
+# 修正前の規則の名前のフォルダを作れた長さの上限 (いずれかの OS で作成
+# できた長さ)。これを超える修正前の名前のフォルダは存在しえない
+_MAX_LEGACY_DIRNAME_LENGTH = 255
+
+
+def _warn_pdf_problem(message: str, level: int) -> None:
+    """Log a PDF migration or access problem and show it on the screen.
+
+    同じ警告 (同じ対象と理由) は、セッションの中で 1 回だけログと画面
+    (``st.warning``) に出す。PDF の一覧は、1 回の描画の中で一覧の件数・
+    統計・孤立 PDF の判定のそれぞれから呼ばれるため、そのたびに同じ警告を
+    出さないようにする。出した警告は session state に記録する
+    (``streamlit run`` の外の bare mode でも、session state は使える)。
+
+    Parameters
+    ----------
+    message : str
+        The message, with display paths (see ``to_display_path``).
+    level : int
+        The logging level (``logging.WARNING`` or ``logging.ERROR``).
+    """
+    shown = st.session_state.setdefault(KEY_SHOWN_PDF_WARNINGS, set())
+    if message in shown:
+        return
+    shown.add(message)
+    _logger.log(level, message)
+    st.warning(message)
+
+
+def _reason(error: OSError) -> str:
+    """Return the reason of ``error`` without the path it carries.
+
+    ``str(error)`` には変換後のパス (Windows では拡張長のパスの prefix
+    付き) が含まれるため、画面とログには理由だけを出す。
+
+    Parameters
+    ----------
+    error : OSError
+        The error.
+
+    Returns
+    -------
+    str
+        ``error.strerror``, or ``str(error)`` when it has no ``strerror``.
+    """
+    return error.strerror or str(error)
+
+
+def _is_dir(path: Path) -> bool:
+    """Return whether ``path`` is a directory, without raising.
+
+    Parameters
+    ----------
+    path : Path
+        The path to check.
+
+    Returns
+    -------
+    bool
+        ``True`` if ``path`` is a directory. ``False`` if it is not, or if
+        it cannot be checked. A name too long for the file system cannot
+        exist, so it is ``False`` silently. Other failures are reported
+        with ``_warn_pdf_problem``.
+    """
+    try:
+        return path.is_dir()
+    except OSError as e:
+        _report_unreadable(path, e)
+        return False
+
+
+def _is_file(path: Path) -> bool:
+    """Return whether ``path`` is a regular file, without raising.
+
+    Parameters
+    ----------
+    path : Path
+        The path to check.
+
+    Returns
+    -------
+    bool
+        ``True`` if ``path`` is a regular file. ``False`` if it is not, or
+        if it cannot be checked (see ``_is_dir``).
+    """
+    try:
+        return path.is_file()
+    except OSError as e:
+        _report_unreadable(path, e)
+        return False
+
+
+def _report_unreadable(path: Path, error: OSError) -> None:
+    """Report that ``path`` could not be checked, unless its name is too long.
+
+    名前が長すぎるパス (Linux の 255 バイトを超える名前など) のファイルや
+    フォルダは作れないので、存在しないものとして報告しない。
+
+    Parameters
+    ----------
+    path : Path
+        The path that could not be checked.
+    error : OSError
+        The error raised by the check.
+    """
+    if error.errno == errno.ENAMETOOLONG:
+        _logger.debug("Name too long to exist: %s", to_display_path(path))
+        return
+    _warn_pdf_problem(
+        f"Failed to access {to_display_path(path)}: {_reason(error)}",
+        logging.ERROR,
+    )
 
 
 def sanitize_filename(filename: str) -> str:
@@ -401,12 +519,41 @@ class Entry(MutableMapping):
         dir_name = _dir_name_before_kb7_fix(*self._pdf_dir_name_fields())
         return dir_name or None
 
+    @property
+    def legacy_pdf_dir_name(self) -> Optional[str]:
+        """Return the folder name built with the rule before the KB7 fix.
+
+        後方互換のための修正前の規則の名前。KB7 の範囲で修正後の名前
+        (``pdf_dir_name``) と異なり、いずれかの OS でフォルダを作れた長さ
+        (255 文字以内) のときだけ値を持つ。その名前のフォルダは、PDF の
+        一覧の取得時に現在の名前へ移す (KB7 の範囲の移行と孤立判定だけで
+        使う)。
+
+        Returns
+        -------
+        Optional[str]
+            The pre-fix folder name when it differs from ``pdf_dir_name``
+            and has at most 255 characters, otherwise ``None``. It never
+            raises.
+        """
+        dir_name = self._pdf_dir_name_before_kb7_fix()
+        if (
+            dir_name is None
+            or dir_name == self.pdf_dir_name
+            or len(dir_name) > _MAX_LEGACY_DIRNAME_LENGTH
+        ):
+            return None
+        return dir_name
+
     def get_pdf_dir(self, base_dir: Union[Path, None] = None) -> Path:
         """Get the directory path for storing PDF files.
 
         このエントリ専用のPDFディレクトリのパスを返します。
         複数のPDFファイルは、このディレクトリ内に`00.pdf`, `01.pdf`のように
-        連番で保存されます。
+        連番で保存されます。パスは、ファイル操作用に変換した PDF ルート
+        (``to_fs_path``。Windows では拡張長のパス) から作るので、パス全体の
+        長さにかかわらず、そのままファイル操作に使えます。画面とログには
+        ``to_display_path`` で戻したパスを出します。
 
         Parameters
         ----------
@@ -416,22 +563,9 @@ class Entry(MutableMapping):
         Returns
         -------
         Path
-            The directory path for this entry's PDF files.
-            The directory name is generated by `pdf_dir_name` property.
+            ``to_fs_path(base_dir or DIRPATH_PDF) / pdf_dir_name``.
         """
-        if base_dir is None:
-            base_dir = DIRPATH_PDF
-
-        pdf_dir = base_dir / self.pdf_dir_name
-
-        # パス長をチェック（警告のみ、エラーは発生させない）
-        full_path_str = str(pdf_dir)
-        if len(full_path_str) > MAX_PATH_LENGTH:
-            _logger.warning(
-                f"PDF directory path is very long ({len(full_path_str)} chars): {pdf_dir}"
-            )
-
-        return pdf_dir
+        return to_fs_path(base_dir or DIRPATH_PDF) / self.pdf_dir_name
 
     def get_pdf_files(self, base_dir: Union[Path, None] = None) -> list[Path]:
         """Get a list of PDF files associated with this entry.
@@ -441,8 +575,19 @@ class Entry(MutableMapping):
         ソートされた順序で返されます。
 
         旧バージョンとの互換性:
-            旧形式のPDFファイル（単一ファイル形式）が存在する場合、
-            自動的に新しい形式（ディレクトリ内の連番ファイル）に移行されます。
+            一覧を作る前に、次の順で旧形式から移行します。どの移行も
+            既存のファイルを上書きしません。
+
+            1. 現在の名前のフォルダがなく、修正前の規則の名前
+               (``legacy_pdf_dir_name``) のフォルダがあれば、現在の名前へ
+               移す。移す先が既にあれば移さない
+            2. 旧形式の単一 PDF (``base_dir/pdf_filename``) があれば、
+               フォルダの有無にかかわらず、フォルダの空いている番号へ移す
+            3. フォルダ内の旧命名規則のファイル名を ``NN.pdf`` に変える
+
+            移行に失敗したとき、または移す先が既にあるため移さなかった
+            ときは、ログと画面の警告 (表示用のパス) の両方に出します
+            (同じ警告はセッションの中で 1 回だけ)。
 
         Parameters
         ----------
@@ -452,31 +597,109 @@ class Entry(MutableMapping):
         Returns
         -------
         list[Path]
-            A sorted list of PDF file paths. Empty list if no PDFs exist.
+            The PDF files in the folder sorted by name, followed by the
+            legacy single PDF when it could not be moved into the folder
+            (so that it stays visible). Paths are under the converted PDF
+            root (see ``get_pdf_dir``). Empty list if no PDFs exist. It
+            never raises.
         """
-        pdf_dir = self.get_pdf_dir(base_dir)
-        if not pdf_dir.is_dir():
-            # 後方互換性: 旧形式の単一PDFファイルを移行
-            migrated = self._migrate_legacy_single_pdf(base_dir)
-            if migrated is not None:
-                return migrated
-            return []
+        pdf_root = to_fs_path(base_dir or DIRPATH_PDF)
+        self._migrate_legacy_pdf_dir(pdf_root)
+        left_behind = self._migrate_legacy_single_pdf(base_dir)
 
-        try:
+        pdf_dir = self.get_pdf_dir(base_dir)
+        pdf_files: list[Path] = []
+        if _is_dir(pdf_dir):
             # 後方互換性: 古い命名規則のファイルを新しい命名規則に変換
             self._migrate_legacy_pdf_filenames(base_dir)
-            return sorted(pdf_dir.glob("*.pdf"))
+            try:
+                pdf_files = sorted(pdf_dir.glob("*.pdf"))
+            except OSError as e:
+                _warn_pdf_problem(
+                    "Failed to access PDF directory: "
+                    f"{to_display_path(pdf_dir)}: {_reason(e)}",
+                    logging.ERROR,
+                )
+        if left_behind is not None:
+            pdf_files.append(left_behind)
+        return pdf_files
+
+    def _migrate_legacy_pdf_dir(self, pdf_root: Path) -> None:
+        """Move the folder with the pre-fix name to the current name.
+
+        後方互換のための移行 (KB7 の範囲)。現在の名前 (``pdf_dir_name``)
+        のフォルダがなく、修正前の規則の名前 (``legacy_pdf_dir_name``) の
+        フォルダがあれば、現在の名前へ改名する。現在の名前のフォルダや
+        ファイルが既にあれば、上書きしないよう移さずに警告する (POSIX の
+        改名は空のフォルダを置き換えるため、移す前に存在を確かめる)。
+
+        Parameters
+        ----------
+        pdf_root : Path
+            The converted PDF root (``to_fs_path`` of the base directory).
+        """
+        legacy_name = self.legacy_pdf_dir_name
+        if legacy_name is None:
+            return
+        legacy_dir = pdf_root / legacy_name
+        if not _is_dir(legacy_dir):
+            return
+
+        pdf_dir = pdf_root / self.pdf_dir_name
+        source = to_display_path(legacy_dir)
+        destination = to_display_path(pdf_dir)
+        if os.path.lexists(pdf_dir):
+            _warn_pdf_problem(
+                "PDF folder was not migrated because the destination "
+                f"already exists: {source} -> {destination}",
+                logging.WARNING,
+            )
+            return
+        try:
+            legacy_dir.rename(pdf_dir)
         except OSError as e:
-            _logger.error(f"Failed to access PDF directory: {pdf_dir}: {e}")
-            return []
+            _warn_pdf_problem(
+                f"Failed to migrate PDF folder: {source} -> {destination}: "
+                f"{_reason(e)}",
+                logging.ERROR,
+            )
+            return
+        _logger.info("PDF folder migrated: %s -> %s", source, destination)
+
+    def _next_free_pdf_index(self, pdf_dir: Path, start: int = 0) -> int:
+        """Return the smallest number whose ``NN.pdf`` does not exist.
+
+        存在の確認には ``os.path.lexists`` を使う。大文字小文字を区別しない
+        ファイルシステムでは ``00.PDF`` があれば ``00.pdf`` も存在するとみなす
+        ので、既存のファイルを改名で上書きしない。
+
+        Parameters
+        ----------
+        pdf_dir : Path
+            The PDF folder of this entry.
+        start : int, default 0
+            The first number to try.
+
+        Returns
+        -------
+        int
+            The smallest number ``>= start`` such that
+            ``pdf_dir / _generate_pdf_filename(number)`` does not exist.
+        """
+        index = start
+        while os.path.lexists(pdf_dir / self._generate_pdf_filename(index)):
+            index += 1
+        return index
 
     def _migrate_legacy_single_pdf(
         self, base_dir: Union[Path, None] = None
-    ) -> Union[list[Path], None]:
+    ) -> Optional[Path]:
         """Migrate a legacy single PDF file to the new directory-based format.
 
-        旧形式の単一PDFファイル（base_dir/pdf_filename形式）を新しい形式
-        （base_dir/pdf_dir_name/00.pdf形式）に移行します。
+        旧形式の単一PDFファイル（base_dir/pdf_filename形式）を、PDF
+        フォルダ（base_dir/pdf_dir_name/）の空いている番号（``NN.pdf``）へ
+        移します。フォルダが既にあっても移し、既存の PDF は上書きしません。
+        失敗したときは、ログと画面の警告に出します。
 
         Parameters
         ----------
@@ -485,59 +708,41 @@ class Entry(MutableMapping):
 
         Returns
         -------
-        Union[list[Path], None]
-            - 移行が成功した場合: 移行後のPDFファイルパスのリスト
-            - 移行が失敗した場合: 旧形式のPDFファイルパスのリスト（エラー時）
-            - 旧形式のファイルが存在しない場合: None
+        Optional[Path]
+            The legacy single PDF when it exists but could not be moved
+            (it is left in place), otherwise ``None`` (moved, or there is
+            no legacy single PDF).
         """
-        legacy_base_dir = base_dir or DIRPATH_PDF
-        legacy_pdf = legacy_base_dir / self.pdf_filename
-
-        if not legacy_pdf.is_file():
-            # 旧形式のファイルが存在しない
+        legacy_pdf = to_fs_path(base_dir or DIRPATH_PDF) / self.pdf_filename
+        if not _is_file(legacy_pdf):
             return None
 
         pdf_dir = self.get_pdf_dir(base_dir)
-
-        # ディレクトリを作成
         try:
             pdf_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            _logger.error(
-                f"Failed to create PDF directory for migration: {pdf_dir}: {e}"
+            _warn_pdf_problem(
+                "Failed to create PDF directory for migration: "
+                f"{to_display_path(pdf_dir)}: {_reason(e)}",
+                logging.ERROR,
             )
-            # ディレクトリ作成に失敗した場合は、旧形式のファイルをそのまま返す
-            return [legacy_pdf]
+            return legacy_pdf
 
-        # 既存のPDFファイル名を取得
-        try:
-            existing_files = {f.name for f in pdf_dir.glob("*.pdf")}
-        except OSError as e:
-            _logger.error(f"Failed to access PDF directory: {pdf_dir}: {e}")
-            return [legacy_pdf]
-
-        # 既存ファイルと重複しない新しいファイル名を決定
-        index = 0
-        while True:
-            new_name = self._generate_pdf_filename(index)
-            if new_name not in existing_files:
-                break
-            index += 1
-
-        # ファイルを移動
-        new_path = pdf_dir / new_name
+        index = self._next_free_pdf_index(pdf_dir)
+        new_path = pdf_dir / self._generate_pdf_filename(index)
+        source = to_display_path(legacy_pdf)
+        destination = to_display_path(new_path)
         try:
             legacy_pdf.rename(new_path)
-            _logger.debug(
-                "Legacy PDF migrated: %s -> %s", legacy_pdf, new_path
-            )
-            return [new_path]
         except OSError as e:
-            _logger.error(
-                f"Failed to migrate legacy PDF: {legacy_pdf} -> {new_path}: {e}"
+            _warn_pdf_problem(
+                f"Failed to migrate legacy PDF: {source} -> {destination}: "
+                f"{_reason(e)}",
+                logging.ERROR,
             )
-            # リネームに失敗した場合は、旧形式のファイルをそのまま返す
-            return [legacy_pdf]
+            return legacy_pdf
+        _logger.info("Legacy PDF migrated: %s -> %s", source, destination)
+        return None
 
     def has_pdf(self, base_dir: Union[Path, None] = None) -> bool:
         """Check if this entry has any associated PDF files.
@@ -644,7 +849,9 @@ class Entry(MutableMapping):
             new naming convention (e.g., ``'00.pdf'``, ``'01.pdf'``).
 
         This function checks for PDF files with old naming patterns and
-        renames them to the new zero-padded index format.
+        renames them to the new zero-padded index format. A file is never
+        overwritten: the new name must not exist (checked right before the
+        rename). Failures are logged and shown with ``st.warning``.
 
         Parameters
         ----------
@@ -652,17 +859,22 @@ class Entry(MutableMapping):
             Base directory for PDF storage. If None, uses DIRPATH_PDF.
         """
         pdf_dir = self.get_pdf_dir(base_dir)
-        if not pdf_dir.is_dir():
+        if not _is_dir(pdf_dir):
             return
 
         try:
             all_pdfs = list(pdf_dir.glob("*.pdf"))
         except OSError as e:
-            _logger.error(f"Failed to access PDF directory: {pdf_dir}: {e}")
+            _warn_pdf_problem(
+                "Failed to access PDF directory: "
+                f"{to_display_path(pdf_dir)}: {_reason(e)}",
+                logging.ERROR,
+            )
             return
 
-        # 新しい命名規則のファイル名パターン（00.pdf, 01.pdfなど）
-        new_pattern = re.compile(r"^\d{2}\.pdf$")
+        # 新しい命名規則のファイル名パターン（00.pdf, 01.pdf, ..., 100.pdf）
+        # _generate_pdf_filename は 100 番以降を 3 桁以上で作る
+        new_pattern = re.compile(r"^\d{2,}\.pdf$")
 
         # 古い命名規則のファイルを検出
         legacy_files = []
@@ -685,7 +897,7 @@ class Entry(MutableMapping):
         used_indices = set()
         for filename in new_files:
             try:
-                index = int(filename[:2])  # "00.pdf" -> 0
+                index = int(filename[: -len(".pdf")])  # "00.pdf" -> 0
                 used_indices.add(index)
             except ValueError:
                 continue
@@ -693,25 +905,30 @@ class Entry(MutableMapping):
         # 古いファイルを新しい命名規則に変換
         index = 0
         for legacy_file in legacy_files:
-            # 使用されていないインデックスを見つける
+            # 使用されていないインデックスを見つける。POSIX の改名は既存の
+            # ファイルを置き換えるため、移す先が存在しないことも確かめる
             while index in used_indices:
                 index += 1
-
-            new_name = self._generate_pdf_filename(index)
-            new_path = pdf_dir / new_name
+            index = self._next_free_pdf_index(pdf_dir, index)
+            new_path = pdf_dir / self._generate_pdf_filename(index)
+            source = to_display_path(legacy_file)
+            destination = to_display_path(new_path)
 
             try:
                 legacy_file.rename(new_path)
-                _logger.debug(
-                    f"Legacy PDF filename migrated: {legacy_file.name} -> {new_name}"
-                )
-                used_indices.add(index)
-                index += 1
             except OSError as e:
-                _logger.error(
-                    f"Failed to migrate legacy PDF filename: {legacy_file.name} -> {new_name}: {e}"
+                _warn_pdf_problem(
+                    "Failed to migrate legacy PDF filename: "
+                    f"{source} -> {destination}: {_reason(e)}",
+                    logging.ERROR,
                 )
                 # エラーが発生しても次のファイルの処理を続行
+                continue
+            _logger.info(
+                "Legacy PDF filename migrated: %s -> %s", source, destination
+            )
+            used_indices.add(index)
+            index += 1
 
 
 class PaperList(MutableMapping):

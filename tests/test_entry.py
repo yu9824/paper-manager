@@ -29,6 +29,19 @@
   残した修正前の規則が、このモジュールの独立した写しと一致すること
 - フォルダ名が保存先ディレクトリの長さに依存しないこと (known-bug-fixes
   要件 1.3)
+- 修正前の名前 (``legacy_pdf_dir_name``) が KB7 の範囲で、修正後と異なり
+  255 文字以内のときだけ値を持つこと。PDF 一覧の取得で、修正前の名前の
+  フォルダが現在の名前へ移り、移す先が既にあれば何も移さずに警告が出ること
+  (known-bug-fixes 要件 2.7, 12.5)
+- 旧形式の単一 PDF が、PDF フォルダが既にあっても空いている番号へ上書き
+  せずに移り、移せなかったときは一覧に含まれて警告が出ること (同 8.3, 1.4)。
+  同じ対象の警告は、一覧の件数・統計・孤立 PDF の判定から何度呼ばれても、
+  1 回の描画で 1 回だけ出ること
+- PDF フォルダと旧形式の単一 PDF のパスが変換後の PDF ルートから作られ
+  (Windows を模した ``windows_like_paths`` で ``//`` 付きになる)、一覧と
+  移行が変換後の空間で成功すること。警告とログには表示用のパスだけを出し、
+  変換後のパスを出さないこと。長いパスでも警告のログを出さず、旧形式の
+  ファイル名が長すぎても一覧が落ちないこと (同 1.1, 1.2, 1.4)
 
 OS の判定は ``paper_manager.entry._entry`` の ``platform.system()`` で行われる。
 ``set_os`` fixture でそのモジュールの ``platform`` を差し替えるため、実行 OS に
@@ -40,17 +53,27 @@ OS の判定は ``paper_manager.entry._entry`` の ``platform.system()`` で行�
 警告を無視する。
 """
 
-from collections.abc import Callable, Iterable, Mapping
+import errno
+import logging
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from itertools import product
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Optional
+from typing import Any, Optional
 
 import pytest
-from conftest import PDF_BYTES, DataPaths, SampleData, write_pdf
+from conftest import (
+    PDF_BYTES,
+    DataPaths,
+    SampleData,
+    StMessages,
+    run_page,
+    write_pdf,
+)
 
 from paper_manager.entry import Entry, PaperList, _entry
 from paper_manager.entry._entry import sanitize_filename
+from paper_manager.helper import to_display_path, to_fs_path
 
 # steering (tech.md) と要件 2.4 が定めるフォルダ名の最大長.
 MAX_DIR_NAME_LENGTH = 200
@@ -1486,3 +1509,844 @@ def test_pdf_dir_name_does_not_depend_on_storage_path_length(
         monkeypatch.setattr(_entry, "DIRPATH_PDF", base)
         assert entry.pdf_dir_name == name
         assert entry.get_pdf_dir().name == name
+
+
+# --- 移行と警告の補助 (known-bug-fixes 要件 2.7, 8.3, 1.4) -------------------
+
+# KB7 の範囲のエントリ (年 2020、著者名 188 文字 = 接頭辞 198 文字).
+KB7_FIELDS = {"author": "A" * 188, "title": "x" * 20, "year": "2020"}
+# 修正後の名前 (195 文字. ``<year> - <first_author>``).
+KB7_DIR_NAME = "2020 - " + "A" * 188
+# 修正前の規則の名前 (217 文字). タイトルは ``x`` 19 文字 + ``...`` に
+# 切り詰められ、末尾の ``...`` が除かれる.
+KB7_LEGACY_DIR_NAME = "2020 - " + "A" * 188 + " - " + "x" * 19
+# 修正前の名前のフォルダを作れた長さの上限 (いずれかの OS で作成できた長さ).
+MAX_LEGACY_DIR_NAME_LENGTH = 255
+
+
+@pytest.fixture
+def kb7_entry(make_entry: Callable[..., Entry]) -> Entry:
+    """KB7 の範囲のエントリ. 修正前の名前は ``KB7_LEGACY_DIR_NAME``."""
+    return make_entry(**KB7_FIELDS)
+
+
+class LogRecords(logging.Handler):
+    """受け取ったログのレコードを、受け取った順に ``records`` に記録する."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+@pytest.fixture
+def entry_log() -> Iterator[LogRecords]:
+    """``paper_manager.entry._entry`` のログを記録する.
+
+    このモジュールのロガーにハンドラを直接付けるので、ライブラリの
+    ルートロガーの伝播の設定 (``propagate``) によらず、各レコードを
+    ちょうど 1 回ずつ記録する。テストの後に外す。
+    """
+    logger = _entry._logger
+    handler = LogRecords()
+    logger.addHandler(handler)
+    try:
+        yield handler
+    finally:
+        logger.removeHandler(handler)
+
+
+def _contains_all(message: str, texts: Iterable[str]) -> bool:
+    """``message`` が ``texts`` (パスの文字列) をすべて含むか.
+
+    修正後の名前は修正前の名前の先頭部分なので、長いものから順に、
+    見つけた部分を取り除きながら探す (短いパスが長いパスの一部として
+    見つかったことにしない)。
+    """
+    rest = message
+    for text in sorted(texts, key=len, reverse=True):
+        if text not in rest:
+            return False
+        rest = rest.replace(text, "", 1)
+    return True
+
+
+def mentioning(messages: Iterable[str], *paths: Path) -> list[str]:
+    """``paths`` の表示用のパスをすべて含む通知・ログだけを返す."""
+    shown = [to_display_path(path) for path in paths]
+    return [m for m in messages if _contains_all(m, shown)]
+
+
+def logged(log: LogRecords, level: int, *paths: Path) -> list[str]:
+    """``level`` のログのうち、``paths`` の表示用のパスを含むものを返す."""
+    return mentioning(
+        (r.getMessage() for r in log.records if r.levelno == level), *paths
+    )
+
+
+def fail_method_of(
+    monkeypatch: pytest.MonkeyPatch, name: str, target: Path
+) -> None:
+    """``target`` に対する ``Path.<name>`` だけを ``OSError`` で失敗させる.
+
+    ほかのパスは本来の処理に通す。差し替えはテストの後に元へ戻る。
+    権限の変更 (chmod) は環境 (root など) によって効かないので使わない。
+    """
+    original = getattr(Path, name)
+
+    def failing(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == target:
+            raise PermissionError(
+                errno.EACCES, "permission denied (simulated)", str(self)
+            )
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, name, failing)
+
+
+# --- 修正前の名前 legacy_pdf_dir_name (known-bug-fixes 要件 2.7) -------------
+
+
+@pytest.mark.parametrize(
+    ("author_length", "title_length"),
+    [(188, 4), (188, 20), (188, 50), (189, 4), (189, 58)],
+)
+def test_legacy_pdf_dir_name_is_the_pre_fix_name_in_the_kb7_window(
+    make_entry: Callable[..., Entry], author_length: int, title_length: int
+) -> None:
+    """KB7 の範囲では、修正前の規則の名前 (201〜255 文字) を返す."""
+    entry = make_entry(
+        author="A" * author_length, title="x" * title_length, year="2020"
+    )
+    expected = pre_fix_dir_name("2020", "A" * author_length, entry["title"])
+
+    legacy = entry.legacy_pdf_dir_name
+
+    assert legacy == expected
+    assert MAX_DIR_NAME_LENGTH < len(legacy) <= MAX_LEGACY_DIR_NAME_LENGTH
+    assert legacy != entry.pdf_dir_name
+
+
+def test_legacy_pdf_dir_name_of_the_kb7_entry(kb7_entry: Entry) -> None:
+    """移行のテストで使う KB7 のエントリの、修正前と修正後の名前."""
+    assert kb7_entry.pdf_dir_name == KB7_DIR_NAME
+    assert kb7_entry.legacy_pdf_dir_name == KB7_LEGACY_DIR_NAME
+    assert len(KB7_LEGACY_DIR_NAME) == 217
+
+
+@pytest.mark.parametrize(
+    ("dropped", "fields"),
+    [
+        pytest.param((), {}, id="short-name"),
+        pytest.param((), {"title": "x" * 300}, id="truncated-title"),
+        pytest.param(("author",), {}, id="no-author"),
+        pytest.param((), {"author": ""}, id="empty-author"),
+        pytest.param(
+            (),
+            {"author": "A" * 188, "title": "x" * 59},
+            id="pre-fix-name-256-chars",
+        ),
+        pytest.param(
+            (),
+            {"author": "A" * 189, "title": "x" * 300},
+            id="pre-fix-name-500-chars",
+        ),
+        pytest.param((), {"year": "1" * 300}, id="year-300-chars"),
+        pytest.param(
+            (), {"year": "1" * 230, "author": ""}, id="long-year-no-author"
+        ),
+    ],
+)
+def test_legacy_pdf_dir_name_is_none_outside_the_kb7_window(
+    make_partial_entry: Callable[..., Entry], dropped: tuple, fields: dict
+) -> None:
+    """修正後と同じ名前、255 文字を超える名前、著者のないエントリは ``None``.
+
+    255 文字を超える名前のフォルダは、どの OS でも作れなかった。修正前の
+    規則は著者のないエントリで例外になった (KB2a) ため、その名前の
+    フォルダもない。
+    """
+    entry = make_partial_entry(drop=dropped, **fields)
+
+    assert entry.legacy_pdf_dir_name is None
+
+
+def test_legacy_pdf_dir_name_of_a_long_year_within_255_chars(
+    make_entry: Callable[..., Entry],
+) -> None:
+    """年が 200 文字を超え 255 文字以内なら、修正前の名前 (年だけ) を返す.
+
+    修正後は年を 200 文字に切り詰める (KB7)。
+    """
+    entry = make_entry(year="1" * 230)
+
+    assert entry.pdf_dir_name == "1" * MAX_DIR_NAME_LENGTH
+    assert entry.legacy_pdf_dir_name == "1" * 230
+
+
+def test_legacy_pdf_dir_name_has_a_value_only_in_the_kb7_window(
+    make_entry: Callable[..., Entry],
+) -> None:
+    """境界 (接頭辞 197〜200 文字 × タイトル 0〜300 文字) で値を持つ範囲.
+
+    値を持つのは、接頭辞が 198・199 文字 (著者名 188・189 文字) で、
+    修正前の名前が 201〜255 文字になるタイトル (4〜58 文字) のときだけ。
+    値は修正前の規則の名前と一致する。
+    """
+    with_value = set()
+
+    for author_length, title_length, entry in boundary_entries(
+        make_entry, BOUNDARY_TITLE_UNITS["plain"]
+    ):
+        legacy = entry.legacy_pdf_dir_name
+        if legacy is not None:
+            with_value.add((author_length, title_length))
+            assert legacy == pre_fix_dir_name(
+                "2020", entry["author"], entry["title"]
+            )
+
+    assert with_value == set(product((188, 189), range(4, 59)))
+
+
+# --- 修正前の名前のフォルダの移行 (known-bug-fixes 要件 2.7, 12.5) ----------
+
+
+@ignore_deprecation
+@pytest.mark.parametrize(
+    "first_call", ["get_pdf_files", "has_pdf", "get_pdf_count"]
+)
+def test_pre_fix_folder_is_moved_to_the_current_name(
+    kb7_entry: Entry,
+    data_paths: DataPaths,
+    st_messages: StMessages,
+    first_call: str,
+) -> None:
+    """修正前の名前のフォルダは、一覧の取得時に現在の名前へ移る.
+
+    最初に呼ぶのが一覧・有無・件数のどれでも移り、PDF とその他の
+    ファイルは中身ごと保たれる。警告は出ない。
+    """
+    legacy_dir = data_paths.pdf / KB7_LEGACY_DIR_NAME
+    write_pdfs(
+        legacy_dir, {"00.pdf": pdf_content("00"), "01.pdf": pdf_content("01")}
+    )
+    (legacy_dir / "memo.txt").write_text("memo", encoding="utf-8")
+    current_dir = data_paths.pdf / KB7_DIR_NAME
+
+    getattr(kb7_entry, first_call)()
+
+    assert snapshot(data_paths.pdf) == {
+        KB7_DIR_NAME: None,
+        f"{KB7_DIR_NAME}/00.pdf": pdf_content("00"),
+        f"{KB7_DIR_NAME}/01.pdf": pdf_content("01"),
+        f"{KB7_DIR_NAME}/memo.txt": b"memo",
+    }
+    assert kb7_entry.get_pdf_files() == [
+        current_dir / "00.pdf",
+        current_dir / "01.pdf",
+    ]
+    assert kb7_entry.get_pdf_count() == 2
+    assert st_messages.warning == []
+
+
+@ignore_deprecation
+def test_pre_fix_folder_is_moved_inside_base_dir_only(
+    kb7_entry: Entry, data_paths: DataPaths, alt_pdf_dir: Path
+) -> None:
+    """基準ディレクトリを指定すると、その中の修正前の名前のフォルダだけが移る."""
+    write_pdf(alt_pdf_dir / KB7_LEGACY_DIR_NAME / "00.pdf", pdf_content("alt"))
+    write_pdf(
+        data_paths.pdf / KB7_LEGACY_DIR_NAME / "00.pdf", pdf_content("default")
+    )
+    default_before = snapshot(data_paths.pdf)
+
+    files = kb7_entry.get_pdf_files(alt_pdf_dir)
+
+    assert files == [alt_pdf_dir / KB7_DIR_NAME / "00.pdf"]
+    assert snapshot(alt_pdf_dir) == {
+        KB7_DIR_NAME: None,
+        f"{KB7_DIR_NAME}/00.pdf": pdf_content("alt"),
+    }
+    assert snapshot(data_paths.pdf) == default_before
+
+
+def _current_with_pdf(path: Path) -> list[Path]:
+    """現在の名前のフォルダに PDF がある."""
+    return [write_pdf(path / "00.pdf", pdf_content("current"))]
+
+
+def _current_empty(path: Path) -> list[Path]:
+    """現在の名前のフォルダが空である."""
+    path.mkdir(parents=True)
+    return []
+
+
+def _current_is_a_file(path: Path) -> list[Path]:
+    """現在の名前がファイルとして存在する."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not a folder")
+    return []
+
+
+@ignore_deprecation
+@pytest.mark.parametrize(
+    "make_current",
+    [
+        pytest.param(_current_with_pdf, id="folder-with-pdf"),
+        pytest.param(_current_empty, id="empty-folder"),
+        pytest.param(_current_is_a_file, id="file"),
+    ],
+)
+def test_pre_fix_folder_is_not_moved_when_the_destination_exists(
+    kb7_entry: Entry,
+    data_paths: DataPaths,
+    st_messages: StMessages,
+    entry_log: LogRecords,
+    make_current: Callable[[Path], list[Path]],
+) -> None:
+    """現在の名前が既にあれば、修正前の名前のフォルダを移さない.
+
+    何も上書き・移動されず、移さなかったことと両方のパス (表示用) が、
+    ログ (WARNING) と画面の警告の両方に出る。一覧は現在の名前のフォルダ
+    の PDF だけになる。
+    """
+    legacy_dir = data_paths.pdf / KB7_LEGACY_DIR_NAME
+    write_pdf(legacy_dir / "00.pdf", pdf_content("legacy"))
+    current_dir = data_paths.pdf / KB7_DIR_NAME
+    expected_files = make_current(current_dir)
+    before = snapshot(data_paths.pdf)
+
+    files = kb7_entry.get_pdf_files()
+
+    assert files == expected_files
+    assert snapshot(data_paths.pdf) == before
+    assert len(mentioning(st_messages.warning, legacy_dir, current_dir)) == 1
+    assert (
+        len(logged(entry_log, logging.WARNING, legacy_dir, current_dir)) == 1
+    )
+
+
+@ignore_deprecation
+def test_pre_fix_folder_move_failure_is_reported(
+    kb7_entry: Entry,
+    data_paths: DataPaths,
+    st_messages: StMessages,
+    entry_log: LogRecords,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """フォルダの移動に失敗しても例外にならず、失敗が警告とログに出る.
+
+    元のフォルダは中身ごと残る。警告とログ (ERROR) には、表示用のパスと
+    失敗の理由が含まれる。
+    """
+    legacy_dir = data_paths.pdf / KB7_LEGACY_DIR_NAME
+    write_pdf(legacy_dir / "00.pdf", pdf_content("legacy"))
+    before = snapshot(data_paths.pdf)
+    fail_method_of(monkeypatch, "rename", legacy_dir)
+
+    assert kb7_entry.get_pdf_files() == []
+
+    assert snapshot(data_paths.pdf) == before
+    warnings = mentioning(st_messages.warning, legacy_dir)
+    assert len(warnings) == 1
+    assert "permission denied (simulated)" in warnings[0]
+    assert len(logged(entry_log, logging.ERROR, legacy_dir)) == 1
+
+
+@ignore_deprecation
+def test_pre_fix_folder_moves_before_the_legacy_single_pdf_is_merged(
+    kb7_entry: Entry, data_paths: DataPaths, st_messages: StMessages
+) -> None:
+    """修正前の名前のフォルダを移してから、旧形式の単一 PDF を統合する.
+
+    両方があるとき、フォルダが現在の名前へ移り、旧形式の単一 PDF はその
+    フォルダの空いている番号へ移る。順序が逆だと、単一 PDF の統合で
+    現在の名前のフォルダが先に作られ、修正前の名前のフォルダを移せなく
+    なる。警告は出ない。
+    """
+    single_name = "2020 - " + "A" * 188 + " - " + "x" * 20 + ".pdf"
+    assert kb7_entry.pdf_filename == single_name  # 前提
+    write_pdf(
+        data_paths.pdf / KB7_LEGACY_DIR_NAME / "00.pdf", pdf_content("folder")
+    )
+    write_pdf(data_paths.pdf / single_name, pdf_content("single"))
+    current_dir = data_paths.pdf / KB7_DIR_NAME
+
+    files = kb7_entry.get_pdf_files()
+
+    assert files == [current_dir / "00.pdf", current_dir / "01.pdf"]
+    assert snapshot(data_paths.pdf) == {
+        KB7_DIR_NAME: None,
+        f"{KB7_DIR_NAME}/00.pdf": pdf_content("folder"),
+        f"{KB7_DIR_NAME}/01.pdf": pdf_content("single"),
+    }
+    assert st_messages.warning == []
+
+
+# --- 旧形式の単一 PDF のフォルダへの統合 (known-bug-fixes 要件 8.3) ----------
+
+
+@pytest.mark.parametrize(
+    ("existing_numbers", "free_number"),
+    [((0,), 1), ((1,), 0), ((0, 2), 1), ((0, 1, 2), 3)],
+    ids=["00", "01", "00-and-02", "00-01-02"],
+)
+def test_legacy_single_pdf_moves_into_the_existing_folder(
+    entry: Entry,
+    data_paths: DataPaths,
+    pdf_dir: Path,
+    st_messages: StMessages,
+    existing_numbers: tuple,
+    free_number: int,
+) -> None:
+    """フォルダが既にあっても、旧形式の単一 PDF は空いている番号へ移る.
+
+    既存の PDF は中身も名前も変わらず、旧形式の PDF は PDF ディレクトリの
+    直下から消えて、その論文の PDF として一覧に出る。
+    """
+    existing = {
+        f"{n:02d}.pdf": pdf_content(f"existing {n:02d}")
+        for n in existing_numbers
+    }
+    write_pdfs(pdf_dir, existing)
+    write_pdf(data_paths.pdf / LEGACY_SINGLE_NAME, pdf_content("legacy"))
+
+    files = list_pdfs_migrating(entry)
+
+    expected = {**existing, f"{free_number:02d}.pdf": pdf_content("legacy")}
+    assert files == [pdf_dir / name for name in sorted(expected)]
+    assert snapshot(data_paths.pdf) == {
+        ENTRY_DIR_NAME: None,
+        **{f"{ENTRY_DIR_NAME}/{name}": c for name, c in expected.items()},
+    }
+    assert st_messages.warning == []
+
+
+@ignore_deprecation
+def test_legacy_single_pdf_and_legacy_named_pdf_in_folder_are_both_kept(
+    entry: Entry, data_paths: DataPaths, pdf_dir: Path
+) -> None:
+    """旧形式の単一 PDF を移してから、フォルダ内の旧命名規則の PDF を改名する.
+
+    どちらも既存の PDF を上書きせず、別の番号で残る。
+    """
+    write_pdfs(
+        pdf_dir,
+        {
+            "00.pdf": pdf_content("existing 00"),
+            f"{ENTRY_DIR_NAME}_01.pdf": pdf_content("legacy named"),
+        },
+    )
+    write_pdf(data_paths.pdf / LEGACY_SINGLE_NAME, pdf_content("legacy"))
+
+    files = entry.get_pdf_files()
+
+    assert files == [pdf_dir / f"{n:02d}.pdf" for n in range(3)]
+    assert snapshot(data_paths.pdf) == {
+        ENTRY_DIR_NAME: None,
+        f"{ENTRY_DIR_NAME}/00.pdf": pdf_content("existing 00"),
+        f"{ENTRY_DIR_NAME}/01.pdf": pdf_content("legacy"),
+        f"{ENTRY_DIR_NAME}/02.pdf": pdf_content("legacy named"),
+    }
+
+
+@ignore_deprecation
+def test_legacy_single_pdf_never_overwrites_a_name_differing_in_case(
+    entry: Entry, data_paths: DataPaths, pdf_dir: Path
+) -> None:
+    """大文字小文字だけ違う既存のファイル (``00.PDF``) も上書きしない.
+
+    大文字小文字を区別しないファイルシステム (macOS、Windows) では
+    ``00.pdf`` と ``00.PDF`` は同じファイルなので、移す前に存在を確かめて
+    別の番号へ移す。区別するファイルシステムでは ``00.pdf`` へ移る。
+    """
+    upper = write_pdf(pdf_dir / "00.PDF", pdf_content("upper"))
+    write_pdf(data_paths.pdf / LEGACY_SINGLE_NAME, pdf_content("legacy"))
+
+    files = entry.get_pdf_files()
+
+    assert upper.read_bytes() == pdf_content("upper")
+    assert [path.read_bytes() for path in files] == [pdf_content("legacy")]
+    assert not (data_paths.pdf / LEGACY_SINGLE_NAME).exists()
+
+
+@ignore_deprecation
+def test_numbered_pdfs_from_100_are_neither_renamed_nor_overwritten(
+    entry: Entry, pdf_dir: Path
+) -> None:
+    """100 番以降の ``NNN.pdf`` は旧命名規則とみなさず、名前も中身も保つ.
+
+    番号のファイル名は 100 番以降が 3 桁になる。旧命名規則の PDF は、
+    既存のどの番号とも重ならない番号へ移り、もう一度一覧を取得しても
+    何も変わらない。
+    """
+    numbered = {f"{n:02d}.pdf": pdf_content(f"{n:02d}") for n in range(102)}
+    write_pdfs(
+        pdf_dir, {**numbered, f"{ENTRY_DIR_NAME}.pdf": pdf_content("legacy")}
+    )
+
+    files = entry.get_pdf_files()
+
+    expected = {**numbered, "102.pdf": pdf_content("legacy")}
+    assert snapshot(pdf_dir) == expected
+    assert files == sorted(pdf_dir / name for name in expected)
+    assert entry.get_pdf_files() == files
+    assert snapshot(pdf_dir) == expected
+
+
+@ignore_deprecation
+def test_legacy_single_pdf_is_listed_when_it_cannot_be_moved(
+    entry: Entry,
+    data_paths: DataPaths,
+    pdf_dir: Path,
+    st_messages: StMessages,
+    entry_log: LogRecords,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """移せなかった旧形式の単一 PDF は、一覧に含まれて見えなくならない.
+
+    移す先の番号のファイルを作れない (改名に失敗する) 場合。旧形式の PDF
+    とフォルダの PDF はそのまま残り、失敗が警告とログ (ERROR) に出る。
+    """
+    write_pdf(pdf_dir / "00.pdf", pdf_content("existing 00"))
+    legacy = write_pdf(
+        data_paths.pdf / LEGACY_SINGLE_NAME, pdf_content("legacy")
+    )
+    before = snapshot(data_paths.pdf)
+    fail_method_of(monkeypatch, "rename", legacy)
+
+    files = entry.get_pdf_files()
+
+    assert files == [pdf_dir / "00.pdf", legacy]
+    assert entry.get_pdf_count() == 2
+    assert snapshot(data_paths.pdf) == before
+    warnings = mentioning(st_messages.warning, legacy)
+    assert len(warnings) == 1
+    assert "permission denied (simulated)" in warnings[0]
+    assert len(logged(entry_log, logging.ERROR, legacy)) == 1
+
+
+@ignore_deprecation
+def test_legacy_single_pdf_is_listed_when_the_folder_cannot_be_created(
+    entry: Entry,
+    data_paths: DataPaths,
+    pdf_dir: Path,
+    st_messages: StMessages,
+    entry_log: LogRecords,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PDF フォルダを作れなければ、旧形式の単一 PDF をそのまま一覧に含める."""
+    legacy = write_pdf(
+        data_paths.pdf / LEGACY_SINGLE_NAME, pdf_content("legacy")
+    )
+    fail_method_of(monkeypatch, "mkdir", pdf_dir)
+
+    assert entry.get_pdf_files() == [legacy]
+
+    assert legacy.read_bytes() == pdf_content("legacy")
+    assert not pdf_dir.exists()
+    assert len(mentioning(st_messages.warning, pdf_dir)) == 1
+    assert len(logged(entry_log, logging.ERROR, pdf_dir)) == 1
+
+
+@ignore_deprecation
+def test_listing_does_not_fail_when_the_legacy_file_name_is_too_long(
+    make_entry: Callable[..., Entry],
+    data_paths: DataPaths,
+    st_messages: StMessages,
+) -> None:
+    """旧形式の単一 PDF のファイル名が長すぎても、一覧・有無・件数は落ちない.
+
+    タイトルが 300 文字の論文では、旧形式のファイル名が 255 バイトを超え、
+    その名前のファイルは作れない。存在の確認はファイルシステムによって
+    「名前が長すぎる」エラーになるが (Python 3.9〜3.13 の pathlib は
+    これを送出する)、PDF がないものとして扱い、警告も出さない。PDF
+    フォルダ (200 文字に切り詰めた名前) の PDF は一覧に出る。
+    """
+    entry = make_entry(title="x" * 300)
+    assert len(entry.pdf_filename.encode()) > 255  # 前提
+    data_paths.pdf.mkdir(exist_ok=True)  # 名前の長さの確認まで到達させる
+
+    assert entry.get_pdf_files() == []
+    assert entry.has_pdf() is False
+    assert entry.get_pdf_count() == 0
+
+    pdf = write_pdf(data_paths.pdf / entry.pdf_dir_name / "00.pdf")
+
+    assert entry.get_pdf_files() == [pdf]
+    assert entry.has_pdf() is True
+    assert entry.get_pdf_count() == 1
+    assert st_messages.warning == []
+
+
+# --- 同じ対象の警告を繰り返さない (known-bug-fixes 要件 1.4) -----------------
+
+
+@ignore_deprecation
+def test_warning_about_the_same_target_is_shown_only_once(
+    make_entry: Callable[..., Entry],
+    data_paths: DataPaths,
+    st_messages: StMessages,
+    entry_log: LogRecords,
+) -> None:
+    """一覧・有無・件数を何度呼んでも、同じ対象の警告とログは 1 回だけ出る.
+
+    対象が異なれば、それぞれについて 1 回ずつ出る。
+    """
+    entries = [
+        make_entry(**KB7_FIELDS),
+        make_entry(**{**KB7_FIELDS, "author": "B" * 188}),
+    ]
+    conflicts = []
+    for entry in entries:
+        legacy_dir = data_paths.pdf / entry.legacy_pdf_dir_name
+        current_dir = data_paths.pdf / entry.pdf_dir_name
+        write_pdf(legacy_dir / "00.pdf", pdf_content("legacy"))
+        write_pdf(current_dir / "00.pdf", pdf_content("current"))
+        conflicts.append((legacy_dir, current_dir))
+
+    for _ in range(3):
+        for entry in entries:
+            entry.get_pdf_files()
+            entry.has_pdf()
+            entry.get_pdf_count()
+
+    assert len(st_messages.warning) == len(conflicts)
+    for legacy_dir, current_dir in conflicts:
+        assert len(mentioning(st_messages.warning, legacy_dir)) == 1
+        assert len(logged(entry_log, logging.WARNING, legacy_dir)) == 1
+
+
+@pytest.mark.filterwarnings(
+    "ignore:(pdf_filename|_migrate_legacy_pdf_filenames) is deprecated"
+    ":DeprecationWarning"
+)
+def test_list_page_shows_the_warning_about_a_target_once(
+    kb7_entry: Entry, data_paths: DataPaths
+) -> None:
+    """論文リストページの 1 回の描画で、同じ対象の警告は 1 回だけ出る.
+
+    ページは一覧の件数・統計・孤立 PDF の判定のそれぞれで PDF の一覧を
+    取得する。修正前の名前のフォルダの移す先が既にある状態で描画する。
+    """
+    paper_list = PaperList({})
+    key = kb7_entry.get_key(paper_list.keys())
+    kb7_entry["ID"] = key
+    paper_list[key] = kb7_entry
+    paper_list.to_file(data_paths.list_file)
+    legacy_dir = data_paths.pdf / KB7_LEGACY_DIR_NAME
+    current_dir = data_paths.pdf / KB7_DIR_NAME
+    write_pdf(legacy_dir / "00.pdf", pdf_content("legacy"))
+    write_pdf(current_dir / "00.pdf", pdf_content("current"))
+    before = snapshot(data_paths.pdf)
+
+    at = run_page(None)
+
+    assert not at.exception, [e.value for e in at.exception]
+    warnings = [w.value for w in at.warning]
+    assert len(mentioning(warnings, legacy_dir, current_dir)) == 1, warnings
+    assert snapshot(data_paths.pdf) == before
+
+
+# --- 変換後のパス (known-bug-fixes 要件 1.1, 1.2, 12.3) ----------------------
+
+
+@pytest.mark.usefixtures("windows_like_paths")
+def test_get_pdf_dir_is_built_from_the_converted_pdf_root(
+    entry: Entry, data_paths: DataPaths, alt_pdf_dir: Path
+) -> None:
+    """PDF フォルダのパスは、変換後の PDF ルート (``//`` 付き) から作られる.
+
+    表示用のパスに戻すと、変換前のパスと一致する。
+    """
+    pdf_dir = entry.get_pdf_dir()
+
+    assert pdf_dir == to_fs_path(data_paths.pdf) / ENTRY_DIR_NAME
+    assert str(pdf_dir).startswith("//")
+    assert pdf_dir != data_paths.pdf / ENTRY_DIR_NAME  # 前提: 別名が効く
+    assert to_display_path(pdf_dir) == str(data_paths.pdf / ENTRY_DIR_NAME)
+    assert entry.get_pdf_dir(alt_pdf_dir) == (
+        to_fs_path(alt_pdf_dir) / ENTRY_DIR_NAME
+    )
+
+
+def test_get_pdf_dir_does_not_log_a_warning_for_a_long_path(
+    entry: Entry, tmp_path: Path, entry_log: LogRecords
+) -> None:
+    """パス全体が 250 文字を超えても、PDF フォルダのパスの取得で警告しない."""
+    long_base = tmp_path.joinpath(*(c * 100 for c in "def"))
+    pdf_dir = entry.get_pdf_dir(long_base)
+    assert len(str(pdf_dir)) > 250  # 前提
+
+    assert pdf_dir == long_base / ENTRY_DIR_NAME
+    assert [r for r in entry_log.records if r.levelno >= logging.WARNING] == []
+
+
+@ignore_deprecation
+@pytest.mark.usefixtures("windows_like_paths")
+def test_listing_and_migrations_work_in_the_converted_space(
+    make_entry: Callable[..., Entry],
+    data_paths: DataPaths,
+    st_messages: StMessages,
+) -> None:
+    """変換後のパスの空間で、一覧と 3 種類の移行がどれも成功する.
+
+    返るパスは変換後の PDF ルートの下にあり、そこからの相対パスを求め
+    られる (変換前のパスと混在しない)。
+    """
+    root = to_fs_path(data_paths.pdf)
+    assert root != data_paths.pdf  # 前提: 別名が効く
+    merged = make_entry()
+    write_pdf(data_paths.pdf / ENTRY_DIR_NAME / "00.pdf", pdf_content("00"))
+    write_pdf(data_paths.pdf / LEGACY_SINGLE_NAME, pdf_content("merged"))
+    write_pdf(
+        data_paths.pdf / ENTRY_DIR_NAME / f"{ENTRY_DIR_NAME}_01.pdf",
+        pdf_content("renamed"),
+    )
+    single = make_entry(title="Another Study")
+    single_name = "2020 - Alice Smith - Another Study"
+    write_pdf(data_paths.pdf / f"{single_name}.pdf", pdf_content("single"))
+    moved = make_entry(**KB7_FIELDS)
+    write_pdf(
+        data_paths.pdf / KB7_LEGACY_DIR_NAME / "00.pdf", pdf_content("kb7")
+    )
+
+    listings = {
+        ENTRY_DIR_NAME: merged.get_pdf_files(),
+        single_name: single.get_pdf_files(),
+        KB7_DIR_NAME: moved.get_pdf_files(),
+    }
+
+    assert listings == {
+        ENTRY_DIR_NAME: [
+            root / ENTRY_DIR_NAME / f"0{n}.pdf" for n in range(3)
+        ],
+        single_name: [root / single_name / "00.pdf"],
+        KB7_DIR_NAME: [root / KB7_DIR_NAME / "00.pdf"],
+    }
+    for files in listings.values():
+        for path in files:
+            assert path.relative_to(root).parts[0] in listings
+    assert snapshot(data_paths.pdf) == {
+        ENTRY_DIR_NAME: None,
+        f"{ENTRY_DIR_NAME}/00.pdf": pdf_content("00"),
+        f"{ENTRY_DIR_NAME}/01.pdf": pdf_content("merged"),
+        f"{ENTRY_DIR_NAME}/02.pdf": pdf_content("renamed"),
+        single_name: None,
+        f"{single_name}/00.pdf": pdf_content("single"),
+        KB7_DIR_NAME: None,
+        f"{KB7_DIR_NAME}/00.pdf": pdf_content("kb7"),
+    }
+    assert st_messages.warning == []
+
+
+@ignore_deprecation
+@pytest.mark.usefixtures("windows_like_paths")
+def test_unmoved_legacy_single_pdf_is_listed_with_the_converted_path(
+    entry: Entry, data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """移せなかった旧形式の単一 PDF は、変換後のパスで一覧に含まれる.
+
+    旧形式の単一 PDF のパスも変換後の PDF ルートから作るので、変換後の
+    パスへの改名が失敗し、一覧に返るパスも ``//`` で始まる (フォルダの
+    PDF と同じ空間にある)。
+    """
+    root = to_fs_path(data_paths.pdf)
+    write_pdf(data_paths.pdf / ENTRY_DIR_NAME / "00.pdf", pdf_content("00"))
+    write_pdf(data_paths.pdf / LEGACY_SINGLE_NAME, pdf_content("legacy"))
+    fail_method_of(monkeypatch, "rename", root / LEGACY_SINGLE_NAME)
+
+    files = entry.get_pdf_files()
+
+    assert files == [
+        root / ENTRY_DIR_NAME / "00.pdf",
+        root / LEGACY_SINGLE_NAME,
+    ]
+    assert str(files[-1]).startswith("//")
+    assert files[-1].read_bytes() == pdf_content("legacy")
+
+
+def _destination_exists(
+    make_entry: Callable[..., Entry],
+    data_paths: DataPaths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Entry, list[Path]]:
+    """移す先が既にあるため、修正前の名前のフォルダを移さない状況."""
+    write_pdf(data_paths.pdf / KB7_LEGACY_DIR_NAME / "00.pdf")
+    write_pdf(data_paths.pdf / KB7_DIR_NAME / "00.pdf")
+    paths = [
+        data_paths.pdf / KB7_LEGACY_DIR_NAME,
+        data_paths.pdf / KB7_DIR_NAME,
+    ]
+    return make_entry(**KB7_FIELDS), paths
+
+
+def _single_pdf_rename_fails(
+    make_entry: Callable[..., Entry],
+    data_paths: DataPaths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Entry, list[Path]]:
+    """旧形式の単一 PDF の改名が、変換後のパスに対して失敗する状況."""
+    write_pdf(data_paths.pdf / ENTRY_DIR_NAME / "00.pdf")
+    write_pdf(data_paths.pdf / LEGACY_SINGLE_NAME)
+    root = to_fs_path(data_paths.pdf)
+    fail_method_of(monkeypatch, "rename", root / LEGACY_SINGLE_NAME)
+    paths = [
+        data_paths.pdf / LEGACY_SINGLE_NAME,
+        data_paths.pdf / ENTRY_DIR_NAME / "01.pdf",
+    ]
+    return make_entry(), paths
+
+
+def _folder_creation_fails(
+    make_entry: Callable[..., Entry],
+    data_paths: DataPaths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Entry, list[Path]]:
+    """移行先の PDF フォルダの作成が、変換後のパスに対して失敗する状況."""
+    write_pdf(data_paths.pdf / LEGACY_SINGLE_NAME)
+    root = to_fs_path(data_paths.pdf)
+    fail_method_of(monkeypatch, "mkdir", root / ENTRY_DIR_NAME)
+    return make_entry(), [data_paths.pdf / ENTRY_DIR_NAME]
+
+
+@ignore_deprecation
+@pytest.mark.usefixtures("windows_like_paths")
+@pytest.mark.parametrize(
+    ("make_situation", "level"),
+    [
+        pytest.param(_destination_exists, logging.WARNING, id="not-moved"),
+        pytest.param(_single_pdf_rename_fails, logging.ERROR, id="rename"),
+        pytest.param(_folder_creation_fails, logging.ERROR, id="mkdir"),
+    ],
+)
+def test_warnings_show_display_paths_without_the_prefix(
+    make_entry: Callable[..., Entry],
+    data_paths: DataPaths,
+    st_messages: StMessages,
+    entry_log: LogRecords,
+    monkeypatch: pytest.MonkeyPatch,
+    make_situation: Callable[..., tuple[Entry, list[Path]]],
+    level: int,
+) -> None:
+    """警告とログには、表示用のパスを出し、変換後のパスを出さない.
+
+    移す先が既にあるため移さなかったとき、旧形式の単一 PDF の改名に
+    失敗したとき、PDF フォルダの作成に失敗したときのそれぞれで、警告と
+    ログはちょうど 1 件ずつ出る。どちらも変換前のパス (表示用のパス) を
+    含み、変換後のパス (別名変換の ``//``) を含まない。失敗の理由にも
+    パスを含めない (``OSError`` の文字列には変換後のパスが入る)。
+    """
+    entry, paths = make_situation(make_entry, data_paths, monkeypatch)
+    shown = [str(path) for path in paths]
+
+    entry.get_pdf_files()
+
+    records = [r for r in entry_log.records if r.levelno >= logging.WARNING]
+    assert [r.levelno for r in records] == [level]
+    assert len(st_messages.warning) == 1
+    for message in st_messages.warning + [records[0].getMessage()]:
+        assert _contains_all(message, shown), message
+        assert "//" not in message, message
