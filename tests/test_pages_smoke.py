@@ -21,12 +21,19 @@
 
 「論文リストが変わらない」の意味
 --------------------------------
-比べるのは、``list.json`` に保存されている論文のキーとエントリ内容
-(``json.load`` した辞書) である。ファイルのバイト列や更新時刻は比べない。
-``list.json`` がないことは、空の論文リストと同じ扱いにする。データ領域が
-空の状態では、実行前に ``list.json`` がなく、実行後に空の論文リスト
-(``{}``) が書かれるが、保存されている論文は 0 件のままなので、変わって
-いないとみなす。実行後に ``list.json`` がないことも許容する。
+上の 3 点の検証で比べるのは、``list.json`` に保存されている論文のキーと
+エントリ内容 (``json.load`` した辞書) である。``list.json`` がないことは、
+空の論文リストと同じ扱いにする。
+
+ページの描画では、論文リストのファイルに書き込まない (known-bug-fixes
+要件 10.2)。論文リストのファイルに書くのは、登録・更新・削除で呼ばれる
+``save_paper_list`` だけである。そのため、データ領域が空の状態では、
+実行後も ``list.json`` は作られない。このことは
+``test_page_render_does_not_write_list_file`` で、ファイルの有無・バイト列・
+更新時刻を実行の前後で比べて確かめる。対象は、``list.json`` がない状態、
+正常だが ``PaperList.to_file`` とは異なる書式で書かれた状態 (書き戻されると
+内容が同じでもバイト列が変わる)、JSON として壊れた状態 (途中で切れた
+ファイル、空のファイル) のそれぞれで、5 ページすべてを実行する。
 
 論文リストページは PDF の本数を数えるとき、旧形式の PDF を新形式へ移行する
 非推奨の内部処理 (``pdf_filename`` / ``_migrate_legacy_pdf_filenames``)
@@ -36,7 +43,7 @@
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import pytest
 from conftest import PAGES, DataPaths, run_page
@@ -160,3 +167,113 @@ def test_page_renders_with_common_layout_and_leaves_list_unchanged(
 
     # 11.4: 操作をしていないので、保存されている論文は実行前と同一
     assert stored_papers(data_paths.list_file) == seeded_papers
+
+
+# --- 描画で論文リストのファイルに書き込まない (known-bug-fixes 要件 10.2) ---
+
+# 論文リストのファイルの状態。
+# - absent: ファイルがない (データ領域が空)
+# - valid: 正常な論文リスト。``PaperList.to_file`` とは異なる書式
+#   (区切りの空白なし、非 ASCII 文字のエスケープ) で書く
+# - truncated: 正常な論文リストが途中で切れたもの (JSON として解析できない)
+# - empty: 空のファイル (JSON として解析できない)
+LIST_FILE_STATES = ("absent", "valid", "truncated", "empty")
+
+
+class FileSnapshot(NamedTuple):
+    """ファイルの有無・バイト列・更新時刻."""
+
+    exists: bool
+    content: Optional[bytes]
+    mtime_ns: Optional[int]
+
+
+def snapshot_file(path: Path) -> FileSnapshot:
+    """``path`` の有無・バイト列・更新時刻を記録する.
+
+    Parameters
+    ----------
+    path : Path
+        記録するファイル。存在しなくてもよい。
+
+    Returns
+    -------
+    FileSnapshot
+        ファイルがなければ、``exists`` が ``False`` で、ほかは ``None``。
+    """
+    if not path.exists():
+        return FileSnapshot(exists=False, content=None, mtime_ns=None)
+    return FileSnapshot(
+        exists=True,
+        content=path.read_bytes(),
+        mtime_ns=path.stat().st_mtime_ns,
+    )
+
+
+@pytest.fixture(params=LIST_FILE_STATES)
+def list_file_state(
+    request: pytest.FixtureRequest, data_paths: DataPaths
+) -> str:
+    """論文リストのファイルを ``LIST_FILE_STATES`` の状態にする.
+
+    ``absent`` 以外は、``sample_data`` が保存した論文リストから作る。
+    途中で切れたファイルは、文字の境界で切る (UTF-8 として読めないことは
+    別の壊れ方なので、ここでは JSON として解析できないことだけを作る)。
+
+    Returns
+    -------
+    str
+        用意した状態の名前。
+    """
+    state: str = request.param
+    list_file = data_paths.list_file
+    if state == "absent":
+        assert not list_file.exists()
+        return state
+
+    request.getfixturevalue("sample_data")
+    canonical = list_file.read_text(encoding="utf-8")
+    if state == "valid":
+        content = json.dumps(json.loads(canonical), separators=(",", ":"))
+        # 前提: 内容は同じで、書式だけが to_file の出力と異なる
+        assert json.loads(content) == json.loads(canonical)
+        assert content != canonical
+    else:
+        content = (
+            canonical[: len(canonical) // 2] if state == "truncated" else ""
+        )
+        # 前提: JSON として解析できない
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(content)
+    list_file.write_text(content, encoding="utf-8")
+    return state
+
+
+@pytest.mark.parametrize(
+    "page", list(PAGES), ids=[PAGE_IDENTITY[page][0] for page in PAGES]
+)
+def test_page_render_does_not_write_list_file(
+    page: Optional[str], list_file_state: str, data_paths: DataPaths
+) -> None:
+    """ページを描画しただけでは、論文リストのファイルに書き込まない.
+
+    壊れたファイルを空の論文リストで上書きせず、正常なファイルの書式を
+    整え直さず、ないファイルを作らない (known-bug-fixes 要件 10.2)。
+    """
+    before = snapshot_file(data_paths.list_file)
+
+    at = run_page(page)
+
+    # 例外でページの実行が途中で止まると、描画の全体を確かめたことに
+    # ならない。先に、例外がなく、対象のページが描画されたことを確かめる
+    assert not at.exception, describe_exceptions(at)
+    expected_header = PAGE_IDENTITY[page][1]
+    headers = [h.value for h in at.header]
+    assert any(expected_header in header for header in headers), (
+        f"page {page!r} did not render its own header "
+        f"(expected one containing {expected_header!r}, got {headers})"
+    )
+
+    assert snapshot_file(data_paths.list_file) == before, (
+        f"rendering page {page!r} wrote list.json (state {list_file_state!r})"
+    )

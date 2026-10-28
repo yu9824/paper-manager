@@ -23,7 +23,7 @@
   - fixture を使うテストが成功し、使わない既存のテストはすべてそのまま成功する
   - _Requirements: 12.3_
 
-- [ ] 1.3 ページの描画で論文リストのファイルを書き換えないようにする
+- [x] 1.3 ページの描画で論文リストのファイルを書き換えないようにする
   - ページの描画後に論文リストをファイルへ書き戻す処理を削除する（論文リストの変更は、すべて既存の保存処理を通るため）
   - 論文リストの判定を広げる 2.3 より前に行い、壊れたファイルが描画で上書きされる中間状態を作らない
   - JSON として壊れた論文リストのファイルを置いて各ページを描画しても、ファイルのバイト列が変わらないこと、既存のスモークテストが引き続き成功することを確かめるテストが、Streamlit 1.50 でも成功する
@@ -193,3 +193,4 @@
 ## Implementation Notes
 - 1.1: `paper_manager.helper` から `to_fs_path` / `to_display_path` / `folder_name_key` を再エクスポートした。差し替え口は `paper_manager.helper._path._convert` / `_unconvert`（呼び出し時に参照されるので、名前で import した側にも効く）。純粋な変換は `_to_extended_length` / `_from_extended_length`。`to_fs_path("")` は ValueError（空のパスは渡さない）。Python 3.9 / 3.10 の `ntpath.normpath` は `\\?\` 付きのパスを変えないが、3.11 以降は正規化する（変換は prefix を付ける前に abspath するので結果は同じ）。比較キーの既知の差: U+0131（ı）と i / I は NTFS 風の比較では同じ名前だが、比較キーでは別になる（トルコ語などのタイトルで、Windows ではフォルダを共有しうる。設計どおりで範囲外）
 - 1.2: `tests/conftest.py` の opt-in の fixture `windows_like_paths` は、変換を `/x` → `//x` の別名に差し替える（pathlib では `root == "//"` で別のルートになり、`==`・集合・`relative_to` が一致しない。ファイル操作は同じ場所を指して成功する）。**変換後の空間にとどまるかの確認に `Path.resolve()` / `os.path.realpath` / `os.path.relpath` / `os.path.commonpath` を使わない**（別名が外れて混在を再現しない）。Windows では skip する。Linux で `//x` が `/x` を指すことは CI（6.2）で確認する
+- 1.3: `config_page` は描画後に論文リストを書き戻さない。論文リストをファイルに書くのは `save_paper_list`（登録・更新・削除）と復元の直接書き込みだけ。空のデータディレクトリで画面を開いても `list.json` は作られない。**steering の `tech.md`（「実行後に session state → list.json を書き戻す」）と `structure.md`（「永続化の単一経路: … または `config_page` の後処理」）が古くなったので、この spec の完了時に steering を更新する**（それまで新しいコードは書き戻しに頼らない）

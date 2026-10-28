@@ -24,8 +24,10 @@ class config_page:
     """
     A decorator-like class for configuring a Streamlit page.
 
-    This class sets up the page configuration, initializes a sidebar with navigation links,
-    and ensures that the `PaperList` is synchronized between the session state and a file.
+    This class sets up the page configuration, initializes a sidebar with
+    navigation links, and loads the `PaperList` from the file into the session
+    state before the page runs. It never writes the paper list file: every
+    change to the paper list is persisted by `save_paper_list`.
 
     Parameters
     ----------
@@ -51,9 +53,14 @@ class config_page:
         This method:
         - Sets the page title to "PAPER MANAGER".
         - Adds navigation links to the sidebar.
-        - Ensures that `PaperList` is loaded into the session state.
+        - Loads `PaperList` from the file into the session state if the
+          session state has no papers yet.
         - Calls the stored function (`_callable`).
-        - Saves the updated `PaperList` back to the file.
+
+        The paper list file is not written back after the page runs, so
+        rendering a page alone never rewrites (or creates) the file.
+        Registering, updating and deleting papers persist the paper list
+        through `save_paper_list`.
 
         Parameters
         ----------
@@ -104,8 +111,6 @@ class config_page:
 
         _return = self._callable(*args, **kwargs)
 
-        PaperList.from_session_state().to_file()
-        # st.button("Sync")
         _logger.debug("config_page End")
         return _return
 
