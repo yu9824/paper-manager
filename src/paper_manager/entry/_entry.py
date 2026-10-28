@@ -11,7 +11,7 @@ from collections.abc import (
     ValuesView,
 )
 from pathlib import Path
-from typing import Literal, Union
+from typing import Literal, Optional, Union
 
 import streamlit as st
 
@@ -72,14 +72,71 @@ def sanitize_filename(filename: str) -> str:
     """
     # OSごとに不適切な文字を定義
     if platform.system() == "Windows":
-        # Windowsでは \\ / : + > " < > | が不適切
-        invalid_chars = r"[\\/:*?<>|]"
+        # Windowsでは \\ / : * ? " < > | が不適切
+        invalid_chars = r'[\\/:*?"<>|]'
     else:
         # LinuxとOSXでは / が不適切
         invalid_chars = r"[/]"
 
     # 不適切な文字をアンダースコアに置換
     return re.sub(invalid_chars, "_", filename)
+
+
+def _dir_name_before_kb7_fix(year: str, first_author: str, title: str) -> str:
+    """Build a PDF directory name with the rule used before the KB7 fix.
+
+    後方互換のための修正前の規則。KB7 の範囲の移行と孤立判定だけで使う。
+    known-bug-fixes spec の修正前の ``Entry.pdf_dir_name`` の処理
+    (フィールドを取り出した後の部分) を変えずに残したもの。接頭辞
+    ``<year> - <first_author> - `` が 198・199 文字のとき、または年が
+    200 文字を超えるとき (KB7 の範囲) は、200 文字を超える名前を返すことが
+    ある。200 文字以内の空でない名前を返す入力では ``Entry.pdf_dir_name``
+    と同じ名前になる (空の名前のとき ``Entry.pdf_dir_name`` は
+    ``Unknown`` を返す)。
+
+    Parameters
+    ----------
+    year : str
+        The year field (or its default).
+    first_author : str
+        The first author (or its default).
+    title : str
+        The title field (or its default).
+
+    Returns
+    -------
+    str
+        The sanitized directory name without trailing ``.`` or spaces.
+        It may exceed ``MAX_DIRNAME_LENGTH`` characters.
+    """
+    # 基本フォーマット
+    base_format = "{} - {} - {}"
+    dir_name = sanitize_filename(base_format.format(year, first_author, title))
+
+    # フォルダ名が長すぎる場合はタイトルを切り詰める
+    if len(dir_name) > MAX_DIRNAME_LENGTH:
+        # 年と著者名の長さを計算
+        prefix = f"{year} - {first_author} - "
+        max_title_length = MAX_DIRNAME_LENGTH - len(prefix)
+
+        if max_title_length > 0:
+            # タイトルを切り詰める（末尾に...を追加）
+            # 修正前の規則のまま: max_title_length が 1・2 のとき負の
+            # インデックスになり、タイトルがほぼ全文残る (KB7)
+            truncated_title = title[: max_title_length - 3] + "..."
+            dir_name = sanitize_filename(
+                base_format.format(year, first_author, truncated_title)
+            )
+        else:
+            # それでも長すぎる場合は、年と著者名のみ
+            dir_name = sanitize_filename(f"{year} - {first_author}")
+            if len(dir_name) > MAX_DIRNAME_LENGTH:
+                # 最後の手段：年のみ (修正前の規則のまま: 年は切り詰めない)
+                dir_name = sanitize_filename(year)
+
+    # Windowsの制限: ディレクトリ名の最後のピリオド（.）やスペースを削除
+    # macOS/Linuxでも互換性のため同様に処理
+    return dir_name.rstrip(". ")
 
 
 class Entry(MutableMapping):
@@ -263,55 +320,86 @@ class Entry(MutableMapping):
             i += 1
         return key
 
+    def _pdf_dir_name_fields(self) -> tuple[str, str, str]:
+        """Return the year, first author and title used in the folder name.
+
+        Missing fields fall back to ``YYYY`` (year) and ``Unknown`` (title).
+        The first author is ``Unknown`` when the author is missing or empty.
+
+        Returns
+        -------
+        tuple[str, str, str]
+            ``(year, first_author, title)``.
+        """
+        year = self.get(COLNAME_YEAR, "YYYY")
+        authors = split(self.get(COLNAME_AUTHOR, ""), AUTHOR_SEPARATOR)
+        first_author = authors[0] if authors else ""
+        if first_author == "":
+            first_author = "Unknown"
+        title = self.get(COLNAME_TITLE, "Unknown")
+        return year, first_author, title
+
     @property
     def pdf_dir_name(self) -> str:
         """Generate a sanitized directory name for the entry's PDF files.
 
         The directory name format is '<year> - <first_author> - <title>'.
         If the resulting name is too long, the title will be truncated to
-        fit within the maximum directory name length.
+        fit within the maximum directory name length. If it is still too
+        long, '<year> - <first_author>' is used, and then the year cut to
+        the maximum length. A name that would be empty is replaced with
+        ``Unknown``. The name does not depend on where the PDF directory
+        is located.
 
         Returns
         -------
         str
-            A sanitized directory name for the entry.
+            A sanitized, non-empty directory name for the entry. It has at
+            most ``MAX_DIRNAME_LENGTH`` characters and does not end with
+            ``.`` or a space. A non-empty name that fits with the rule used
+            before the KB7 fix is returned unchanged, so existing folders
+            keep their names.
         """
-        year = self.get(COLNAME_YEAR, "YYYY")
-        first_author = split(self.get(COLNAME_AUTHOR, ""), AUTHOR_SEPARATOR)[0]
-        if first_author == "":
-            first_author = "Unknown"
-        title = self.get(COLNAME_TITLE, "Unknown")
+        year, first_author, title = self._pdf_dir_name_fields()
 
-        # 基本フォーマット
-        base_format = "{} - {} - {}"
-        dir_name = sanitize_filename(
-            base_format.format(year, first_author, title)
-        )
-
-        # フォルダ名が長すぎる場合はタイトルを切り詰める
+        dir_name = _dir_name_before_kb7_fix(year, first_author, title)
         if len(dir_name) > MAX_DIRNAME_LENGTH:
-            # 年と著者名の長さを計算
-            prefix = f"{year} - {first_author} - "
-            max_title_length = MAX_DIRNAME_LENGTH - len(prefix)
+            # KB7: 修正前の規則で長すぎる場合だけ、年と著者名のみにする
+            dir_name = sanitize_filename(f"{year} - {first_author}")
+            dir_name = dir_name.rstrip(". ")
+        if len(dir_name) > MAX_DIRNAME_LENGTH:
+            # 最後の手段：年のみ（長さの上限で切り詰める）
+            dir_name = sanitize_filename(year)[:MAX_DIRNAME_LENGTH]
+            dir_name = dir_name.rstrip(". ")
 
-            if max_title_length > 0:
-                # タイトルを切り詰める（末尾に...を追加）
-                truncated_title = title[: max_title_length - 3] + "..."
-                dir_name = sanitize_filename(
-                    base_format.format(year, first_author, truncated_title)
-                )
-            else:
-                # それでも長すぎる場合は、年と著者名のみ
-                dir_name = sanitize_filename(f"{year} - {first_author}")
-                if len(dir_name) > MAX_DIRNAME_LENGTH:
-                    # 最後の手段：年のみ
-                    dir_name = sanitize_filename(year)
+        # 空の名前は PDF ディレクトリそのものを指すため使わない
+        # (修正前の規則でも、年が空や `.` だけで著者名が長いと空になる)
+        return dir_name or "Unknown"
 
-        # Windowsの制限: ディレクトリ名の最後のピリオド（.）やスペースを削除
-        # macOS/Linuxでも互換性のため同様に処理
-        dir_name = dir_name.rstrip(". ")
+    def _pdf_dir_name_before_kb7_fix(self) -> Optional[str]:
+        """Return the directory name built with the rule before the KB7 fix.
 
-        return dir_name
+        後方互換のための修正前の規則。KB7 の範囲の移行と孤立判定だけで使う。
+        KB7 の範囲では ``pdf_dir_name`` と異なる、200 文字を超える名前を
+        返す。それ以外の入力では ``pdf_dir_name`` と同じ名前を返す。
+
+        修正前の規則は、著者のキーがない、または著者が空のときに
+        ``IndexError`` になり (KB2a)、その名前のフォルダは作られなかった。
+        この場合は例外を送出せずに ``None`` を返す。修正前の規則の名前が
+        空になる場合 (PDF ディレクトリそのものを指し、フォルダ名になり
+        えない) も ``None`` を返す。
+
+        Returns
+        -------
+        Optional[str]
+            The pre-fix directory name, or ``None`` when the pre-fix rule
+            could not build a folder name (missing or empty author, or an
+            empty name). It never raises.
+        """
+        if not self.get(COLNAME_AUTHOR, ""):
+            return None
+        dir_name = _dir_name_before_kb7_fix(*self._pdf_dir_name_fields())
+        return dir_name or None
 
     def get_pdf_dir(self, base_dir: Union[Path, None] = None) -> Path:
         """Get the directory path for storing PDF files.
@@ -496,6 +584,9 @@ class Entry(MutableMapping):
             in a future version.
 
         The filename format is '<year> - <first_author> - <title>.pdf'.
+        A missing title falls back to ``Unknown`` (as in `pdf_dir_name`)
+        so that entries without a title do not raise. Otherwise the name
+        is kept unchanged to find legacy single PDF files.
 
         Returns
         -------
@@ -508,7 +599,7 @@ class Entry(MutableMapping):
             if COLNAME_AUTHOR in self
             else "Unknown"
         )
-        title = self[COLNAME_TITLE]
+        title = self.get(COLNAME_TITLE, "Unknown")
         return sanitize_filename(
             "{} - {} - {}.pdf".format(year, first_author, title)
         )

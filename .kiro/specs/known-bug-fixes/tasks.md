@@ -31,7 +31,7 @@
   - _Requirements: 10.2_
 
 - [ ] 2. ドメイン層の修正
-- [ ] 2.1 PDF フォルダ名の生成を修正する
+- [x] 2.1 PDF フォルダ名の生成を修正する
   - 年・著者・タイトルの長さにかかわらず、フォルダ名を 200 文字以内にする。現在 200 文字以内になる入力では、出力を修正前と完全に同一に保つ（KB7）
   - 著者がない、または空の論文では、著者を `Unknown` としてフォルダ名を作る（KB2a）
   - Windows では、フォルダ名の `"` も `_` に置き換える（KB5）。Windows 以外の置換規則は変えない
@@ -194,3 +194,4 @@
 - 1.1: `paper_manager.helper` から `to_fs_path` / `to_display_path` / `folder_name_key` を再エクスポートした。差し替え口は `paper_manager.helper._path._convert` / `_unconvert`（呼び出し時に参照されるので、名前で import した側にも効く）。純粋な変換は `_to_extended_length` / `_from_extended_length`。`to_fs_path("")` は ValueError（空のパスは渡さない）。Python 3.9 / 3.10 の `ntpath.normpath` は `\\?\` 付きのパスを変えないが、3.11 以降は正規化する（変換は prefix を付ける前に abspath するので結果は同じ）。比較キーの既知の差: U+0131（ı）と i / I は NTFS 風の比較では同じ名前だが、比較キーでは別になる（トルコ語などのタイトルで、Windows ではフォルダを共有しうる。設計どおりで範囲外）
 - 1.2: `tests/conftest.py` の opt-in の fixture `windows_like_paths` は、変換を `/x` → `//x` の別名に差し替える（pathlib では `root == "//"` で別のルートになり、`==`・集合・`relative_to` が一致しない。ファイル操作は同じ場所を指して成功する）。**変換後の空間にとどまるかの確認に `Path.resolve()` / `os.path.realpath` / `os.path.relpath` / `os.path.commonpath` を使わない**（別名が外れて混在を再現しない）。Windows では skip する。Linux で `//x` が `/x` を指すことは CI（6.2）で確認する
 - 1.3: `config_page` は描画後に論文リストを書き戻さない。論文リストをファイルに書くのは `save_paper_list`（登録・更新・削除）と復元の直接書き込みだけ。空のデータディレクトリで画面を開いても `list.json` は作られない。**steering の `tech.md`（「実行後に session state → list.json を書き戻す」）と `structure.md`（「永続化の単一経路: … または `config_page` の後処理」）が古くなったので、この spec の完了時に steering を更新する**（それまで新しいコードは書き戻しに頼らない）
+- 2.1: 修正前の規則は `_dir_name_before_kb7_fix`（モジュール関数）に残し、2.2 / 3.2 は `Entry._pdf_dir_name_before_kb7_fix()` を使う（著者なし・空、または名前が空なら `None`、例外なし。`None` でなければ修正前の名前）。`legacy_pdf_dir_name` は「`pdf_dir_name` と異なり 255 文字以内」の条件をこれに足して作る。`pdf_dir_name` は空にならない（空になる入力は `Unknown`。空の名前は PDF ルートを指し、削除で全 PDF が消えうるため）。**3.3 で、PDF ルートそのものを削除しない防御を入れる**。後方互換は修正前の規則と約 1,000 万通りの比較で確認済み（違いは KB7・空の名前・KB2a・Windows の `"` だけ）。**2.2 と 3.2 が入るまで、KB7 の範囲の既存フォルダは一覧に出ず孤立 PDF に見えるので、その間でリリースしない**。`tests/test_helper.py` の docstring にある KB2a の記述は 6.1 で更新する

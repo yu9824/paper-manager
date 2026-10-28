@@ -14,8 +14,21 @@
   移行されること (要件 2.7, 2.8)
 - 保存先の基準ディレクトリ (``base_dir``) を指定しても、既定の PDF ディレクトリ
   が変化しないこと (要件 2.9)
-- 既知バグ (KB2a, KB2b, KB5, ほか実装中に判明した 1 件) を strict な xfail として
-  記録する (要件 13.1, 13.2)
+- test-suite spec で strict な xfail として記録した既知バグ (KB2a, KB2b, KB5,
+  KB7) は known-bug-fixes spec で修正し、通常のテストとして検証する。著者が
+  ない・空のエントリのフォルダ名が ``Unknown`` で作られること (KB2a,
+  known-bug-fixes 要件 2.3)、タイトルがないエントリの PDF の一覧・有無・件数
+  が例外にならないこと (KB2b, 同 2.4)、Windows で ``"`` も ``_`` に置換され
+  ること (KB5, 同 2.5)、接頭辞がほぼ 200 文字を占めるときもフォルダ名が
+  200 文字以内で、末尾が ``.``・空白でないこと (KB7, 同 2.1, 2.2)
+- 修正前の規則との一致 (known-bug-fixes 要件 2.6): 接頭辞 197〜200 文字 ×
+  タイトル 0〜300 文字の境界で、修正前の規則が 200 文字以内を返す入力では
+  ``pdf_dir_name`` が修正前と完全に同一で、200 文字を超えていた入力
+  (KB7 の範囲) だけが ``<year> - <first_author>`` に変わること。年が
+  200 文字を超える入力も 200 文字以内になること (同 2.1)。後方互換のために
+  残した修正前の規則が、このモジュールの独立した写しと一致すること
+- フォルダ名が保存先ディレクトリの長さに依存しないこと (known-bug-fixes
+  要件 1.3)
 
 OS の判定は ``paper_manager.entry._entry`` の ``platform.system()`` で行われる。
 ``set_os`` fixture でそのモジュールの ``platform`` を差し替えるため、実行 OS に
@@ -28,6 +41,7 @@ OS の判定は ``paper_manager.entry._entry`` の ``platform.system()`` で行�
 """
 
 from collections.abc import Callable, Iterable, Mapping
+from itertools import product
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -479,7 +493,7 @@ def test_name_of_201_chars_is_truncated(
 
 @pytest.mark.parametrize(
     "author_length",
-    [185, 186, 187, 190, 191, 250],
+    [185, 186, 187, 188, 189, 190, 191, 250],
     ids=lambda n: f"author-{n}",
 )
 def test_very_long_author_still_fits_in_200_chars(
@@ -488,7 +502,8 @@ def test_very_long_author_still_fits_in_200_chars(
     """接頭辞だけで 200 文字前後になる長い著者名でも 200 文字以内に収まる.
 
     接頭辞 (``2020 - <著者> - ``) が 195〜260 文字になる範囲を検証する。
-    著者名が 188・189 文字 (接頭辞 198・199 文字) の場合は KB7 で扱う。
+    著者名が 188・189 文字 (接頭辞 198・199 文字) は、修正前の規則では
+    200 文字を超えていた KB7 の範囲 (known-bug-fixes 要件 2.1)。
     """
     entry = make_entry(
         author="A" * author_length, title="x" * 300, year="2020"
@@ -1031,90 +1046,443 @@ def test_legacy_named_pdf_is_renamed_inside_base_dir_only(
     assert snapshot(data_paths.pdf) == default_before
 
 
-# --- 既知バグ (要件 13.1, 13.2) ---------------------------------------------
+# --- 修正した既知バグ KB2a, KB2b, KB5, KB7 (known-bug-fixes 要件 2.1〜2.5) ---
 
 
-@pytest.mark.xfail(
-    reason=(
-        "KNOWN BUG: 著者のないエントリの pdf_dir_name が IndexError "
-        "になる (KB2a). pdf_dir_name は "
-        "split(self.get('author', ''), ' and ')[0] "
-        "を評価するが、split('') は空のタプルを返すため [0] が失敗し、"
-        "その後の `first_author == ''` による 'Unknown' への置換に到達しない. "
-        "Repro: 'author' キーのない (または author='' の) Entry の "
-        "pdf_dir_name を参照する (misc では著者は任意). "
-        "本来は '2020 - Unknown - T' になる"
-    )
-)
 def test_pdf_dir_name_uses_unknown_for_missing_author(
     make_partial_entry: Callable[..., Entry],
 ) -> None:
-    """著者が欠落したエントリのフォルダ名は ``Unknown`` で作られる."""
+    """著者が欠落したエントリのフォルダ名は ``Unknown`` で作られる (KB2a)."""
     entry = make_partial_entry(drop=("author",), title="T", year="2020")
 
     assert entry.pdf_dir_name == "2020 - Unknown - T"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "KNOWN BUG: Windows 用の置換規則 r'[\\\\/:*?<>|]' に '\"' が"
-        "含まれず、Windows で使えない '\"' が置換されずに残る (KB5). "
-        "Repro: platform.system() が 'Windows' を返す環境で "
-        "sanitize_filename('a\"b') を呼ぶ (タイトルに '\"' を含む論文の PDF "
-        "フォルダを Windows で作成できない). 本来は 'a_b' になる"
-    )
+@pytest.mark.parametrize(
+    "author", ["", "   ", "\t\n"], ids=["empty", "spaces", "tab-newline"]
 )
+def test_pdf_dir_name_uses_unknown_for_empty_author(
+    make_entry: Callable[..., Entry], author: str
+) -> None:
+    """著者が空 (空白だけを含む) のエントリも ``Unknown`` で作られる (KB2a).
+
+    作成時に値の前後の空白が除去されるので、どれも空の著者になる。
+    """
+    entry = make_entry(author=author, title="T", year="2020")
+
+    assert entry.pdf_dir_name == "2020 - Unknown - T"
+
+
 def test_windows_replaces_double_quote_with_underscore(
     set_os: Callable[[str], None],
 ) -> None:
-    """Windows では、禁止文字の ``"`` も ``_`` に置換される."""
+    """Windows では、禁止文字の ``"`` も ``_`` に置換される (KB5)."""
     set_os("Windows")
 
     assert sanitize_filename('a"b') == "a_b"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "KNOWN BUG: 接頭辞 '<year> - <first_author> - ' が 198 または "
-        "199 文字のとき、pdf_dir_name が 200 文字を超える "
-        "(KB7, 実装中に判明). "
-        "残りの長さ max_title_length が 2 または 1 になり、"
-        "title[:max_title_length - 3] が負のインデックスのスライス "
-        "(title[:-1], title[:-2]) になってタイトルがほぼ全文残るため. "
-        "Repro: year='2020'、著者名 188 または 189 文字、タイトル 300 文字 "
-        "(名前は約 500 文字になる). 本来は 200 文字以内になる (要件 2.4)"
-    )
+@pytest.mark.parametrize(
+    ("os_name", "expected"),
+    [
+        ("Linux", '2020 - Alice Smith - The "Best" Paper'),
+        ("Darwin", '2020 - Alice Smith - The "Best" Paper'),
+        ("Windows", "2020 - Alice Smith - The _Best_ Paper"),
+    ],
 )
+def test_pdf_dir_name_replaces_double_quote_only_on_windows(
+    make_entry: Callable[..., Entry],
+    set_os: Callable[[str], None],
+    os_name: str,
+    expected: str,
+) -> None:
+    """タイトルの ``"`` は、Windows でだけフォルダ名で ``_`` になる (KB5).
+
+    Windows 以外の置換規則は変わらない。
+    """
+    set_os(os_name)
+    entry = make_entry(
+        author="Alice Smith", title='The "Best" Paper', year="2020"
+    )
+
+    assert entry.pdf_dir_name == expected
+
+
 def test_name_stays_within_200_chars_when_prefix_leaves_almost_no_room(
     make_entry: Callable[..., Entry],
 ) -> None:
-    """接頭辞がほぼ 200 文字を占める場合も、フォルダ名は 200 文字以内になる."""
+    """接頭辞がほぼ 200 文字を占める場合も、フォルダ名は 200 文字以内になる.
+
+    接頭辞 ``2020 - <著者> - `` が 198・199 文字のとき (KB7)、名前は
+    ``<year> - <first_author>`` に切り替わる。
+    """
     for author_length in (188, 189):
         entry = make_entry(
             author="A" * author_length, title="x" * 300, year="2020"
         )
 
         assert_valid_dir_name(entry.pdf_dir_name)
+        assert entry.pdf_dir_name == "2020 - " + "A" * author_length
+
+
+def test_kb7_fallback_name_has_no_trailing_period(
+    make_entry: Callable[..., Entry],
+) -> None:
+    """KB7 の代替名 ``<year> - <first_author>`` も末尾の ``.`` を除く.
+
+    著者名 188 文字 (末尾が ``.``) で接頭辞が 198 文字になる場合。
+    """
+    entry = make_entry(author="A" * 187 + ".", title="x" * 300, year="2020")
+
+    assert_valid_dir_name(entry.pdf_dir_name)
+    assert entry.pdf_dir_name == "2020 - " + "A" * 187
 
 
 @ignore_deprecation
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BUG: タイトルのないエントリの get_pdf_files() が KeyError "
-        "になる (KB2b). PDF フォルダがないとき、旧形式の単一 PDF を探す "
-        "_migrate_legacy_single_pdf が非推奨の pdf_filename を評価し、"
-        "そこで self['title'] を参照するため (has_pdf()・get_pdf_count() "
-        "も同様に失敗する). "
-        "Repro: 'title' キーがなく、PDF フォルダ "
-        "(<year> - <first_author> - Unknown) も存在しない Entry の "
-        "get_pdf_files() を呼ぶ. 本来は PDF がないので [] になる"
-    ),
-)
 def test_get_pdf_files_is_empty_for_entry_without_title(
     make_partial_entry: Callable[..., Entry],
 ) -> None:
-    """タイトルが欠落し、PDF フォルダもないエントリの PDF 一覧は空になる."""
+    """タイトルが欠落し、PDF フォルダもないエントリの PDF 一覧は空になる.
+
+    PDF フォルダがないときは、旧形式の単一 PDF を探す (KB2b)。有無と件数も
+    例外にならない。
+    """
     entry = make_partial_entry(drop=("title",))
 
     assert entry.get_pdf_files() == []
+    assert entry.has_pdf() is False
+    assert entry.get_pdf_count() == 0
+
+
+@ignore_deprecation
+def test_pdf_listing_of_entry_without_title_reports_its_pdfs(
+    make_partial_entry: Callable[..., Entry], data_paths: DataPaths
+) -> None:
+    """タイトルが欠落したエントリも、PDF フォルダの PDF の有無と件数を返す.
+
+    フォルダ名はタイトルの既定値 ``Unknown`` で作られる (KB2b)。
+    """
+    entry = make_partial_entry(drop=("title",))
+    folder = data_paths.pdf / "2020 - Alice Smith - Unknown"
+    write_pdfs(
+        folder, {"00.pdf": pdf_content("00"), "01.pdf": pdf_content("01")}
+    )
+
+    assert entry.get_pdf_files() == [folder / "00.pdf", folder / "01.pdf"]
+    assert entry.has_pdf() is True
+    assert entry.get_pdf_count() == 2
+
+
+def test_pdf_filename_keeps_legacy_name_and_allows_missing_title(
+    make_partial_entry: Callable[..., Entry],
+) -> None:
+    """非推奨の ``pdf_filename`` は、タイトルがなくても例外にならない (KB2b).
+
+    タイトルがあるときの名前は、旧形式の単一 PDF のファイル名との互換の
+    ために変わらない。
+    """
+    with pytest.warns(DeprecationWarning):
+        assert make_partial_entry().pdf_filename == LEGACY_SINGLE_NAME
+    with pytest.warns(DeprecationWarning):
+        untitled = make_partial_entry(drop=("title",)).pdf_filename
+
+    assert untitled.startswith("2020 - Alice Smith - ")
+    assert untitled.endswith(".pdf")
+
+
+# --- 修正前の規則との一致 (known-bug-fixes 要件 2.1, 2.2, 2.6) ---------------
+
+# 年 ``2020`` のとき、接頭辞 ``2020 - <著者> - `` が 197〜200 文字になる
+# 著者名の長さ.
+BOUNDARY_AUTHOR_LENGTHS = range(187, 191)
+BOUNDARY_TITLE_LENGTHS = range(0, 301)
+# 境界のテストのタイトルを作る文字列の単位. 切り詰めた位置の ``.``・空白の
+# 除去と、OS ごとの置換 (``:`` は Windows でだけ置換される) が変わる.
+BOUNDARY_TITLE_UNITS = {
+    "plain": "x",
+    "separators": "ab. ",
+    "colon": "a:b",
+    "non-ascii": "あ",
+}
+
+
+def pre_fix_dir_name(year: str, first_author: str, title: str) -> str:
+    """修正前 (KB7 の修正前) の ``pdf_dir_name`` の名前を作る.
+
+    known-bug-fixes spec の修正前 (commit 88393fc の時点) の
+    ``Entry.pdf_dir_name`` の処理を、フィールドを取り出した後の部分について
+    そのまま写したもの。プロダクションコードが後方互換のために残した修正前の
+    規則とは独立した基準として使い、どちらかが変わると境界のテストが失敗する
+    ようにする。置換規則は ``sanitize_filename`` (差し替えた OS の規則) を
+    使う。
+
+    Returns
+    -------
+    str
+        修正前の名前。KB7 の範囲では 200 文字を超える。
+    """
+    dir_name = sanitize_filename(f"{year} - {first_author} - {title}")
+    if len(dir_name) > MAX_DIR_NAME_LENGTH:
+        prefix = f"{year} - {first_author} - "
+        max_title_length = MAX_DIR_NAME_LENGTH - len(prefix)
+        if max_title_length > 0:
+            truncated_title = title[: max_title_length - 3] + "..."
+            dir_name = sanitize_filename(prefix + truncated_title)
+        else:
+            dir_name = sanitize_filename(f"{year} - {first_author}")
+            if len(dir_name) > MAX_DIR_NAME_LENGTH:
+                dir_name = sanitize_filename(year)
+    return dir_name.rstrip(". ")
+
+
+def boundary_entries(
+    make_entry: Callable[..., Entry], unit: str
+) -> Iterable[tuple[int, int, Entry]]:
+    """境界の組み合わせ (接頭辞 197〜200 文字 × タイトル 0〜300 文字) を作る.
+
+    Returns
+    -------
+    Iterable[tuple[int, int, Entry]]
+        ``(著者名の長さ, タイトルの長さ, エントリ)``。タイトルは ``unit`` を
+        繰り返して指定の長さに切ったもの (作成時に前後の空白は除去される)。
+    """
+    for author_length, title_length in product(
+        BOUNDARY_AUTHOR_LENGTHS, BOUNDARY_TITLE_LENGTHS
+    ):
+        title = (unit * title_length)[:title_length]
+        entry = make_entry(
+            author="A" * author_length, title=title, year="2020"
+        )
+        yield author_length, title_length, entry
+
+
+boundary_os = pytest.mark.parametrize("os_name", ["Linux", "Windows"])
+boundary_units = pytest.mark.parametrize(
+    "unit",
+    list(BOUNDARY_TITLE_UNITS.values()),
+    ids=list(BOUNDARY_TITLE_UNITS),
+)
+
+
+@boundary_os
+@boundary_units
+def test_pre_fix_rule_is_kept_for_backward_compatibility(
+    make_entry: Callable[..., Entry],
+    set_os: Callable[[str], None],
+    os_name: str,
+    unit: str,
+) -> None:
+    """後方互換のために残した修正前の規則は、修正前の名前を返す.
+
+    KB7 の範囲 (200 文字を超える名前) も含めて、修正前と同じ名前になる
+    (修正前の名前のフォルダの移行と孤立 PDF の判定に使う)。
+    """
+    set_os(os_name)
+
+    for author_length, title_length, entry in boundary_entries(
+        make_entry, unit
+    ):
+        expected = pre_fix_dir_name(
+            entry["year"], entry["author"], entry["title"]
+        )
+        assert entry._pdf_dir_name_before_kb7_fix() == expected, (
+            author_length,
+            title_length,
+        )
+
+
+@boundary_os
+@boundary_units
+def test_pdf_dir_name_differs_from_pre_fix_rule_only_beyond_200_chars(
+    make_entry: Callable[..., Entry],
+    set_os: Callable[[str], None],
+    os_name: str,
+    unit: str,
+) -> None:
+    """修正前に 200 文字以内だった名前は、修正後も完全に同一になる.
+
+    修正前の名前が 200 文字を超えていた入力 (KB7 の範囲) だけが、
+    ``<year> - <first_author>`` (200 文字以内で末尾が ``.``・空白でない) に
+    変わる。KB7 の範囲は、接頭辞が 198・199 文字 (著者名 188・189 文字) の
+    ときだけで、``.``・空白を含まないタイトルでは 4 文字以上のとき。
+    """
+    set_os(os_name)
+    kb7_window = set()
+
+    for author_length, title_length, entry in boundary_entries(
+        make_entry, unit
+    ):
+        before = pre_fix_dir_name(
+            entry["year"], entry["author"], entry["title"]
+        )
+        name = entry.pdf_dir_name
+        case = (author_length, title_length)
+        assert before != "", case  # 前提: 空の名前は別のテストで扱う
+        if len(before) <= MAX_DIR_NAME_LENGTH:
+            assert name == before, case
+        else:
+            kb7_window.add(case)
+            assert_valid_dir_name(name)
+            assert name == "2020 - " + "A" * author_length, case
+
+    assert kb7_window
+    assert {author_length for author_length, _ in kb7_window} <= {188, 189}
+    if unit == BOUNDARY_TITLE_UNITS["plain"]:
+        assert kb7_window == set(product((188, 189), range(4, 301)))
+
+
+@pytest.mark.parametrize(
+    ("year", "expected"),
+    [
+        pytest.param("1" * 200, "1" * 200, id="200-unchanged"),
+        pytest.param("1" * 201, "1" * 200, id="201"),
+        pytest.param("1" * 300, "1" * 200, id="300"),
+        pytest.param(
+            "1" * 199 + ". " + "9" * 50, "1" * 199, id="cut-at-separator"
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "dropped", [(), ("author",)], ids=["with-author", "no-author"]
+)
+def test_year_longer_than_200_chars_is_cut_to_200_chars(
+    make_partial_entry: Callable[..., Entry],
+    year: str,
+    expected: str,
+    dropped: tuple,
+) -> None:
+    """年が 200 文字を超えても、フォルダ名は 200 文字以内になる (KB7).
+
+    ``<year> - <first_author>`` も 200 文字を超えるので、年を 200 文字に
+    切り詰め、末尾の ``.``・空白を除く。年がちょうど 200 文字の名前は、
+    修正前と同じ (年だけ) になる。
+    """
+    entry = make_partial_entry(
+        drop=dropped, author="Alice Smith", title="T", year=year
+    )
+
+    name = entry.pdf_dir_name
+
+    assert_valid_dir_name(name)
+    assert name == expected
+
+
+@pytest.mark.parametrize(
+    ("dropped", "fields"),
+    [
+        (("author",), {}),
+        ((), {"author": ""}),
+    ],
+    ids=["no-author", "empty-author"],
+)
+def test_pre_fix_rule_has_no_name_without_author(
+    make_partial_entry: Callable[..., Entry], dropped: tuple, fields: dict
+) -> None:
+    """修正前の規則は、著者がない・空のエントリでは名前を返さない.
+
+    修正前の規則はこの場合に例外になり (KB2a)、その名前のフォルダは
+    作られなかった。後方互換の処理が扱いやすいよう、例外ではなく ``None``
+    を返す。
+    """
+    entry = make_partial_entry(drop=dropped, **fields)
+
+    assert entry._pdf_dir_name_before_kb7_fix() is None
+
+
+def _set_fields_unstripped(entry: Entry, **fields: str) -> Entry:
+    """値の前後の空白を残したまま、フィールドを代入する.
+
+    作成時と違い、代入 (``__setitem__``) は値を加工しない。
+    """
+    for name, value in fields.items():
+        entry[name] = value
+    return entry
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param(
+            {"year": "", "author": "A" * 198, "title": "T"},
+            id="empty-year-author-198",
+        ),
+        pytest.param(
+            {"year": "", "author": "A" * 250, "title": "x" * 300},
+            id="empty-year-author-250",
+        ),
+        pytest.param(
+            {"year": ".", "author": "A" * 250, "title": "T"},
+            id="dot-year-author-250",
+        ),
+        pytest.param(
+            {"year": " . ", "author": ". " * 120, "title": " .. "},
+            id="dots-and-spaces-only",
+        ),
+        pytest.param(
+            {"year": "." * 300, "author": "A", "title": "T"},
+            id="dot-year-300",
+        ),
+        pytest.param(
+            {"year": "." * 200 + "1" * 50, "author": "A", "title": "T"},
+            id="year-cut-to-dots",
+        ),
+    ],
+)
+@pytest.mark.parametrize("os_name", ["Linux", "Windows"])
+def test_pdf_dir_name_is_unknown_when_the_name_would_be_empty(
+    make_entry: Callable[..., Entry],
+    set_os: Callable[[str], None],
+    fields: dict,
+    os_name: str,
+) -> None:
+    """名前が空になる入力では、フォルダ名は ``Unknown`` になる.
+
+    空の名前は PDF ディレクトリそのものを指し、フォルダ名になりえない。
+    修正前の規則でも空になっていた入力 (年が空や ``.``・空白だけで、
+    ``<year> - <first_author>`` が 200 文字を超える) と、年を 200 文字に
+    切り詰めると ``.`` だけが残る入力 (修正前は 200 文字超) を検証する。
+    修正前の規則の名前が空のときは、後方互換の処理に名前を返さない
+    (``None``)。空でなければ、修正前の名前をそのまま返す。
+    """
+    set_os(os_name)
+    entry = _set_fields_unstripped(make_entry(), **fields)
+    before = pre_fix_dir_name(*entry._pdf_dir_name_fields())
+    assert before == "" or len(before) > MAX_DIR_NAME_LENGTH  # 前提
+
+    assert entry.pdf_dir_name == "Unknown"
+    assert entry._pdf_dir_name_before_kb7_fix() == (before or None)
+
+
+# --- 保存先の長さに依存しないフォルダ名 (known-bug-fixes 要件 1.3) -----------
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        pytest.param("A Study of Testing", id="short"),
+        pytest.param("x" * (MAX_DIR_NAME_LENGTH - len(PREFIX)), id="200"),
+        pytest.param("x" * 300, id="truncated"),
+    ],
+)
+def test_pdf_dir_name_does_not_depend_on_storage_path_length(
+    make_entry: Callable[..., Entry],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    title: str,
+) -> None:
+    """フォルダ名は、保存先ディレクトリが短くても長くても同じになる.
+
+    基準ディレクトリの指定と、既定の PDF ディレクトリの両方で確かめる
+    (パスの計算だけで、フォルダは作らない)。
+    """
+    entry = make_entry(author="Alice Smith", title=title, year="2020")
+    name = entry.pdf_dir_name
+    short_base = tmp_path / "p"
+    long_base = tmp_path.joinpath(*(c * 100 for c in "def"))
+    assert len(str(long_base / name / "00.pdf")) > 260  # 前提
+
+    for base in (short_base, long_base):
+        assert entry.get_pdf_dir(base).name == name
+        monkeypatch.setattr(_entry, "DIRPATH_PDF", base)
+        assert entry.pdf_dir_name == name
+        assert entry.get_pdf_dir().name == name
