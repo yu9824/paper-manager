@@ -8,6 +8,8 @@
 - テストごとの初期化: データディレクトリ・作業ディレクトリ・プロキシ関連の
   環境変数・外部ネットワークの遮断 (要件 1.4, 1.6, 1.7)
 - テストごとの復元: 2 つのテストの組による独立性の検証 (要件 1.4, 1.5)
+- Streamlit のマルチページ判定が、テスト間で持ち越されないこと
+  (AppTest の実行順序に依存しないための初期化。要件 14.2)
 
 ``conftest`` は pytest が先に読み込んだモジュールを、そのまま import する
 (既定の ``prepend`` import mode)。``--import-mode=importlib`` では別の
@@ -33,7 +35,10 @@ from conftest import (
     IsolationError,
     NetworkBlockedError,
     check_isolation,
+    run_page,
 )
+from streamlit.runtime.pages_manager import PagesManager
+from streamlit.testing.v1 import AppTest
 
 from paper_manager import _constants
 from paper_manager.logging import get_library_root_logger
@@ -367,3 +372,68 @@ def test_state_pair_2_state_is_restored(data_paths: DataPaths) -> None:
     assert not data_paths.list_file.exists()
     assert _MARKER_ENV not in os.environ
     assert get_library_root_logger().level == _BASELINE_LEVEL
+
+
+# --- Streamlit のマルチページ判定 (2 つのテストの組) ----------------------
+#
+# Streamlit 1.50 では ``PagesManager.uses_pages_directory`` がクラス属性で、
+# プロセス内で最初に実行された AppTest が決めて固定する。固定されたまま
+# 次のテストへ持ち越されると、AppTest の実行順序によって失敗する
+# (論文リストページを ``from_file`` で開いた後に、一時ディレクトリで
+# ``from_function`` を実行すると、ページ名の検査で例外になる)。
+# テスト基盤は各テストの前にこの属性を未判定 (``None``) へ戻す。
+#
+# 組はどちらも、1 つ目が状態を変更し、2 つ目が残っていないことを確かめる。
+# 2 つ目は単独で実行しても成功する。1 つ目は ``monkeypatch`` を使わず直接
+# 変更する (使うと ``monkeypatch`` が自分で戻してしまう)。
+# この属性がない Streamlit では、属性がない状態から始まることを確かめる。
+
+_NOT_DECIDED = object()
+
+
+def _page_detection() -> object:
+    """マルチページ判定の現在値を返す (属性がなければ ``_NOT_DECIDED``)."""
+    return PagesManager.__dict__.get("uses_pages_directory", _NOT_DECIDED)
+
+
+def test_page_detection_pair_1_pins_the_detection() -> None:
+    """組の 1 つ目: マルチページ判定を固定する."""
+    assert _page_detection() in (None, _NOT_DECIDED)
+
+    PagesManager.uses_pages_directory = True  # type: ignore[assignment]
+
+    assert PagesManager.uses_pages_directory is True
+
+
+def test_page_detection_pair_2_starts_undecided() -> None:
+    """組の 2 つ目: 1 つ目が固定した判定が、このテストに残っていない."""
+    assert _page_detection() in (None, _NOT_DECIDED)
+
+
+def test_app_test_pair_1_runs_the_list_page() -> None:
+    """組の 1 つ目: 論文リストページを実行する.
+
+    論文リストページの隣には ``pages/`` があるので、AppTest が判定を
+    「ページディレクトリあり」に固定する。
+    """
+    at = run_page(None)
+
+    assert not at.exception, [e.value for e in at.exception]
+
+
+def _trivial_screen() -> None:
+    """何もしない画面 (AppTest 用)."""
+    import streamlit as st
+
+    st.write("hello")
+
+
+def test_app_test_pair_2_runs_a_function_in_a_tmp_dir() -> None:
+    """組の 2 つ目: 一時ディレクトリで ``from_function`` を実行できる.
+
+    1 つ目の後に固定された判定が残っていると、Streamlit 1.50 では
+    ``pages/`` のない場所なのにページ名の検査へ進んで失敗する。
+    """
+    at = AppTest.from_function(_trivial_screen, default_timeout=30).run()
+
+    assert not at.exception, [e.value for e in at.exception]

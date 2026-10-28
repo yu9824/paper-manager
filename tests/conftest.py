@@ -172,6 +172,7 @@ _TEMP_ROOT = _establish_isolation()
 
 import streamlit as st  # noqa: E402
 from crossref.restful import Works  # noqa: E402
+from streamlit.runtime.pages_manager import PagesManager  # noqa: E402
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 import paper_manager  # noqa: E402
@@ -267,6 +268,31 @@ def _block_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket, "getaddrinfo", blocked_getaddrinfo)
 
 
+def _reset_page_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Streamlit のマルチページ判定を、未判定の状態に戻す.
+
+    Streamlit 1.50 の ``PagesManager.uses_pages_directory`` はクラス属性で、
+    プロセス内で最初に実行された AppTest が「main script の隣に ``pages/``
+    があるか」で決め、以降は変わらない。論文リストページ
+    (``AppTest.from_file``) が先に走ると True に、``AppTest.from_function``
+    が先に走ると False に固定され、あとから走る側の AppTest が失敗する
+    (実行順序に依存する)。各テストの前に未判定 (``None``) へ戻して、
+    そのテスト最初の AppTest が判定し直すようにする。
+
+    この属性がない Streamlit でも動く (``raising=False``)。差し替えは
+    テストの後に元へ戻る。1 つのテストの中で ``from_file`` と
+    ``from_function`` を両方実行する場合は、最初の実行で固定される。
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        差し替えに使う。
+    """
+    monkeypatch.setattr(
+        PagesManager, "uses_pages_directory", None, raising=False
+    )
+
+
 def _restore_environ(saved: Mapping[str, str]) -> None:
     """``os.environ`` を保存した内容へ戻す (追加・変更・削除のすべて)."""
     os.environ.clear()
@@ -285,6 +311,8 @@ def _isolate_each_test(
     - 作業ディレクトリを ``tmp_path`` へ移す
     - プロキシ関連の環境変数を消す
     - 外部ネットワークへの接続と名前解決を遮断する
+    - Streamlit のマルチページ判定 (``PagesManager.uses_pages_directory``)
+      を未判定へ戻す。AppTest の実行順序に依存しないようにするため
 
     後 (テストや前処理が例外で失敗しても行う):
 
@@ -310,6 +338,7 @@ def _isolate_each_test(
         for name in _PROXY_ENV_NAMES:
             monkeypatch.delenv(name, raising=False)
         _block_network(monkeypatch)
+        _reset_page_detection(monkeypatch)
         yield
 
 
