@@ -191,7 +191,7 @@
   - スイート全体が成功し、既知の失敗の内訳と既知バグ表が対応している
   - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 14.4_
 
-- [ ] 6.2 実データの保護・作業ツリー・再現性を手元で確認する
+- [x] 6.2 実データの保護・作業ツリー・再現性を手元で確認する
   - スイートの実行前後で、実データディレクトリにテスト実行中に更新されたファイルが 0 件であることを確認する
   - 実行前後でリポジトリの作業ツリーに差分が増えないことを確認する
   - スイートを 2 回続けて実行し、テストモジュールを個別に実行しても、同じ結果になることを確認する
@@ -244,3 +244,4 @@
 - 5.3: PDF アップロード欄のラベル `PDF file(s) (.pdf)` は 3 フォーム共通で、`fake_file_uploader` の接頭辞では送信フォームの欄だけを区別できない（別フォームの `uploaded_files_*` を渡すコピペ回帰はテストで検出できない。強化するなら呼び出し順 BIB → DOI → CUSTOM で返す fake を test モジュール内に置く）。手動入力の必須不足のテストは article / book / inbook を使い、inproceedings の `booktitle` 不足は検証していない
 - 6.1: xfailed は 16 件（KB1×2、KB2a / KB2b / KB2c、KB3、KB4a / KB4b / KB4c / KB4d、KB5、KB6、KB7、KB8、KB9、KB10）で、design.md の既知バグ表の全行と 1 対 1 に対応する。XPASS は 0 件、reason はすべて `KNOWN BUG:` で始まる。実装中に判明した KB7〜KB10 と、実装で食い違った設計記述（KB1 の二層構造、KB2b の再現条件、KB6 の再現入力、KB3 の `raises=AssertionError` の例外、隔離ガードの終了コード 4、`PagesManager.uses_pages_directory` のテストごとの初期化、`crossref_article` の `type` 引数、登録ページのウィジェット特定を `form_id` に変更、スモークテストの追加検証）を design.md に反映した
 - 6.1: lint は開発環境（conda 環境 `paper-manager`）に ruff が無いため、別の conda 環境（`py312`）にある既存の ruff 0.14.13 を、プロジェクトの `ruff.toml` で読み取り専用に実行した（`--no-cache`、インストールはしていない）。`ruff check --config ruff.toml tests` と `src tests` はいずれも All checks passed。`ruff format --check` は全角文字を幅 2 と数えるため数ファイルに整形差分が出るが、CI は ruff を実行しない
+- 6.2: 手元（Streamlit 1.66.1、conda 環境 `paper-manager`）で確認した。(1) スイート全体を 2 回続けて実行し、どちらも 662 passed + 16 xfailed で xfail の内訳も同一。(2) 14 のテストモジュールを個別に実行した合計が 662 passed + 16 xfailed で全体と一致。(3) `~/.paper-manager` はファイル一覧・更新時刻・サイズが実行前後で同一で、実行中に更新されたファイルは 0 件。(4) リポジトリは `git status`・HEAD が実行前後で同一で、zip などの生成物も一時ディレクトリの取り残しもない。(5) Streamlit 1.50.0 でも全体を既定順・逆順・ランダム順で実行して 662 passed + 16 xfailed（スクラッチの `PYTHONPATH` 方式）
