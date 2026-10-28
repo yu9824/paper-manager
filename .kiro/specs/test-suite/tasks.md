@@ -143,7 +143,7 @@
   - 4.2 と同じテストファイルを編集するため、4.2 の後に行う
   - _Requirements: 9.11, 9.12, 13.1, 13.2, 14.2_
 
-- [ ] 4.4 (P) CLI の引数処理と run / version のテストを書く
+- [x] 4.4 (P) CLI の引数処理と run / version のテストを書く
   - バージョン表示、Streamlit を起動しない状態での run / version への引数の受け渡しと起動対象、サイドバーナビゲーション無効化の既定の付与と重複しないこと、デバッグ指定でのログレベルを検証する
   - CLI の引数処理のテストがすべて成功し、テスト後にログレベルが元に戻っている
   - _Boundary: test_cli_
@@ -232,3 +232,5 @@
 - 4.3: **Streamlit 1.50 では `PagesManager.uses_pages_directory` がプロセス共有で、最初の AppTest が決める**。最初が `from_file(_list.py)` なら後続の `from_function` が `StreamlitAPIException: The title of the page cannot be empty...` で、`from_function` が先なら後続の `from_file` / `switch_page` が `KeyError: 'url_pathname'` で失敗する（1.66 では再現しない）。対処として `tests/conftest.py` の `_isolate_each_test` が各テストの前に `_reset_page_detection` で `None` に戻す（commit `fix(test-suite): reset Streamlit page detection before each test`）。5.x の AppTest 利用テストも守られる。1 つのテストの中で `from_file` と `from_function` を両方走らせると最初の実行で固定される。単体実行だけでは見つからないため、**Streamlit 1.50 の確認はスイート全体で行う**（スクラッチの `PYTHONPATH` に 1.50.0 を展開して実行。環境へはインストールしない）
 - 4.3: 手動入力フォーム `custom_entry` は `AppTest.from_function` で実行し（ウィジェットは `key=` で特定）、`pdf_upload_form` は `fake_file_uploader` を直接呼び出しで使う。`number_input` を `set_value(None)` で空にできないため、年の空欄除去は `misc` の初期値 `year=""` で検証する。`st_messages` は使わない。KB4a の影響: ` and ` 区切りの著者を持つエントリの編集フォームは `author` を `, ` 区切りで返し、編集の Done で `update_entry_in_list` の改名経路に入り PDF フォルダ名が変わる（コード上の挙動）
 - 4.3: **KB 候補（観察のみ。最終報告で挙げる）**: 年が整数でない（`n.d.`, `2020a`）または 1000〜翌年の範囲外（999, 3000, 2028）のエントリを `custom_entry` に渡すと例外になり編集フォームが開かない（BibTeX 取り込みは年を検証しないため登録・一覧表示はできる。データは失われないが UI から年を修正できない）。期待する振る舞いが spec で未決のため xfail にしていない
+- 4.4: **新規バグ 2 件を strict xfail で記録（design.md の KB 表への追記は 6.1）**。**KB8（仮称）**: `--client.showSidebarNavigation=true` のような `=` 形式の明示指定を `main()` が認識せず（`"--client.showSidebarNavigation" not in set(unknown)` がトークン完全一致のため）、`--client.showSidebarNavigation false` を重複して付与し、後ろが勝つのでユーザーの `true` が無視される（要件 10.3）。**KB9（仮称、KB1 と同根）**: `paper-manager version` が常に終了コード 2 で失敗する（`version` にも `--client.showSidebarNavigation false` が付与され、`streamlit version` がそのオプションを受け付けない。`-v` / `--version` は正常）。KB1 を直すと KB8 / KB9 / KB1 が同時に XPASS(strict) になりうる。このため xfailed の総数は現在 12 件で、4.5 で KB1×2 が加わって 14 件、5.3 の KB6 を加えて最終的に 15 件になる見込み。6.1 の「既知の失敗の件数」は 13 件ではなく 15 件に更新する
+- 4.4: Streamlit の起動は `paper_manager.__main__.cli` を `main_run` / `main_version` だけを持つ名前空間に丸ごと差し替えて避ける（他の起動経路は AttributeError）。補助は `tests/test_cli.py` の `streamlit_calls` / `library_logger` / `_run_forwarded` / `_version_forwarded`。4.5 は末尾にセクションを追記し、モジュール docstring に backup / restore と KB1 を足す。`--debug` のログレベル復元は 3.2 と同じ子プロセスの pytest + Observer で確認する。10.1 は `-v` / `--version`（サブコマンド `version` は 10.2 の対象）。`run -h` / `--help` は Streamlit に渡される
