@@ -9,10 +9,9 @@
 - 論文の登録・更新: ``register_entry_to_list`` / ``update_entry_in_list``
   (要件 9.6〜9.10)。このセクションだけで使う補助は、セクションの冒頭に
   ある
-
-入力フォーム部品 (要件 9.11, 9.12) のセクションは、このあとに追記する。
-追記するセクションが使う補助は「共通の補助」に加えるか、そのセクションの
-冒頭に置く。
+- 手動入力フォーム: ``custom_entry`` (要件 9.11)。``AppTest`` で実行する。
+  このセクションだけで使う補助は、セクションの冒頭にある
+- PDF アップロード欄: ``pdf_upload_form`` (要件 9.12)
 
 保存・削除・登録・更新は ``data_paths`` (隔離された一時ディレクトリの配下)
 か、``tmp_path`` の中だけで行い、実データには触れない。
@@ -20,23 +19,37 @@
 PDF の置き場所は ``Entry.get_pdf_dir`` から導出する。通知 (``st.error``)
 は ``st_messages`` で記録して検証する。``st_messages`` は ``AppTest`` と
 併用できないので、画面テストを追加するときは別のテスト関数にする。
+手動入力フォームのテストは ``st_messages`` を使わず、``AppTest`` の要素を
+見る。
 
 旧形式の単一 PDF の削除は ``Entry.pdf_filename`` (非推奨) を参照するため、
 ``DeprecationWarning`` が出る。警告の確認が目的ではないので、この 2 つの
 非推奨 API の警告だけを無視する (ほかの警告は隠さない)。
 """
 
+import json
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import Any, NamedTuple, Optional, Union
 
 import pytest
-from conftest import PDF_BYTES, DataPaths, FakeUpload, StMessages, write_pdf
+from conftest import (
+    APP_TIMEOUT_SECONDS,
+    PDF_BYTES,
+    DataPaths,
+    FakeUpload,
+    StMessages,
+    Uploads,
+    write_pdf,
+)
+from streamlit.testing.v1 import AppTest
 
+import paper_manager
 from paper_manager.app.components import _common
 from paper_manager.app.components._common import (
     delete_pdfs,
+    pdf_upload_form,
     register_entry_to_list,
     save_pdfs,
     update_entry_in_list,
@@ -1097,3 +1110,551 @@ def test_update_rejects_when_the_destination_folder_already_exists(
     assert read_state(stored.paper_list, data_paths) == before
     assert pdf_tree(pdf_root) == pdfs_before
     assert (existing_dir / "00.pdf").read_bytes() == existing["00.pdf"]
+
+
+# --- 手動入力フォーム: 補助 ------------------------------------------------
+# custom_entry は Streamlit のウィジェットを描画するので、AppTest で実行する。
+# AppTest.from_function はスクリプト関数のソースを取り出して実行するため、
+# スクリプト関数は外の変数を参照できない (import も関数の中で行い、引数は
+# args= で渡す)。結果は session state に書き出して、テスト側から読む。
+
+# スクリプト関数の中で使うキーと同じ値 (スクリプトは外の定数を参照できない).
+ENTRY_TYPE_KEY = "entry_type"
+FORM_RESULT_KEY = "form_result"
+UPLOADED_KEY = "uploaded"
+
+# 要件 8.6 が挙げる 8 種類のエントリタイプ。
+ENTRY_TYPES = (
+    "article",
+    "book",
+    "inbook",
+    "inproceedings",
+    "masterthesis",
+    "phdthesis",
+    "techreport",
+    "misc",
+)
+
+# フィールドの定義ファイル。実装が使う定数は使わず、パッケージの場所から
+# 導出して独立に読み込み、表示されるフィールドの期待値にする。
+FIELDS_JSON = Path(paper_manager.__file__).parent / "app" / "fields.json"
+
+FormValue = Union[str, int, list[str]]
+
+
+def custom_entry_screen(entry_type: str, initial: dict) -> None:
+    """``custom_entry`` を、登録ページと同じ形で呼ぶ画面 (AppTest 用).
+
+    エントリタイプの選択に応じて ``custom_entry`` を呼び、返されたエントリを
+    session state に書き出す。登録ページの手動入力フォームと同じく、
+    ``ENTRYTYPE`` だけを持つエントリ (編集の場合は既存のエントリ) を渡す。
+    """
+    import streamlit as st
+
+    from paper_manager.app.components import custom_entry
+    from paper_manager.app.helper import MAP_FIELDS
+    from paper_manager.entry import Entry
+
+    options = tuple(MAP_FIELDS.keys())
+    selected = st.selectbox(
+        "エントリタイプを選択",
+        options=options,
+        index=options.index(entry_type),
+        key="entry_type",
+    )
+    entry = custom_entry(Entry({**initial, "ENTRYTYPE": selected}))
+    st.session_state["form_result"] = dict(entry)
+
+
+def run_form(
+    entry_type: str = "article", initial: Optional[Mapping[str, str]] = None
+) -> AppTest:
+    """``entry_type`` を選んだ手動入力フォームを 1 回実行する.
+
+    Parameters
+    ----------
+    entry_type : str, default "article"
+        選んでおくエントリタイプ。
+    initial : Optional[Mapping[str, str]], default None
+        フォームに渡すエントリの初期値 (``ENTRYTYPE`` 以外)。編集の場合の
+        既存の値に当たる。
+    """
+    at = AppTest.from_function(
+        custom_entry_screen,
+        default_timeout=APP_TIMEOUT_SECONDS,
+        args=(entry_type, dict(initial or {})),
+    )
+    return at.run()
+
+
+def form_result(at: AppTest) -> dict[str, str]:
+    """画面が例外なく実行されたことを確かめ、``custom_entry`` の結果を返す."""
+    assert not at.exception, [e.value for e in at.exception]
+    return dict(at.session_state[FORM_RESULT_KEY])
+
+
+def displayed_fields(at: AppTest) -> dict[str, str]:
+    """表示されているフィールドの名前 → ウィジェットの種類を返す.
+
+    エントリタイプの選択欄は含まない。フィールド名はウィジェットのキー。
+    """
+    kinds = {
+        "text_input": at.text_input,
+        "number_input": at.number_input,
+        "multiselect": at.multiselect,
+    }
+    fields: dict[str, str] = {}
+    for kind, elements in kinds.items():
+        for element in elements:
+            assert element.key not in fields, f"duplicated: {element.key}"
+            fields[element.key] = kind
+    return fields
+
+
+def fill(at: AppTest, values: Mapping[str, FormValue]) -> AppTest:
+    """フィールドに値を入力して、画面を再実行する.
+
+    Parameters
+    ----------
+    at : AppTest
+        実行済みの画面。
+    values : Mapping[str, FormValue]
+        フィールド名 → 入力する値。``str`` はテキスト入力、``int`` は年の
+        数値入力、``list`` は複数選択 (著者・タグ) の選択内容。
+    """
+    for field, value in values.items():
+        if isinstance(value, str):
+            at.text_input(key=field).input(value)
+        elif isinstance(value, int):
+            at.number_input(key=field).set_value(value)
+        else:
+            at.multiselect(key=field).set_value(value)
+    return at.run()
+
+
+def fields_of(entry_type: str) -> set[str]:
+    """定義ファイルから、``entry_type`` のフィールド名の集合を読む."""
+    definitions = json.loads(FIELDS_JSON.read_text(encoding="utf-8"))
+    return set(definitions[entry_type])
+
+
+# --- 手動入力フォーム: custom_entry (要件 9.11) ----------------------------
+# 年は、必須のタイプ (article など) では空のとき実行日の年が既定値になる。
+# 期待値を実行日に依存させないため、必須のタイプでは年を明示的に入力するか
+# 初期値に与え、既定値の年は検証しない。
+
+
+@pytest.mark.parametrize("entry_type", ENTRY_TYPES)
+def test_form_shows_the_fields_of_the_selected_entry_type(
+    entry_type: str,
+) -> None:
+    """選んだエントリタイプのフィールドが、過不足なく表示される (要件 9.11).
+
+    表示されるフィールドは、定義ファイルを独立に読み込んだ結果と一致する。
+    """
+    at = run_form(entry_type)
+
+    form_result(at)  # 例外なく実行された
+    assert set(displayed_fields(at)) == fields_of(entry_type)
+
+
+@pytest.mark.parametrize(
+    "entry_type, shown, hidden",
+    [
+        ("article", ["journal"], ["publisher", "editor", "booktitle"]),
+        ("book", ["publisher", "editor"], ["journal", "booktitle"]),
+        ("inproceedings", ["booktitle"], ["journal", "school"]),
+        ("misc", ["howpublished"], ["journal", "publisher", "booktitle"]),
+    ],
+)
+def test_form_shows_only_the_fields_that_belong_to_the_type(
+    entry_type: str, shown: list[str], hidden: list[str]
+) -> None:
+    """エントリタイプに固有のフィールドだけが表示される (要件 9.11)."""
+    at = run_form(entry_type)
+
+    form_result(at)
+    fields = displayed_fields(at)
+    assert all(field in fields for field in shown)
+    assert not any(field in fields for field in hidden)
+
+
+def test_form_replaces_the_fields_when_the_entry_type_changes() -> None:
+    """エントリタイプを選び直すと、フィールドが選んだタイプのものに変わる.
+
+    (要件 9.11)
+    """
+    at = run_form("article")
+    assert "journal" in displayed_fields(at)
+
+    at.selectbox(key=ENTRY_TYPE_KEY).select("book").run()
+
+    form_result(at)
+    fields = displayed_fields(at)
+    assert set(fields) == fields_of("book")
+    assert "publisher" in fields
+    assert "journal" not in fields
+
+
+def test_form_uses_a_widget_suited_to_each_field() -> None:
+    """年は数値入力、著者とタグは複数選択、ほかはテキスト入力になる.
+
+    (要件 9.11)
+    """
+    at = run_form("article")
+
+    form_result(at)
+    assert displayed_fields(at) == {
+        "author": "multiselect",
+        "title": "text_input",
+        "journal": "text_input",
+        "year": "number_input",
+        "volume": "text_input",
+        "number": "text_input",
+        "pages": "text_input",
+        "month": "text_input",
+        "note": "text_input",
+        "url": "text_input",
+        "DOI": "text_input",
+        "tags": "multiselect",
+    }
+
+
+@pytest.mark.parametrize(
+    "entry_type, values, expected",
+    [
+        pytest.param(
+            "article",
+            {
+                "author": ["Alice Smith"],
+                "title": "A Study of Forms",
+                "journal": "Journal of Forms",
+                "year": 2019,
+                "volume": "12",
+                "tags": ["deep learning", "vision"],
+            },
+            {
+                "ENTRYTYPE": "article",
+                "author": "Alice Smith",
+                "title": "A Study of Forms",
+                "journal": "Journal of Forms",
+                "year": "2019",
+                "volume": "12",
+                "tags": "deep learning, vision",
+            },
+            id="article",
+        ),
+        pytest.param(
+            "book",
+            {
+                "author": ["Bob Jones"],
+                "title": "The Book of Forms",
+                "publisher": "Widget Press",
+                "editor": "Carol Lee",
+                "year": 2018,
+            },
+            {
+                "ENTRYTYPE": "book",
+                "author": "Bob Jones",
+                "title": "The Book of Forms",
+                "publisher": "Widget Press",
+                "editor": "Carol Lee",
+                "year": "2018",
+            },
+            id="book",
+        ),
+        pytest.param(
+            "misc",
+            {"title": "A Note on Forms", "howpublished": "Web", "year": 2017},
+            {
+                "ENTRYTYPE": "misc",
+                "title": "A Note on Forms",
+                "howpublished": "Web",
+                "year": "2017",
+            },
+            id="misc",
+        ),
+    ],
+)
+def test_form_reflects_the_entered_values_in_the_entry(
+    entry_type: str,
+    values: Mapping[str, FormValue],
+    expected: dict[str, str],
+) -> None:
+    """入力した値がエントリに反映される (要件 9.11).
+
+    年は文字列で保存される。複数のタグは ``, `` で連結される。入力しな
+    かったフィールドはエントリに現れない。
+    """
+    at = run_form(entry_type)
+
+    fill(at, values)
+
+    assert form_result(at) == expected
+
+
+_FILLED_ENTRY = {
+    "ID": "Smith2020",
+    "author": "Alice Smith",
+    "title": "A Study of Forms",
+    "journal": "Journal of Forms",
+    "year": "2020",
+    "volume": "12",
+    "tags": "vision",
+}
+
+
+def test_form_prefills_the_widgets_and_keeps_the_entry_as_it_is() -> None:
+    """既存のエントリを渡すと、値が入力欄に入り、結果は元のエントリと同じ.
+
+    編集フォームの使い方に当たる。フォームにないキー (``ID``) も保たれる
+    (要件 9.11)。
+    """
+    at = run_form("article", _FILLED_ENTRY)
+
+    assert at.text_input(key="title").value == "A Study of Forms"
+    assert at.text_input(key="journal").value == "Journal of Forms"
+    assert at.number_input(key="year").value == 2020
+    assert at.multiselect(key="author").value == ["Alice Smith"]
+    assert at.multiselect(key="tags").value == ["vision"]
+    assert form_result(at) == {"ENTRYTYPE": "article", **_FILLED_ENTRY}
+
+
+def test_form_replaces_a_prefilled_value_with_the_input() -> None:
+    """初期値のあるフィールドに入力すると、入力した値に置き換わる.
+
+    ほかのフィールドは変わらない (要件 9.11)。
+    """
+    at = run_form("article", _FILLED_ENTRY)
+
+    fill(at, {"title": "A Revised Study", "year": 2018})
+
+    assert form_result(at) == {
+        **_FILLED_ENTRY,
+        "ENTRYTYPE": "article",
+        "title": "A Revised Study",
+        "year": "2018",
+    }
+
+
+@pytest.mark.parametrize(
+    "field, cleared",
+    [
+        ("title", ""),
+        ("journal", ""),
+        ("volume", ""),
+        ("author", []),
+        ("tags", []),
+    ],
+)
+def test_form_removes_a_field_that_is_emptied(
+    field: str, cleared: FormValue
+) -> None:
+    """空欄にした項目は、エントリから除かれる (要件 9.11).
+
+    空の文字列として残るのではなく、キーごと無くなる。ほかのフィールドは
+    変わらない。
+    """
+    at = run_form("article", _FILLED_ENTRY)
+
+    fill(at, {field: cleared})
+
+    result = form_result(at)
+    assert field not in result
+    assert result == {
+        "ENTRYTYPE": "article",
+        **{k: v for k, v in _FILLED_ENTRY.items() if k != field},
+    }
+
+
+def test_form_removes_an_empty_year() -> None:
+    """年が空欄の項目は、エントリから除かれる (要件 9.11).
+
+    AppTest は数値入力を空に戻せない (``set_value(None)`` は反映されない)
+    ので、最初から空の年を持つエントリで確かめる。年が必須でない ``misc``
+    を使うので、既定値の年 (実行日の年) は入らない。
+    """
+    at = run_form("misc", {"title": "A Note on Forms", "year": ""})
+
+    assert at.number_input(key="year").value is None
+    assert form_result(at) == {"ENTRYTYPE": "misc", "title": "A Note on Forms"}
+
+
+def test_form_adds_only_the_fields_that_were_filled_in() -> None:
+    """何も入力していないフィールドは、エントリに加わらない (要件 9.11)."""
+    at = run_form("misc")
+    assert form_result(at) == {"ENTRYTYPE": "misc"}
+
+    fill(at, {"title": "A Note on Forms"})
+
+    assert form_result(at) == {"ENTRYTYPE": "misc", "title": "A Note on Forms"}
+
+
+# --- 手動入力フォーム: 既知バグ (KB4a, KB4b) -------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "KNOWN BUG: 手動入力フォームで複数の著者を入力すると、著者が "
+        "' and ' (AUTHOR_SEPARATOR) でなく ', ' (TAG_SEPARATOR) で連結"
+        "されて保存される (KB4a). Repro: article のフォームで著者に "
+        "'Alice Smith' と 'Bob Jones' を入力し、custom_entry が返す "
+        "エントリの author を見る (' and ' 区切りの著者を持つ既存の"
+        "エントリを編集した場合も ', ' 区切りに変わる. 編集の Done で "
+        "update_entry_in_list の改名経路に入り、PDF フォルダ名が "
+        "'2020 - Alice Smith - T' から '2020 - Alice Smith, Bob Jones - T' "
+        "に変わる (コード上の挙動)). 本来は "
+        "'Alice Smith and Bob Jones' (BibTeX の著者区切り)"
+    ),
+)
+def test_form_joins_several_authors_with_and() -> None:
+    """複数の著者は、BibTeX の著者区切り `` and `` で連結される (KB4a)."""
+    at = run_form("article", {"year": "2020"})
+
+    fill(at, {"author": ["Alice Smith", "Bob Jones"]})
+
+    assert form_result(at)["author"] == "Alice Smith and Bob Jones"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "KNOWN BUG: 手動入力フォームがタグの既定値を ', ' でなく ' and ' "
+        "(AUTHOR_SEPARATOR) で分割するため、複数のタグが 1 つの選択肢"
+        "として扱われる (KB4b). Repro: tags が 'x, y' のエントリ (フォーム"
+        "自身が ', ' 連結で保存する形式) で custom_entry を呼ぶと、選択肢と"
+        "選択済みの値が ['x', 'y'] でなく ['x, y'] になる (タグを 1 つ外す"
+        "と全部外れる). 本来は ', ' で分割して ['x', 'y']"
+    ),
+)
+def test_form_splits_the_default_tags_on_commas() -> None:
+    """既定値のタグは `, ` で分割され、別々の選択肢になる (KB4b)."""
+    at = run_form("article", {"year": "2020", "tags": "x, y"})
+    assert not at.exception, [e.value for e in at.exception]
+
+    tags = at.multiselect(key="tags")
+    assert tags.options == ["x", "y"]
+    assert tags.value == ["x", "y"]
+
+
+# --- PDF アップロード欄: pdf_upload_form (要件 9.12) -----------------------
+# アップロード欄は fake_file_uploader で、ラベルの接頭辞に応じて未選択・
+# 単体・一覧を返す処理に差し替える。ラベルが一致しないと本来の動作になる
+# ので、実装のラベルが変わるとテストが失敗する。
+
+UPLOADER_LABEL = "PDF file(s) (.pdf)"
+
+
+def pdf_upload_screen(accept_multiple: bool) -> None:
+    """``pdf_upload_form`` を呼んで、返された一覧を書き出す画面 (AppTest 用)."""
+    import streamlit as st
+
+    from paper_manager.app.components import pdf_upload_form
+
+    result = pdf_upload_form(accept_multiple=accept_multiple)
+    st.session_state["uploaded"] = (type(result).__name__, len(result))
+
+
+@pytest.mark.parametrize("accept_multiple", [True, False])
+def test_pdf_upload_form_returns_an_empty_list_when_nothing_is_selected(
+    fake_file_uploader: Callable[[Mapping[str, Uploads]], None],
+    accept_multiple: bool,
+) -> None:
+    """ファイル未選択のときは、空の一覧が返る (要件 9.12)."""
+    fake_file_uploader({UPLOADER_LABEL: None})
+
+    result = pdf_upload_form(accept_multiple=accept_multiple)
+
+    assert result == []
+    assert isinstance(result, list)
+
+
+@pytest.mark.parametrize("accept_multiple", [True, False])
+def test_pdf_upload_form_returns_an_empty_list_from_the_real_widget(
+    accept_multiple: bool,
+) -> None:
+    """本物のアップロード欄でも、ファイル未選択なら空の一覧が返る.
+
+    アップロード欄を差し替えず、画面テストで実行する (要件 9.12)。
+    """
+    at = AppTest.from_function(
+        pdf_upload_screen,
+        default_timeout=APP_TIMEOUT_SECONDS,
+        args=(accept_multiple,),
+    )
+    at.run()
+
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.session_state[UPLOADED_KEY] == ("list", 0)
+
+
+@pytest.mark.parametrize("accept_multiple", [True, False])
+def test_pdf_upload_form_returns_a_list_for_a_single_file(
+    fake_file_uploader: Callable[[Mapping[str, Uploads]], None],
+    accept_multiple: bool,
+) -> None:
+    """ファイルを 1 つだけ選んだときも、1 件の一覧として返る (要件 9.12)."""
+    [upload] = make_uploads(1)
+    fake_file_uploader({UPLOADER_LABEL: upload})
+
+    result = pdf_upload_form(accept_multiple=accept_multiple)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0] is upload
+
+
+@pytest.mark.parametrize("count", [1, 3])
+def test_pdf_upload_form_returns_every_selected_file_in_order(
+    fake_file_uploader: Callable[[Mapping[str, Uploads]], None],
+    count: int,
+) -> None:
+    """複数のファイルを選んだときは、選んだ順の一覧がそのまま返る.
+
+    1 件だけの一覧も、一覧のまま返る (要件 9.12)。
+    """
+    uploads = make_uploads(count)
+    fake_file_uploader({UPLOADER_LABEL: uploads})
+
+    result = pdf_upload_form(accept_multiple=True)
+
+    assert isinstance(result, list)
+    assert len(result) == count
+    assert all(got is sent for got, sent in zip(result, uploads))
+
+
+@pytest.mark.parametrize("accept_multiple", [True, False])
+def test_pdf_upload_form_asks_for_pdf_files(
+    monkeypatch: pytest.MonkeyPatch, accept_multiple: bool
+) -> None:
+    """アップロード欄は PDF だけを受け付け、複数選択の指定を渡す (要件 9.12)."""
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def record(label: str, *args: Any, **kwargs: Any) -> None:
+        calls.append((label, kwargs))
+
+    monkeypatch.setattr(_common.st, "file_uploader", record)
+
+    pdf_upload_form(accept_multiple=accept_multiple)
+
+    [(label, kwargs)] = calls
+    assert label == UPLOADER_LABEL
+    assert kwargs["type"] == "pdf"
+    assert kwargs["accept_multiple_files"] is accept_multiple
+
+
+def test_pdf_upload_form_accepts_multiple_files_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """引数を省くと、複数選択を受け付ける (要件 9.12)."""
+    calls: list[dict[str, Any]] = []
+
+    def record(label: str, *args: Any, **kwargs: Any) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(_common.st, "file_uploader", record)
+
+    pdf_upload_form()
+
+    assert [kwargs["accept_multiple_files"] for kwargs in calls] == [True]

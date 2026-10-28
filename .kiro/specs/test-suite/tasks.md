@@ -135,7 +135,7 @@
   - 4.1 と同じテストファイルを編集するため、4.1 の後に行う
   - _Requirements: 9.6, 9.7, 9.8, 9.9, 9.10_
 
-- [ ] 4.3 入力フォーム部品のテストを書く
+- [x] 4.3 入力フォーム部品のテストを書く
   - 手動入力フォームを画面テストで実行し、選んだエントリタイプのフィールドが表示されること、入力値が反映されること、空欄の項目がエントリから除かれることを検証する（年は明示的に入力し、実行日に依存させない）
   - PDF アップロード欄が、未選択では空、単一選択でも複数選択でも一覧を返すことを検証する
   - 既知バグ（KB4a: 著者の区切り、KB4b: タグの既定値の分割）を strict な xfail として記録する
@@ -229,3 +229,6 @@
 - 4.1: 観察のみ（KB 候補としては重大度が低い）: `save_pdfs` は全ファイルがパス長超過で飛ばされても先に `mkdir` するため空のフォルダが残る（データ損失なし）
 - 4.2: 登録・更新の補助は `tests/test_components.py` の「論文の登録・更新: 補助」にまとまっている（`ListState` / `Stored` / `as_fields` / `read_state` / `assert_list_is` / `seed_paper_list` / `edited` / `pdf_tree` / `stored`）。`register_entry_to_list` / `update_entry_in_list` は `bool` を返す。`to_session_state` は内部の辞書を直接格納するため、前提の論文リストは session state から読み直した別オブジェクトにして保存漏れを検出する。更新でタイトルだけ変えると新しい識別子は旧キーと異なるよう採番される（`_0` ではなく `_1`）
 - 4.2: **KB 候補（新規・ユーザーデータ保護に関わる。観察のみで xfail にしていない。最終報告で挙げる）**: 大文字・小文字を区別しないファイルシステム（macOS APFS 既定、Windows）で、`pdf_dir_name` の重複判定は大文字・小文字を区別するが実フォルダは区別されない。(i) 登録: 既存エントリ（PDF あり）とタイトルが大文字・小文字だけ違うエントリは重複と判定されず登録でき、添付 PDF が既存エントリのフォルダに保存されて両エントリが互いの PDF を見る（片方の PDF 削除でもう片方のフォルダごと消える恐れ。重大度高）。(ii) 更新: PDF のあるエントリのタイトルを大文字・小文字だけ変えると `new_pdf_dir.exists()` が真になり「Cannot rename PDF directory: destination already exists」で拒否される（データ損失はない）。macOS で再現済み、Linux（CI）では再現しないため決定論的な xfail にはできない（記録するならファイルシステムを実行時に判定する条件付き xfail）。その他の観察のみ: 元の PDF フォルダが無く改名先に同名の孤立 PDF フォルダがあると更新は成功し孤立フォルダが紐づく。未移行の旧形式単一 PDF を持つエントリで関数を直接呼んでタイトルを変えると旧 PDF が取り残される（実画面の編集フローは先に `get_pdf_files()` で移行するため UI からは届かない）。拒否された登録でも渡した `entry` に `ID` が書き込まれる
+- 4.3: **Streamlit 1.50 では `PagesManager.uses_pages_directory` がプロセス共有で、最初の AppTest が決める**。最初が `from_file(_list.py)` なら後続の `from_function` が `StreamlitAPIException: The title of the page cannot be empty...` で、`from_function` が先なら後続の `from_file` / `switch_page` が `KeyError: 'url_pathname'` で失敗する（1.66 では再現しない）。対処として `tests/conftest.py` の `_isolate_each_test` が各テストの前に `_reset_page_detection` で `None` に戻す（commit `fix(test-suite): reset Streamlit page detection before each test`）。5.x の AppTest 利用テストも守られる。1 つのテストの中で `from_file` と `from_function` を両方走らせると最初の実行で固定される。単体実行だけでは見つからないため、**Streamlit 1.50 の確認はスイート全体で行う**（スクラッチの `PYTHONPATH` に 1.50.0 を展開して実行。環境へはインストールしない）
+- 4.3: 手動入力フォーム `custom_entry` は `AppTest.from_function` で実行し（ウィジェットは `key=` で特定）、`pdf_upload_form` は `fake_file_uploader` を直接呼び出しで使う。`number_input` を `set_value(None)` で空にできないため、年の空欄除去は `misc` の初期値 `year=""` で検証する。`st_messages` は使わない。KB4a の影響: ` and ` 区切りの著者を持つエントリの編集フォームは `author` を `, ` 区切りで返し、編集の Done で `update_entry_in_list` の改名経路に入り PDF フォルダ名が変わる（コード上の挙動）
+- 4.3: **KB 候補（観察のみ。最終報告で挙げる）**: 年が整数でない（`n.d.`, `2020a`）または 1000〜翌年の範囲外（999, 3000, 2028）のエントリを `custom_entry` に渡すと例外になり編集フォームが開かない（BibTeX 取り込みは年を検証しないため登録・一覧表示はできる。データは失われないが UI から年を修正できない）。期待する振る舞いが spec で未決のため xfail にしていない
