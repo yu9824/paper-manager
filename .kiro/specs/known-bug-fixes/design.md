@@ -414,7 +414,7 @@ class Entry:
     # Runs the migrations, then returns NN.pdf files sorted by number.
 ```
 - Preconditions: なし（Entry のフィールドの有無を問わない）
-- Postconditions: `pdf_dir_name` は 200 文字以内で、末尾が `.` や空白でない。`get_pdf_files` は例外を送出せず、移行の失敗はログに出す
+- Postconditions: `pdf_dir_name` は 200 文字以内で、末尾が `.` や空白でない。`get_pdf_files` は例外を送出しない。移行に失敗したとき、または移す先が既にあるため移さなかったときは、ログ（ERROR / WARNING）と画面の警告（`st.warning`、表示用のパス。既存の `PaperList.from_file` と同じく、ドメイン層から Streamlit の通知を出す）の両方に出す（1.4）
 - Invariants: 修正前に 200 文字以内だった名前は変わらない
 
 **Implementation Notes**
@@ -597,9 +597,10 @@ def save_pdfs(
 
 def delete_pdfs(
     entry: Entry,
-    specific_files: Optional[list[Path]] = None,
     base_dir: Optional[Path] = None,
+    specific_files: Optional[list[Path]] = None,
 ) -> int: ...
+# Argument order and positional calls stay as they are today.
 ```
 
 #### PaperRegistry
