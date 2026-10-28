@@ -149,7 +149,7 @@
   - _Boundary: test_cli_
   - _Requirements: 10.1, 10.2, 10.3, 10.4_
 
-- [ ] 4.5 CLI の backup / restore のテストを書く
+- [x] 4.5 CLI の backup / restore のテストを書く
   - 出力先の指定の有無によるバックアップの作成先（省略時は作業ディレクトリに日時入りの名前）を検証する
   - 存在しないファイルの指定、確認入力の有無と内容、復元失敗のそれぞれでの終了コードとデータの状態を検証する
   - 既知バグ（KB1: コマンド全体の引数解析を経由した backup / restore の失敗）を strict な xfail として記録する
@@ -234,3 +234,5 @@
 - 4.3: **KB 候補（観察のみ。最終報告で挙げる）**: 年が整数でない（`n.d.`, `2020a`）または 1000〜翌年の範囲外（999, 3000, 2028）のエントリを `custom_entry` に渡すと例外になり編集フォームが開かない（BibTeX 取り込みは年を検証しないため登録・一覧表示はできる。データは失われないが UI から年を修正できない）。期待する振る舞いが spec で未決のため xfail にしていない
 - 4.4: **新規バグ 2 件を strict xfail で記録（design.md の KB 表への追記は 6.1）**。**KB8（仮称）**: `--client.showSidebarNavigation=true` のような `=` 形式の明示指定を `main()` が認識せず（`"--client.showSidebarNavigation" not in set(unknown)` がトークン完全一致のため）、`--client.showSidebarNavigation false` を重複して付与し、後ろが勝つのでユーザーの `true` が無視される（要件 10.3）。**KB9（仮称、KB1 と同根）**: `paper-manager version` が常に終了コード 2 で失敗する（`version` にも `--client.showSidebarNavigation false` が付与され、`streamlit version` がそのオプションを受け付けない。`-v` / `--version` は正常）。KB1 を直すと KB8 / KB9 / KB1 が同時に XPASS(strict) になりうる。このため xfailed の総数は現在 12 件で、4.5 で KB1×2 が加わって 14 件、5.3 の KB6 を加えて最終的に 15 件になる見込み。6.1 の「既知の失敗の件数」は 13 件ではなく 15 件に更新する
 - 4.4: Streamlit の起動は `paper_manager.__main__.cli` を `main_run` / `main_version` だけを持つ名前空間に丸ごと差し替えて避ける（他の起動経路は AttributeError）。補助は `tests/test_cli.py` の `streamlit_calls` / `library_logger` / `_run_forwarded` / `_version_forwarded`。4.5 は末尾にセクションを追記し、モジュール docstring に backup / restore と KB1 を足す。`--debug` のログレベル復元は 3.2 と同じ子プロセスの pytest + Observer で確認する。10.1 は `-v` / `--version`（サブコマンド `version` は 10.2 の対象）。`run -h` / `--help` は Streamlit に渡される
+- 4.5: **KB1 は二層構造**（6.1 で design.md の KB1 の行に反映する）。(一層目) `main()` が `--client.showSidebarNavigation false` を backup / restore にも付与し、サブパーサーが `unrecognized arguments` で終了コード 2。(二層目) `main()` のサブパーサーが `-o` / `backup_file` / `--force` を消費し、`backup()` / `restore()` には未知の引数しか渡さない。一層目だけ直すと backup は `-o` を無視して cwd に既定名で作り、restore は `backup_file` が足りず終了コード 2 のまま。2 層を直すと KB1×2 が XPASS(strict) になり、付与を run のみにすると KB9 も同時に XPASS する（KB8 は `=` 形式の問題なので別）。単一 ID のまま reason に両層を明記する。通常テストは `cli_main.backup(args)` / `cli_main.restore(args)` に引数リストを直接渡す（KB1 を踏まない）。`input()` は `builtins.input` の差し替え。キャンセルは終了コード 0、失敗は終了コード 1。確認入力は大文字小文字を無視（実装の `.lower()` を固定）。観察のみ: 確認の `input()` は try の外にあり、EOF（非対話実行）では `EOFError` のトレースバックになる
+- 4.5: xfailed の総数は 14 件。5.3 の KB6 を加えて最終的に 15 件になる見込み
