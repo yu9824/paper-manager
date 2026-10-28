@@ -13,9 +13,11 @@
 - BibTeX 経路のエラー (要件 12.3)
 - 重複登録 (要件 12.8)
 - 既知バグ: KB6 (要件 13.1, 13.2, 13.4)
-
-DOI 経路・手動入力・必須項目の不足・PDF 添付 (要件 12.4〜12.7, 12.9) は、
-同じ補助を使って、タスク 5.3 がこのモジュールの末尾に追記する。
+- DOI 経路 (要件 12.4, 12.5)
+- 手動入力 (要件 12.6)
+- 必須フィールドの不足 (要件 12.7)
+- PDF の添付 (要件 12.9)
+- 既知バグ: KB10 (要件 13.1, 13.2, 13.4)
 
 ウィジェットの特定
 ------------------
@@ -41,13 +43,25 @@ DOI 経路・手動入力・必須項目の不足・PDF 添付 (要件 12.4〜12
 """
 
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, NamedTuple, Optional, Union
 
 import pytest
-from conftest import DataPaths, FakeUpload, SampleData, run_page
+import requests
+from conftest import (
+    PDF_BYTES,
+    CrossrefMetadata,
+    DataPaths,
+    FakeUpload,
+    SampleData,
+    crossref_article,
+    run_page,
+)
+from crossref.restful import Works
 from streamlit.testing.v1 import AppTest
+
+import paper_manager
 
 # --- 登録ページの操作 -----------------------------------------------------
 
@@ -70,6 +84,7 @@ ERROR_MARKERS = {
     "multiple": "1つだけ",
     "no_entry": "有効なエントリ",
     "duplicate": "Duplicated",
+    "fetch_failed": "無効なDOI",
 }
 
 PaperDicts = dict[str, dict[str, Any]]
@@ -177,11 +192,20 @@ def pdf_tree(pdf_root: Path) -> dict[str, Optional[bytes]]:
     }
 
 
+def without_blank(papers: PaperDicts) -> PaperDicts:
+    """``papers`` から、値が空のフィールドを除いたものを返す."""
+    return {
+        key: {name: value for name, value in entry.items() if value != ""}
+        for key, entry in papers.items()
+    }
+
+
 def assert_registered(
     at: AppTest,
     list_file: Path,
     papers_before: PaperDicts,
     added: PaperDicts,
+    ignore_blank: bool = False,
 ) -> None:
     """登録が成功し、論文が ``added`` の分だけ追加されたことを検証する.
 
@@ -196,11 +220,18 @@ def assert_registered(
     added : PaperDicts
         追加されるはずの論文 (キーとエントリ内容)。入力から導いた期待値
         を渡す。
+    ignore_blank : bool, default False
+        ``True`` なら、保存された論文と期待値の両方から、値が空のフィール
+        ドを除いて比べる (未設定と空を同じ扱いにする)。
     """
     assert not at.exception, describe_exceptions(at)
     assert not error_messages(at)
     assert len(success_messages(at)) == 1, success_messages(at)
-    assert stored_papers(list_file) == {**papers_before, **added}
+    stored = stored_papers(list_file)
+    expected = {**papers_before, **added}
+    if ignore_blank:
+        stored, expected = without_blank(stored), without_blank(expected)
+    assert stored == expected
 
 
 def assert_rejected(
@@ -510,4 +541,606 @@ def test_syntactically_broken_bibtex_shows_error_without_crashing(
     """構文エラーの BibTeX は、ページが落ちずにエラーが表示される (KB6)."""
     at = submit_bib("@article{k, title={T}", "text")
 
+    assert_rejected(at, data_paths.list_file, papers_before)
+
+
+# --- DOI 経路 (要件 12.4, 12.5) --------------------------------------------
+
+# 入力する DOI。固定の Crossref 応答の DOI にも使う。
+DOI = "10.5555/fixed-doi"
+
+# crossref_article(DOI) の既定の応答から導いた、登録後のエントリ。
+# - 著者は応答の順に "<given> <family>" を " and " で連結する
+# - 掲載誌は container-title の先頭、年は published の最初の年
+# - 応答に volume・issue・page はない (保存されるかどうかは問わず、空は
+#   未設定と同じ扱いにする: ignore_blank)
+# - 識別子は「空白を除いた第一著者名 + 年 + _ + 連番」(要件 2.2)
+EXPECTED_DOI_KEY = "JaneDoe2021_0"
+EXPECTED_DOI_ENTRY = {
+    "ENTRYTYPE": "article",
+    "ID": EXPECTED_DOI_KEY,
+    "author": "Jane Doe and John Roe",
+    "title": "Fixed Metadata from Crossref",
+    "journal": "Journal of Fixed Metadata",
+    "year": "2021",
+    "DOI": DOI,
+}
+
+
+def submit_doi(doi: str) -> AppTest:
+    """登録ページを開き、DOI を入力して DOI フォームの登録ボタンを押す."""
+    at = open_register_page()
+    widget_in_form(at.text_input, FORM_DOI).set_value(doi)
+    return submit(at, FORM_DOI)
+
+
+def test_doi_registers_entry_from_crossref_response(
+    fake_crossref: Callable[[Optional[CrossrefMetadata]], list[str]],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """DOI を登録すると、応答どおりのフィールドのエントリが追加される (12.4).
+
+    入力した DOI で Crossref に問い合わせることも検証する。
+    """
+    requested = fake_crossref(crossref_article(DOI))
+
+    at = submit_doi(DOI)
+
+    assert requested == [DOI]
+    assert_registered(
+        at,
+        data_paths.list_file,
+        papers_before,
+        {EXPECTED_DOI_KEY: EXPECTED_DOI_ENTRY},
+        ignore_blank=True,
+    )
+
+
+def test_doi_registers_optional_fields_from_response(
+    fake_crossref: Callable[[Optional[CrossrefMetadata]], list[str]],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """応答の volume・issue・page は、volume・number・pages になる (12.4)."""
+    metadata = {
+        **crossref_article(DOI),
+        "volume": "12",
+        "issue": "3",
+        "page": "100-110",
+    }
+    fake_crossref(metadata)
+
+    at = submit_doi(DOI)
+
+    assert_registered(
+        at,
+        data_paths.list_file,
+        papers_before,
+        {
+            EXPECTED_DOI_KEY: {
+                **EXPECTED_DOI_ENTRY,
+                "volume": "12",
+                "number": "3",
+                "pages": "100-110",
+            }
+        },
+    )
+
+
+def test_doi_of_entry_is_the_one_in_the_response(
+    fake_crossref: Callable[[Optional[CrossrefMetadata]], list[str]],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """エントリの DOI は、入力した値でなく応答の値になる (12.4).
+
+    問い合わせには、入力した DOI をそのまま使う。
+    """
+    typed = "10.5555/TYPED-DOI"
+    canonical = "10.5555/canonical-doi"
+    requested = fake_crossref(crossref_article(canonical))
+
+    at = submit_doi(typed)
+
+    assert requested == [typed]
+    assert_registered(
+        at,
+        data_paths.list_file,
+        papers_before,
+        {EXPECTED_DOI_KEY: {**EXPECTED_DOI_ENTRY, "DOI": canonical}},
+        ignore_blank=True,
+    )
+
+
+def test_empty_doi_is_rejected_without_asking_crossref(
+    fake_crossref: Callable[[Optional[CrossrefMetadata]], list[str]],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """DOI が未入力だと、問い合わせずに未入力のエラーになる (12.5)."""
+    requested = fake_crossref(crossref_article(DOI))
+
+    at = submit_doi("")
+
+    assert requested == []
+    assert_rejected(at, data_paths.list_file, papers_before, "empty")
+    assert "DOI" in error_messages(at)[0]
+
+
+def test_doi_without_metadata_is_rejected(
+    fake_crossref: Callable[[Optional[CrossrefMetadata]], list[str]],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """メタデータを取得できない DOI は、取得失敗のエラーになる (12.5)."""
+    requested = fake_crossref(None)
+
+    at = submit_doi(DOI)
+
+    assert requested == [DOI]
+    assert_rejected(at, data_paths.list_file, papers_before, "fetch_failed")
+
+
+# --- 手動入力 (要件 12.6) --------------------------------------------------
+
+# エントリタイプの選択欄 (フォームの外にある) のラベル。
+ENTRY_TYPE_LABEL = "エントリタイプを選択"
+
+# 手動入力フォームに入力する値。文字列はテキスト入力、整数は年の数値入力、
+# リストは複数選択 (著者・タグ)。年は明示的に入力する (既定値は実行日の年
+# なので、実行日に依存させない)。著者は 1 人にする (複数人は KB4a)。
+FormValue = Union[str, int, list[str]]
+
+CUSTOM_ARTICLE_VALUES: dict[str, FormValue] = {
+    "author": ["Hanako Suzuki"],
+    "title": "Manual Entry of a Paper",
+    "journal": "Journal of Manual Entry",
+    "year": 2019,
+    "volume": "4",
+    "pages": "11--20",
+}
+# 入力から導いた、登録後のエントリ。年は文字列で保存され、識別子は
+# 「空白を除いた第一著者名 + 年 + _ + 連番」(要件 2.2)。
+CUSTOM_ARTICLE_KEY = "HanakoSuzuki2019_0"
+CUSTOM_ARTICLE_ENTRY = {
+    "ENTRYTYPE": "article",
+    "ID": CUSTOM_ARTICLE_KEY,
+    "author": "Hanako Suzuki",
+    "title": "Manual Entry of a Paper",
+    "journal": "Journal of Manual Entry",
+    "year": "2019",
+    "volume": "4",
+    "pages": "11--20",
+}
+
+
+def select_entry_type(at: AppTest, entry_type: str) -> AppTest:
+    """エントリタイプを選んで再実行する (フォームのフィールドが替わる)."""
+    selectors = [s for s in at.selectbox if s.label == ENTRY_TYPE_LABEL]
+    assert len(selectors) == 1, selectors
+    selectors[0].select(entry_type)
+    at = at.run()
+    assert not at.exception, describe_exceptions(at)
+    return at
+
+
+def custom_widget(elements: Iterable[Any], field: str) -> Any:
+    """手動入力フォームの、フィールド ``field`` のウィジェットを返す.
+
+    フィールドのウィジェットのラベルは、フィールド名と同じ。
+    """
+    found = [
+        w for w in widgets_in_form(elements, FORM_CUSTOM) if w.label == field
+    ]
+    assert len(found) == 1, (field, found)
+    return found[0]
+
+
+def fill_custom_form(at: AppTest, values: Mapping[str, FormValue]) -> None:
+    """手動入力フォームに値を入力する (再実行はしない)."""
+    for field, value in values.items():
+        elements: Iterable[Any]
+        if isinstance(value, str):
+            elements = at.text_input
+        elif isinstance(value, int):
+            elements = at.number_input
+        else:
+            elements = at.multiselect
+        custom_widget(elements, field).set_value(value)
+
+
+def submit_custom(entry_type: str, values: Mapping[str, FormValue]) -> AppTest:
+    """エントリタイプを選び、値を入力して手動入力フォームを送信する."""
+    at = select_entry_type(open_register_page(), entry_type)
+    fill_custom_form(at, values)
+    return submit(at, FORM_CUSTOM)
+
+
+@pytest.mark.parametrize(
+    ("entry_type", "values", "key", "fields"),
+    [
+        pytest.param(
+            "article",
+            CUSTOM_ARTICLE_VALUES,
+            CUSTOM_ARTICLE_KEY,
+            {
+                k: v
+                for k, v in CUSTOM_ARTICLE_ENTRY.items()
+                if k not in ("ENTRYTYPE", "ID")
+            },
+            id="article",
+        ),
+        pytest.param(
+            "book",
+            {
+                "author": ["Ichiro Tanaka"],
+                "title": "A Book Entered by Hand",
+                "publisher": "Hand Press",
+                "year": 2018,
+                "DOI": "10.5555/manual-book",
+            },
+            "IchiroTanaka2018_0",
+            {
+                "author": "Ichiro Tanaka",
+                "title": "A Book Entered by Hand",
+                "publisher": "Hand Press",
+                "year": "2018",
+                "DOI": "10.5555/manual-book",
+            },
+            id="book",
+        ),
+        pytest.param(
+            "inproceedings",
+            {
+                "author": ["Jiro Sato"],
+                "title": "A Talk Entered by Hand",
+                "booktitle": "Proceedings of Hand Entry",
+                "year": 2017,
+            },
+            "JiroSato2017_0",
+            {
+                "author": "Jiro Sato",
+                "title": "A Talk Entered by Hand",
+                "booktitle": "Proceedings of Hand Entry",
+                "year": "2017",
+            },
+            id="inproceedings",
+        ),
+    ],
+)
+def test_custom_form_registers_entry_with_entered_values(
+    entry_type: str,
+    values: Mapping[str, FormValue],
+    key: str,
+    fields: dict[str, str],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """エントリタイプを選んで必須フィールドを入力すると、その内容で登録される (12.6).
+
+    入力しなかったフィールドはエントリに現れない。
+    """
+    at = submit_custom(entry_type, values)
+
+    assert_registered(
+        at,
+        data_paths.list_file,
+        papers_before,
+        {key: {"ENTRYTYPE": entry_type, "ID": key, **fields}},
+    )
+
+
+# --- 必須フィールドの不足 (要件 12.7) ---------------------------------------
+
+# フィールドの定義ファイル。実装が使う定数は使わず、パッケージの場所から
+# 導出して独立に読み込み、必須フィールドの期待値にする。
+FIELDS_JSON = Path(paper_manager.__file__).parent / "app" / "fields.json"
+
+
+def required_fields(entry_type: str) -> set[str]:
+    """定義ファイルから、``entry_type`` の必須フィールド名の集合を読む."""
+    definitions = json.loads(FIELDS_JSON.read_text(encoding="utf-8"))
+    return {
+        name
+        for name, attributes in definitions[entry_type].items()
+        if attributes["required"]
+    }
+
+
+def bibtex_of(entry_type: str, fields: Mapping[str, str]) -> str:
+    """``entry_type`` のエントリで、``fields`` だけを持つ BibTeX を作る."""
+    body = "".join(
+        f"  {name} = {{{value}}},\n" for name, value in fields.items()
+    )
+    return f"@{entry_type}{{key,\n{body}}}\n"
+
+
+def assert_rejected_for_missing(
+    at: AppTest,
+    list_file: Path,
+    papers_before: PaperDicts,
+    entry_type: str,
+    given: Iterable[str],
+) -> None:
+    """必須フィールドの不足で拒否され、論文リストが変わらないことを検証する.
+
+    エラーは、不足しているフィールド名をすべて含み、入力済みの必須
+    フィールド名を含まず、ほかの種類のエラー (``ERROR_MARKERS``) でない。
+
+    Parameters
+    ----------
+    at : AppTest
+        送信後に実行した登録ページ。
+    list_file : Path
+        論文リストのファイル。
+    papers_before : PaperDicts
+        登録前に保存されていた論文。
+    entry_type : str
+        登録しようとしたエントリのタイプ。
+    given : Iterable[str]
+        登録しようとしたエントリが持つフィールド名。不足は、定義ファイル
+        の必須フィールドとの差から導く。
+    """
+    required = required_fields(entry_type)
+    missing = required - set(given)
+    present = required & set(given)
+    assert missing, "premise: at least one required field is missing"
+
+    assert_rejected(at, list_file, papers_before)
+
+    message = error_messages(at)[0]
+    for name in missing:
+        assert name in message, (name, message)
+    for name in present:
+        assert name not in message, (name, message)
+    for marker in ERROR_MARKERS.values():
+        assert marker not in message, (marker, message)
+
+
+@pytest.mark.parametrize(
+    ("entry_type", "fields"),
+    [
+        pytest.param(
+            "article",
+            {
+                "author": "Doe, Jane",
+                "title": "An Article Without Journal",
+                "year": "2020",
+            },
+            id="article-without-journal",
+        ),
+        pytest.param(
+            "book",
+            {
+                "author": "Doe, Jane",
+                "title": "A Book Without Publisher",
+                "year": "2020",
+            },
+            id="book-without-publisher",
+        ),
+        pytest.param(
+            "inbook",
+            {"author": "Doe, Jane", "year": "2020"},
+            id="inbook-without-several",
+        ),
+    ],
+)
+def test_bibtex_with_missing_required_fields_is_rejected(
+    entry_type: str,
+    fields: dict[str, str],
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """必須フィールドが足りない BibTeX は、不足を示すエラーで拒否される (12.7)."""
+    at = submit_bib(bibtex_of(entry_type, fields), "text")
+
+    assert_rejected_for_missing(
+        at, data_paths.list_file, papers_before, entry_type, fields
+    )
+
+
+def test_doi_with_missing_required_fields_is_rejected(
+    fake_crossref: Callable[[Optional[CrossrefMetadata]], list[str]],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """必須フィールドが足りない DOI の応答は、不足を示すエラーで拒否される (12.7).
+
+    Crossref の ``book`` の応答はタイトル・著者・年を持つが、出版社
+    (``publisher``) を登録ページが取り込まないので、不足する。
+    """
+    requested = fake_crossref(crossref_article(DOI, type="book"))
+
+    at = submit_doi(DOI)
+
+    assert requested == [DOI]
+    assert_rejected_for_missing(
+        at,
+        data_paths.list_file,
+        papers_before,
+        "book",
+        {"author", "title", "year"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("entry_type", "values"),
+    [
+        pytest.param("article", {"year": 2020}, id="article-nothing-entered"),
+        pytest.param(
+            "article",
+            {
+                "author": ["Hanako Suzuki"],
+                "title": "An Article Without Journal",
+                "year": 2020,
+            },
+            id="article-without-journal",
+        ),
+        pytest.param(
+            "book",
+            {
+                "author": ["Hanako Suzuki"],
+                "title": "A Book Without Publisher",
+                "year": 2020,
+            },
+            id="book-without-publisher",
+        ),
+    ],
+)
+def test_custom_form_with_missing_required_fields_is_rejected(
+    entry_type: str,
+    values: Mapping[str, FormValue],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """必須フィールドが空の手動入力は、不足を示すエラーで拒否される (12.7)."""
+    at = submit_custom(entry_type, values)
+
+    assert_rejected_for_missing(
+        at, data_paths.list_file, papers_before, entry_type, values
+    )
+
+
+# --- PDF の添付 (要件 12.9) ------------------------------------------------
+
+# PDF のアップロード欄のラベルの接頭辞。BibTeX・DOI・手動入力の 3 つの
+# フォームのすべてが、同じラベル (``PDF file(s) (.pdf)``) の欄を持つ。
+# BibTeX ファイルの欄 (``BIB_UPLOAD_LABEL``) とは一致しない。
+PDF_UPLOAD_LABEL = "PDF file(s)"
+
+
+class Registration(NamedTuple):
+    """登録経路ごとの、登録されるエントリと PDF のフォルダ名の期待値."""
+
+    key: str
+    entry: dict[str, str]
+    pdf_dir: str  # "<年> - <第一著者> - <タイトル>" (PDF の保存先のフォルダ)
+
+
+# 各経路の、登録前に用意した入力から導いた期待値。
+REGISTRATIONS = {
+    "bib": Registration(
+        EXPECTED_KEY,
+        EXPECTED_ENTRY,
+        "2020 - Jane Doe - A Study of Registering Papers",
+    ),
+    "doi": Registration(
+        EXPECTED_DOI_KEY,
+        EXPECTED_DOI_ENTRY,
+        "2021 - Jane Doe - Fixed Metadata from Crossref",
+    ),
+    "custom": Registration(
+        CUSTOM_ARTICLE_KEY,
+        CUSTOM_ARTICLE_ENTRY,
+        "2019 - Hanako Suzuki - Manual Entry of a Paper",
+    ),
+}
+
+
+@pytest.fixture
+def submit_route(
+    submit_bib: Callable[..., AppTest],
+    fake_crossref: Callable[[Optional[CrossrefMetadata]], list[str]],
+) -> Callable[[str], AppTest]:
+    """``REGISTRATIONS`` の経路で、登録を実行する関数を返す.
+
+    返された関数 ``submit_route(route)`` は、``route`` (``"bib"`` /
+    ``"doi"`` / ``"custom"``) の入力で登録ページを送信した ``AppTest``
+    を返す。DOI 経路の Crossref は固定の応答に差し替える。
+    """
+    fake_crossref(crossref_article(DOI))
+
+    def _submit_route(route: str) -> AppTest:
+        if route == "bib":
+            return submit_bib(BIB_ARTICLE, "text")
+        if route == "doi":
+            return submit_doi(DOI)
+        if route == "custom":
+            return submit_custom("article", CUSTOM_ARTICLE_VALUES)
+        raise ValueError(f"unknown registration route: {route!r}")
+
+    return _submit_route
+
+
+@pytest.mark.parametrize("route", ["bib", "doi", "custom"])
+def test_attached_pdfs_are_saved_in_the_entry_folder_from_00(
+    route: str,
+    submit_route: Callable[[str], AppTest],
+    fake_file_uploader: Callable[..., None],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """PDF を添付して登録すると、エントリのフォルダに 00.pdf から連番で保存される (12.9).
+
+    どの経路 (``route``) でも、添付した順に ``00.pdf``・``01.pdf``・
+    ``02.pdf`` となり、中身は添付したものと同じ。ファイル名は添付時の名前
+    と無関係で、既存のエントリの PDF は変わらない。
+    """
+    uploads = [
+        FakeUpload("z-first.pdf", PDF_BYTES + b"%attached first\n"),
+        FakeUpload("m-second.pdf", PDF_BYTES + b"%attached second\n"),
+        FakeUpload("a-third.pdf", PDF_BYTES + b"%attached third\n"),
+    ]
+    fake_file_uploader({PDF_UPLOAD_LABEL: uploads})
+    registration = REGISTRATIONS[route]
+    pdfs_before = pdf_tree(data_paths.pdf)
+
+    at = submit_route(route)
+
+    assert_registered(
+        at,
+        data_paths.list_file,
+        papers_before,
+        {registration.key: registration.entry},
+        ignore_blank=True,
+    )
+    assert pdf_tree(data_paths.pdf) == {
+        **pdfs_before,
+        registration.pdf_dir: None,
+        f"{registration.pdf_dir}/00.pdf": uploads[0].getvalue(),
+        f"{registration.pdf_dir}/01.pdf": uploads[1].getvalue(),
+        f"{registration.pdf_dir}/02.pdf": uploads[2].getvalue(),
+    }
+
+
+# --- 既知バグ: KB10 (要件 13.1, 13.2, 13.4) --------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "KNOWN BUG: DOI の問い合わせ (Works.doi) が通信の例外を送出しても、"
+        "登録ページ (_render_doi_form) が捕捉せず、ページが例外で落ちて"
+        "エラーも表示されない (KB10). Repro: Works.doi が "
+        "requests.exceptions.ConnectionError を送出する状態 (オフライン・"
+        "タイムアウト・プロキシの誤設定など。crossref の do_http_request は"
+        "例外を握らない) で DOI を入力して登録を押すと、at.exception が "
+        "ConnectionError になる. 本来は例外にならずにエラーが 1 つ表示され、"
+        "論文リストは変わらない (要件 12.5 の「メタデータを取得できない」)"
+    ),
+)
+def test_doi_lookup_connection_error_shows_error_without_crashing(
+    monkeypatch: pytest.MonkeyPatch,
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """通信の例外で DOI を取得できなくても、ページが落ちずにエラーが出る (KB10).
+
+    ``fake_crossref`` は応答 (辞書または ``None``) しか返せないので、
+    ``Works.doi`` を通信の例外を送出する関数に差し替える。外部ネットワーク
+    には出ない。
+    """
+    requested: list[str] = []
+
+    def offline(self: Works, doi: str, only_message: bool = True) -> None:
+        requested.append(doi)
+        raise requests.exceptions.ConnectionError("offline")
+
+    monkeypatch.setattr(Works, "doi", offline)
+
+    at = submit_doi(DOI)
+
+    assert requested == [DOI]
     assert_rejected(at, data_paths.list_file, papers_before)
