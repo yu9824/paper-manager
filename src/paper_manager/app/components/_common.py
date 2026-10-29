@@ -62,11 +62,191 @@ def pdf_upload_form(
         return [uploaded_files]
 
 
+# 数値入力 (``st.number_input``) で入力できる最小の年。最大は今年の翌年。
+_MIN_YEAR = 1000
+
+
+def _split_default(
+    default: Union[str, list[str], None], separator: str
+) -> tuple[str, ...]:
+    """複数選択の既定値を、``separator`` で 1 つずつの選択肢に分ける。
+
+    ``separator.join`` で連結すると、文字列の既定値は元の文字列に完全に
+    一致する (空白、前後の空白、重複した ``separator`` を含む)。
+
+    Parameters
+    ----------
+    default : Union[str, list[str], None]
+        既定値。文字列は ``separator`` で分け、リストはそのまま使う。
+        ``None`` と空の文字列は選択肢なし。
+    separator : str
+        区切り (著者は ``AUTHOR_SEPARATOR``、タグは ``TAG_SEPARATOR``)。
+
+    Returns
+    -------
+    tuple[str, ...]
+        選択肢 (既定値でもある)。
+    """
+    if isinstance(default, str):
+        return tuple(default.split(separator)) if default else tuple()
+    if isinstance(default, list):
+        return tuple(default)
+    return tuple()
+
+
+def _multiselect_input(
+    field: str,
+    default: Union[str, list[str], None],
+    separator: str,
+    placeholder: Optional[str] = None,
+) -> Optional[str]:
+    """著者やタグの複数選択を表示し、選択を ``separator`` で連結して返す。
+
+    既定値の分割と選択の連結に同じ ``separator`` を使うので、変更せずに
+    保存した文字列は元の表記のまま。``separator`` を含まない文字列
+    (例: ``, `` 区切りで保存済みの著者) は、分割されず 1 つの選択肢になる。
+
+    Parameters
+    ----------
+    field : str
+        フィールド名 (ウィジェットのキーでもある)。
+    default : Union[str, list[str], None]
+        既定値 (``_split_default`` を参照)。
+    separator : str
+        区切り。
+    placeholder : Optional[str], default None
+        何も選ばれていないときの表示。
+
+    Returns
+    -------
+    Optional[str]
+        選択を ``separator`` で連結した文字列。何も選ばれていなければ
+        ``None``。
+    """
+    assert isinstance(default, (str, type(None), list))
+    options = _split_default(default, separator)
+    selected = st.multiselect(
+        field,
+        options=options,
+        default=options,
+        accept_new_options=True,
+        key=field,
+        placeholder=placeholder,
+    )
+    return separator.join(selected) if selected else None
+
+
+def _as_valid_year(value: object, max_year: int) -> Optional[int]:
+    """``value`` が数値入力で扱える年なら整数で、そうでなければ ``None``。
+
+    整数として往復し (``str(int(value)) == str(value)``。``n.d.``、
+    ``2020a``、``+2020``、``02020``、全角の数字、前後の空白は往復しない)、
+    ``_MIN_YEAR`` 以上 ``max_year`` 以下の年を有効とする。
+
+    Parameters
+    ----------
+    value : object
+        保存されている年 (空でないもの)。
+    max_year : int
+        数値入力の最大値。
+
+    Returns
+    -------
+    Optional[int]
+        有効な年。無効なら ``None``。
+    """
+    text = str(value)
+    try:
+        year = int(text)
+    except ValueError:
+        return None
+    if str(year) != text or not _MIN_YEAR <= year <= max_year:
+        return None
+    return year
+
+
+def _year_input(
+    field: str, default: object, required: bool, placeholder: str
+) -> Optional[str]:
+    """年の入力欄を表示し、入力された年を文字列で返す。
+
+    保存されている年 (``default``) が空か有効 (``_as_valid_year``) なら、
+    数値入力を表示する。無効 (整数として往復しない、または入力できる範囲の
+    外) なら、数値入力は例外になるので、警告を出して、元の値が入った文字の
+    入力欄に切り替える。
+
+    文字の入力欄では、触らなければ元の値を返す。入力し直せば、その値
+    (前後の空白を除く) を返し、空 (空白だけを含む) にすれば ``None`` を
+    返す。入力値が有効な年かは確かめない (保存されている年が無効な間は
+    警告が出続ける)。
+
+    Parameters
+    ----------
+    field : str
+        フィールド名 (ウィジェットのキーでもある)。
+    default : object
+        保存されている年。
+    required : bool
+        年が必須か。必須で空のとき、今年を初期値にする。
+    placeholder : str
+        空のときの表示。
+
+    Returns
+    -------
+    Optional[str]
+        入力された年。空なら ``None``。
+    """
+    this_year = date.today().year
+    max_year = this_year + 1
+    is_empty = default is None or default == ""
+    year = None if is_empty else _as_valid_year(default, max_year)
+
+    if is_empty or year is not None:
+        if is_empty and required:
+            year = this_year
+        selected = st.number_input(
+            field,
+            value=year,
+            format="%4i",
+            placeholder=placeholder,
+            step=1,
+            min_value=_MIN_YEAR,
+            max_value=max_year,
+            key=field,
+        )
+        assert isinstance(selected, (int, type(None)))
+        return str(selected) if selected else None
+
+    original = str(default)
+    message = (
+        f"The saved year {original!r} is not a valid year (an integer from "
+        f"{_MIN_YEAR} to {max_year}). Leave it as it is to keep the saved "
+        "value, or enter a corrected year to replace it."
+    )
+    _logger.warning(message)
+    st.warning(message)
+    typed = st.text_input(
+        field, value=original, placeholder=placeholder, key=field
+    )
+    if typed == original:
+        return original
+    return typed.strip() or None
+
+
 def custom_entry(entry: Entry) -> Entry:
     """Entryオブジェクトをカスタマイズするためのフォームを表示する。
 
     エントリタイプに基づいて入力フィールドを動的に生成し、
     ユーザーが入力した値でEntryオブジェクトを更新する。
+
+    - 著者は ``AUTHOR_SEPARATOR`` (`` and ``) で、タグは
+      ``TAG_SEPARATOR`` (``, ``) で、既定値を選択肢に分け、保存時に連結
+      する。変更しなければ表記は変わらない。``, `` 区切りで保存済みの著者は
+      1 つの選択肢として、そのまま保存される。
+    - 年は、保存されている値が空か有効なら数値入力で入力する。無効 (整数
+      として往復しない、または入力できる範囲の外) なら、警告を出して文字の
+      入力欄に切り替える。触らなければ元の値を保ち、入力し直せばその値で
+      保存する。
 
     Parameters
     ----------
@@ -90,92 +270,32 @@ def custom_entry(entry: Entry) -> Entry:
         )
 
         placeholder = "Required" if required else ""
+        # 入力された値。空 (None) ならエントリからフィールドを除く
+        value: Optional[str]
         if field == COLNAME_YEAR:
-            assert isinstance(default, (str, int, type(None)))
-            int_default: Optional[int]
-            if default:
-                int_default = int(default)
-            elif required:
-                int_default = date.today().year  # this year
-            else:
-                int_default = None
-            _year_input = st.number_input(
-                field,
-                value=int_default,
-                format="%4i",
-                placeholder=placeholder,
-                step=1,
-                min_value=1000,
-                max_value=date.today().year + 1,
-                key=field,
-            )
-            assert isinstance(_year_input, (int, type(None)))
-            if _year_input:
-                entry[field] = str(_year_input)
-            elif field in entry:
-                _ = entry.pop(field)
-
+            value = _year_input(field, default, required, placeholder)
         elif field == COLNAME_AUTHOR:
-            assert isinstance(default, (str, type(None), list))
-            if isinstance(default, str):
-                if default:
-                    tup_default = tuple(default.split(AUTHOR_SEPARATOR))
-                else:
-                    tup_default = tuple()
-            elif isinstance(default, list):
-                tup_default = tuple(default)
-            else:  # None
-                tup_default = tuple()
-
-            _author_input_temp = st.multiselect(
-                field,
-                options=tup_default,
-                default=tup_default,
-                accept_new_options=True,
-                key=field,
-                placeholder=placeholder,
+            value = _multiselect_input(
+                field, default, AUTHOR_SEPARATOR, placeholder
             )
-            entry[field] = AUTHOR_SEPARATOR.join(_author_input_temp)
-
-            if _author_input_temp:
-                entry[field] = TAG_SEPARATOR.join(_author_input_temp)
-            elif field in entry:
-                _ = entry.pop(field)
         elif field == COLNAME_TAGS:
-            assert isinstance(default, (str, type(None), list))
-            if isinstance(default, str):
-                if default:
-                    tup_default = tuple(default.split(AUTHOR_SEPARATOR))
-                else:
-                    tup_default = tuple()
-            elif isinstance(default, list):
-                tup_default = tuple(default)
-            else:  # None
-                tup_default = tuple()
-
-            _tags_input_temp = st.multiselect(
-                field,
-                options=tup_default,
-                default=tup_default,
-                accept_new_options=True,
-                key=field,
-            )
-            if _tags_input_temp:
-                entry[field] = TAG_SEPARATOR.join(_tags_input_temp)
-            elif field in entry:
-                _ = entry.pop(field)
+            value = _multiselect_input(field, default, TAG_SEPARATOR)
         else:
             assert isinstance(default, (str, type(None)))
-            _text_input_temp = st.text_input(
-                field,
-                value=default,
-                placeholder=placeholder,
-                key=field,
+            value = (
+                st.text_input(
+                    field,
+                    value=default,
+                    placeholder=placeholder,
+                    key=field,
+                )
+                or None
             )
-            if _text_input_temp:
-                entry[field] = _text_input_temp
-            elif field in entry:
-                _ = entry.pop(field)
+
+        if value is not None:
+            entry[field] = value
+        elif field in entry:
+            _ = entry.pop(field)
 
     return entry
 

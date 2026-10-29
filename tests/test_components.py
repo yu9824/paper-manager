@@ -15,6 +15,11 @@
   起きない状況のテストは、区別しない環境 (macOS・Windows) では skip する
 - 手動入力フォーム: ``custom_entry`` (要件 9.11)。``AppTest`` で実行する。
   このセクションだけで使う補助は、セクションの冒頭にある
+- 手動入力フォームの著者・タグ・年: 著者は `` and ``、タグは ``, `` で
+  選択肢に分けて連結し、変更しなければ表記が変わらない。保存されている年が
+  無効なときは、警告を出して文字の入力欄に切り替え、触らなければ元の値を
+  保つ (known-bug-fixes 要件 4, 7)。年の範囲の上限は今日の日付に依存する
+  ので、固定した日付で確かめる
 - PDF アップロード欄: ``pdf_upload_form`` (要件 9.12)
 
 保存・削除・登録・更新は ``data_paths`` (隔離された一時ディレクトリの配下)
@@ -49,6 +54,7 @@ import stat
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from copy import deepcopy
+from datetime import date
 from pathlib import Path
 from typing import Any, NamedTuple, Optional, Union
 
@@ -74,6 +80,7 @@ from paper_manager.app.components._common import (
     save_pdfs,
     update_entry_in_list,
 )
+from paper_manager.app.helper import MAP_REQUIRED_FIELDS
 from paper_manager.app.helper._orphan_pdf import find_orphaned_pdfs
 from paper_manager.entry import Entry, PaperList
 from paper_manager.helper import (
@@ -2785,12 +2792,17 @@ FIELDS_JSON = Path(paper_manager.__file__).parent / "app" / "fields.json"
 FormValue = Union[str, int, list[str]]
 
 
-def custom_entry_screen(entry_type: str, initial: dict) -> None:
+def custom_entry_screen(
+    entry_type: str, initial: dict, unstripped: dict
+) -> None:
     """``custom_entry`` を、登録ページと同じ形で呼ぶ画面 (AppTest 用).
 
     エントリタイプの選択に応じて ``custom_entry`` を呼び、返されたエントリを
     session state に書き出す。登録ページの手動入力フォームと同じく、
     ``ENTRYTYPE`` だけを持つエントリ (編集の場合は既存のエントリ) を渡す。
+
+    ``Entry`` は作るときに値の前後の空白を除くので、前後の空白を持つ値は
+    ``unstripped`` に渡し、作った後に設定する。
     """
     import streamlit as st
 
@@ -2805,12 +2817,16 @@ def custom_entry_screen(entry_type: str, initial: dict) -> None:
         index=options.index(entry_type),
         key="entry_type",
     )
-    entry = custom_entry(Entry({**initial, "ENTRYTYPE": selected}))
+    entry = Entry({**initial, "ENTRYTYPE": selected})
+    entry.update(unstripped)
+    entry = custom_entry(entry)
     st.session_state["form_result"] = dict(entry)
 
 
 def run_form(
-    entry_type: str = "article", initial: Optional[Mapping[str, str]] = None
+    entry_type: str = "article",
+    initial: Optional[Mapping[str, str]] = None,
+    unstripped: Optional[Mapping[str, str]] = None,
 ) -> AppTest:
     """``entry_type`` を選んだ手動入力フォームを 1 回実行する.
 
@@ -2821,11 +2837,14 @@ def run_form(
     initial : Optional[Mapping[str, str]], default None
         フォームに渡すエントリの初期値 (``ENTRYTYPE`` 以外)。編集の場合の
         既存の値に当たる。
+    unstripped : Optional[Mapping[str, str]], default None
+        ``initial`` と同じだが、``Entry`` が作るときに除く前後の空白を保った
+        ままの初期値。
     """
     at = AppTest.from_function(
         custom_entry_screen,
         default_timeout=APP_TIMEOUT_SECONDS,
-        args=(entry_type, dict(initial or {})),
+        args=(entry_type, dict(initial or {}), dict(unstripped or {})),
     )
     return at.run()
 
@@ -3133,24 +3152,12 @@ def test_form_adds_only_the_fields_that_were_filled_in() -> None:
     assert form_result(at) == {"ENTRYTYPE": "misc", "title": "A Note on Forms"}
 
 
-# --- 手動入力フォーム: 既知バグ (KB4a, KB4b) -------------------------------
+# --- 手動入力フォーム: 著者とタグ (known-bug-fixes 要件 4) -----------------
+# 著者は `` and `` (AUTHOR_SEPARATOR) で、タグは ``, `` (TAG_SEPARATOR) で、
+# 既定値を選択肢に分け、保存するときに連結する。分割と連結は往復で元の文字列
+# に戻るので、触らずに保存しても表記は変わらない。
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BUG: 手動入力フォームで複数の著者を入力すると、著者が "
-        "' and ' (AUTHOR_SEPARATOR) でなく ', ' (TAG_SEPARATOR) で連結"
-        "されて保存される (KB4a). Repro: article のフォームで著者に "
-        "'Alice Smith' と 'Bob Jones' を入力し、custom_entry が返す "
-        "エントリの author を見る (' and ' 区切りの著者を持つ既存の"
-        "エントリを編集した場合も ', ' 区切りに変わる. 編集の Done で "
-        "update_entry_in_list の改名経路に入り、PDF フォルダ名が "
-        "'2020 - Alice Smith - T' から '2020 - Alice Smith, Bob Jones - T' "
-        "に変わる (コード上の挙動)). 本来は "
-        "'Alice Smith and Bob Jones' (BibTeX の著者区切り)"
-    ),
-)
 def test_form_joins_several_authors_with_and() -> None:
     """複数の著者は、BibTeX の著者区切り `` and `` で連結される (KB4a)."""
     at = run_form("article", {"year": "2020"})
@@ -3160,17 +3167,6 @@ def test_form_joins_several_authors_with_and() -> None:
     assert form_result(at)["author"] == "Alice Smith and Bob Jones"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BUG: 手動入力フォームがタグの既定値を ', ' でなく ' and ' "
-        "(AUTHOR_SEPARATOR) で分割するため、複数のタグが 1 つの選択肢"
-        "として扱われる (KB4b). Repro: tags が 'x, y' のエントリ (フォーム"
-        "自身が ', ' 連結で保存する形式) で custom_entry を呼ぶと、選択肢と"
-        "選択済みの値が ['x', 'y'] でなく ['x, y'] になる (タグを 1 つ外す"
-        "と全部外れる). 本来は ', ' で分割して ['x', 'y']"
-    ),
-)
 def test_form_splits_the_default_tags_on_commas() -> None:
     """既定値のタグは `, ` で分割され、別々の選択肢になる (KB4b)."""
     at = run_form("article", {"year": "2020", "tags": "x, y"})
@@ -3179,6 +3175,486 @@ def test_form_splits_the_default_tags_on_commas() -> None:
     tags = at.multiselect(key="tags")
     assert tags.options == ["x", "y"]
     assert tags.value == ["x", "y"]
+
+
+@pytest.mark.parametrize(
+    "author, options",
+    [
+        pytest.param("Alice Smith", ["Alice Smith"], id="one"),
+        pytest.param(
+            "Alice Smith and Bob Jones",
+            ["Alice Smith", "Bob Jones"],
+            id="two",
+        ),
+        pytest.param("A and B and C", ["A", "B", "C"], id="three"),
+        pytest.param(
+            "Smith, Alice and Jones, Bob",
+            ["Smith, Alice", "Jones, Bob"],
+            id="last-name-first",
+        ),
+        pytest.param(
+            "Brand and Sand", ["Brand", "Sand"], id="and-inside-a-name"
+        ),
+        pytest.param("A and A", ["A", "A"], id="repeated-name"),
+        pytest.param("A  and  B", ["A ", " B"], id="extra-spaces"),
+        pytest.param("A and  and B", ["A", "", "B"], id="doubled-separator"),
+    ],
+)
+def test_form_keeps_and_separated_authors_that_are_not_changed(
+    author: str, options: list[str]
+) -> None:
+    """`` and `` 区切りの著者は、変更せずに保存しても表記が変わらない.
+
+    1 人ずつの選択肢に分けて表示し (要件 4.1)、再結合した結果は元の文字列
+    と完全に一致する (要件 4.2)。空白や重複した `` and `` を含む入力も同じ。
+    """
+    at = run_form("article", {"year": "2020", "author": author})
+
+    assert form_result(at)["author"] == author
+    assert at.multiselect(key="author").options == options
+    assert at.multiselect(key="author").value == options
+
+
+@pytest.mark.parametrize(
+    "author, options",
+    [
+        pytest.param(
+            " Alice and Bob ", [" Alice", "Bob "], id="surrounding-spaces"
+        ),
+        pytest.param("A and B ", ["A", "B "], id="trailing-space"),
+        pytest.param(" and A", ["", "A"], id="leading-separator"),
+        pytest.param("A and ", ["A", ""], id="trailing-separator"),
+    ],
+)
+def test_form_keeps_authors_with_surrounding_spaces_as_they_are(
+    author: str, options: list[str]
+) -> None:
+    """前後の空白や区切りを持つ著者も、変更せずに保存して変わらない (要件 4.2).
+
+    ``Entry`` を作るときは前後の空白が除かれるので、作った後に設定した値
+    で確かめる。
+    """
+    at = run_form("article", {"year": "2020"}, unstripped={"author": author})
+
+    assert form_result(at)["author"] == author
+    assert at.multiselect(key="author").options == options
+
+
+@pytest.mark.parametrize(
+    "author",
+    [
+        pytest.param("Alice Smith, Bob Jones", id="comma-separated"),
+        pytest.param("King, Jr., Martin", id="suffix"),
+        pytest.param("Smith, Alice, Jones, Bob", id="last-name-first"),
+        pytest.param("Alice Smith,Bob Jones", id="no-space-after-comma"),
+    ],
+)
+def test_form_keeps_comma_separated_authors_as_they_are(author: str) -> None:
+    """既に `, ` 区切りで保存されている著者は、書き換えられない (要件 4.4).
+
+    `` and `` で分割されず、1 つの選択肢として、そのまま保存される。
+    接尾辞付きの人名 (``King, Jr., Martin``) の `, ` を区切りと誤認して
+    壊すこともない。
+    """
+    at = run_form("article", {"year": "2020", "author": author})
+
+    assert form_result(at)["author"] == author
+    assert at.multiselect(key="author").options == [author]
+
+
+def test_form_adds_an_author_to_comma_separated_authors_with_and() -> None:
+    """`, ` 区切りの著者に著者を加えても、既存の部分は書き換えない.
+
+    既存の著者は 1 つの選択肢のまま残り、加えた著者が `` and `` で続く
+    (要件 4.1, 4.4)。
+    """
+    at = run_form(
+        "article", {"year": "2020", "author": "Alice Smith, Bob Jones"}
+    )
+
+    fill(at, {"author": ["Alice Smith, Bob Jones", "Carol Lee"]})
+
+    assert form_result(at)["author"] == "Alice Smith, Bob Jones and Carol Lee"
+
+
+def test_form_joins_the_edited_authors_with_and() -> None:
+    """既存の著者を増減すると、残った著者が `` and `` で連結される (要件 4.1)."""
+    at = run_form(
+        "article", {"year": "2020", "author": "Alice Smith and Bob Jones"}
+    )
+
+    fill(at, {"author": ["Bob Jones", "Carol Lee"]})
+
+    assert form_result(at)["author"] == "Bob Jones and Carol Lee"
+
+
+def test_form_keeps_the_pdf_folder_name_of_an_entry_with_several_authors() -> (
+    None
+):
+    """複数の著者を持つ論文を編集して保存しても、PDF フォルダ名が変わらない.
+
+    PDF フォルダ名は筆頭著者から作る。著者の区切りが `, ` に変わると、
+    筆頭著者が全員の連結になり、フォルダ名が変わってしまう (KB4a。要件 4.2)。
+    """
+    original = Entry(
+        {
+            "ENTRYTYPE": "article",
+            "ID": "Smith2020",
+            "author": "Alice Smith and Bob Jones",
+            "title": "A Study of Forms",
+            "journal": "Journal of Forms",
+            "year": "2020",
+        }
+    )
+
+    at = run_form("article", dict(original))
+
+    saved = Entry(form_result(at))
+    assert saved["author"] == original["author"]
+    assert saved.pdf_dir_name == original.pdf_dir_name
+
+
+@pytest.mark.parametrize(
+    "tags, options",
+    [
+        pytest.param("vision", ["vision"], id="one"),
+        pytest.param("x, y", ["x", "y"], id="two"),
+        pytest.param(
+            "deep learning, vision, nlp",
+            ["deep learning", "vision", "nlp"],
+            id="three",
+        ),
+        pytest.param(
+            "R and D, vision", ["R and D", "vision"], id="and-inside-a-tag"
+        ),
+        pytest.param("x, x", ["x", "x"], id="repeated-tag"),
+        pytest.param("x,  y", ["x", " y"], id="extra-space"),
+        pytest.param("x,y", ["x,y"], id="no-space-after-comma"),
+    ],
+)
+def test_form_keeps_tags_that_are_not_changed(
+    tags: str, options: list[str]
+) -> None:
+    """タグは `, ` で選択肢に分かれ、変更せずに保存しても表記が変わらない.
+
+    (KB4b。要件 4.3)
+    """
+    at = run_form("article", {"year": "2020", "tags": tags})
+
+    assert form_result(at)["tags"] == tags
+    assert at.multiselect(key="tags").options == options
+    assert at.multiselect(key="tags").value == options
+
+
+def test_form_joins_the_edited_tags_with_commas() -> None:
+    """既存のタグを増減すると、残ったタグが `, ` で連結される (要件 4.3)."""
+    at = run_form("article", {"year": "2020", "tags": "x, y, z"})
+
+    fill(at, {"tags": ["y", "z", "w"]})
+
+    assert form_result(at)["tags"] == "y, z, w"
+
+
+# --- 手動入力フォーム: 保存されている年が無効なとき (要件 7) ----------------
+# 保存されている年が、整数として往復しない、または数値入力で入力できる範囲
+# (1000 〜 来年) の外のときは、警告を出して文字の入力欄に切り替える。有効な
+# 年や空の年は、これまでどおり数値入力のまま。
+
+INVALID_YEARS = [
+    pytest.param("n.d.", id="not-a-number"),
+    pytest.param("2020a", id="trailing-letter"),
+    pytest.param("999", id="below-the-range"),
+    pytest.param("3000", id="above-the-range"),
+    pytest.param("0", id="zero"),
+    pytest.param("-2020", id="negative"),
+    pytest.param("+2020", id="plus-sign"),
+    pytest.param("02020", id="leading-zero"),
+    pytest.param("2020.0", id="float-notation"),
+    pytest.param("2020-2021", id="range-of-years"),
+    pytest.param("２０２０", id="full-width-digits"),
+    pytest.param("9" * 30, id="huge-number"),
+]
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        pytest.param("2020", 2020, id="year"),
+        pytest.param(2020, 2020, id="int"),
+        pytest.param("1000", 1000, id="lower-limit"),
+        pytest.param("2030", 2030, id="upper-limit"),
+        pytest.param("999", None, id="below-the-lower-limit"),
+        pytest.param("2031", None, id="above-the-upper-limit"),
+        pytest.param("n.d.", None, id="not-a-number"),
+        pytest.param("", None, id="empty"),
+        pytest.param(" 2020", None, id="leading-space"),
+        pytest.param("2020 ", None, id="trailing-space"),
+        pytest.param("+2020", None, id="plus-sign"),
+        pytest.param("02020", None, id="leading-zero"),
+        pytest.param("2_020", None, id="underscore"),
+        pytest.param("２０２０", None, id="full-width-digits"),
+        pytest.param("٢٠٢٠", None, id="arabic-indic-digits"),
+        pytest.param(2020.0, None, id="float"),
+        pytest.param(True, None, id="bool"),
+        pytest.param("9" * 5000, None, id="beyond-the-int-conversion-limit"),
+    ],
+)
+def test_a_saved_year_is_valid_only_if_it_round_trips_within_the_range(
+    value: object, expected: Optional[int]
+) -> None:
+    """保存されている年は、整数として往復し、範囲内のときだけ有効 (要件 7).
+
+    範囲は 1000 〜 2030 (数値入力の ``min_value`` / ``max_value`` に当たる)。
+    ``int()`` が受け付けても元の文字列に戻らない値 (前後の空白、符号、
+    先頭の 0、全角の数字など) は無効。数値入力に渡すと、保存されている年が
+    別の文字列に書き換わる。
+    """
+    assert _common._as_valid_year(value, 2030) == expected
+
+
+@pytest.mark.parametrize("entry_type", ["article", "misc"])
+@pytest.mark.parametrize("year", INVALID_YEARS)
+def test_form_opens_with_an_invalid_saved_year_as_a_text_input(
+    entry_type: str, year: str
+) -> None:
+    """無効な年の論文でも、警告を出し、文字の入力欄で編集フォームが開く.
+
+    年は元の値のまま入力欄に入る (要件 7.1)。
+    """
+    at = run_form(entry_type, {"title": "A Study of Forms", "year": year})
+
+    form_result(at)  # 例外なく実行された
+    assert displayed_fields(at)["year"] == "text_input"
+    assert at.text_input(key="year").value == year
+    assert any(year in warning.value for warning in at.warning)
+
+
+@pytest.mark.parametrize("entry_type", ["article", "misc"])
+@pytest.mark.parametrize("year", INVALID_YEARS)
+def test_form_keeps_an_invalid_saved_year_when_it_is_not_changed(
+    entry_type: str, year: str
+) -> None:
+    """無効な年の論文を、年に触れずに保存しても、元の年と他の項目が保たれる.
+
+    (要件 7.2)
+    """
+    initial = {"title": "A Study of Forms", "year": year}
+    at = run_form(entry_type, initial)
+
+    assert form_result(at) == {"ENTRYTYPE": entry_type, **initial}
+
+
+@pytest.mark.parametrize("year", [" 2020", "2020 ", " n.d. ", "   "])
+def test_form_keeps_an_invalid_saved_year_with_surrounding_spaces(
+    year: str,
+) -> None:
+    """前後の空白を持つ年も、整数として往復しないので無効で、触らなければ保たれる.
+
+    ``Entry`` を作るときは前後の空白が除かれるので、作った後に設定した値
+    で確かめる (要件 7.1, 7.2)。
+    """
+    at = run_form(
+        "misc", {"title": "A Note on Forms"}, unstripped={"year": year}
+    )
+
+    assert displayed_fields(at)["year"] == "text_input"
+    assert at.text_input(key="year").value == year
+    assert form_result(at) == {
+        "ENTRYTYPE": "misc",
+        "title": "A Note on Forms",
+        "year": year,
+    }
+
+
+@pytest.mark.parametrize("entry_type", ["article", "misc"])
+@pytest.mark.parametrize("year", INVALID_YEARS)
+def test_form_saves_the_corrected_year(entry_type: str, year: str) -> None:
+    """無効な年を入力し直すと、入力した年で保存される (要件 7.3).
+
+    ほかの項目は変わらない。
+    """
+    initial = {"title": "A Study of Forms", "year": year}
+    at = run_form(entry_type, initial)
+
+    fill(at, {"year": "2019"})
+
+    assert form_result(at) == {
+        "ENTRYTYPE": entry_type,
+        "title": "A Study of Forms",
+        "year": "2019",
+    }
+
+
+def test_form_saves_a_corrected_year_without_surrounding_spaces() -> None:
+    """入力し直した年の前後の空白は除かれる (``Entry`` の値の扱いと同じ)."""
+    at = run_form("misc", {"year": "n.d."})
+
+    fill(at, {"year": "  2019 "})
+
+    assert form_result(at)["year"] == "2019"
+
+
+def test_form_saves_what_is_typed_even_when_it_is_still_not_a_valid_year() -> (
+    None
+):
+    """入力し直した値が無効な年のままでも、入力した値で保存される.
+
+    入力欄は文字なので値を拒否しない。保存されている年が無効な間は、警告が
+    出続ける (要件 7.3)。
+    """
+    at = run_form("misc", {"year": "n.d."})
+
+    fill(at, {"year": "c. 2019"})
+
+    assert form_result(at)["year"] == "c. 2019"
+    assert at.warning
+
+
+@pytest.mark.parametrize("cleared", ["", "   "])
+def test_form_removes_the_year_that_is_emptied_in_the_text_input(
+    cleared: str,
+) -> None:
+    """文字の入力欄で年を空欄 (空白だけを含む) にすると、年が除かれる.
+
+    ほかの項目と同じ扱い。年が必須のタイプでは、年がないので、登録・更新の
+    既存の必須項目の検証が拒否する。
+    """
+    initial = {**_FILLED_ENTRY, "year": "n.d."}
+    at = run_form("article", initial)
+
+    fill(at, {"year": cleared})
+
+    result = form_result(at)
+    assert "year" not in result
+    assert MAP_REQUIRED_FIELDS["article"] - set(result) == {"year"}
+    assert result == {
+        "ENTRYTYPE": "article",
+        **{k: v for k, v in _FILLED_ENTRY.items() if k != "year"},
+    }
+
+
+def test_form_removes_an_optional_year_that_is_emptied() -> None:
+    """年が必須でないタイプでは、年を空にして保存すると年が除かれる."""
+    at = run_form("misc", {"title": "A Note on Forms", "year": "n.d."})
+
+    fill(at, {"year": ""})
+
+    assert form_result(at) == {"ENTRYTYPE": "misc", "title": "A Note on Forms"}
+
+
+@pytest.mark.parametrize("year", ["1000", "1999", "2020", "2025"])
+def test_form_keeps_the_number_input_for_a_valid_saved_year(year: str) -> None:
+    """有効な年 (整数として往復し、範囲内) は、警告なしの数値入力のまま.
+
+    保存される値も変わらない (要件 7 は無効な年だけを変える)。
+    """
+    at = run_form("article", {**_FILLED_ENTRY, "year": year})
+
+    assert form_result(at)["year"] == year
+    assert displayed_fields(at)["year"] == "number_input"
+    assert at.number_input(key="year").value == int(year)
+    assert not at.warning
+
+
+@pytest.fixture
+def frozen_today(monkeypatch: pytest.MonkeyPatch) -> date:
+    """``custom_entry`` が見る今日の日付を 2030-06-15 に固定する.
+
+    年の範囲の上限 (来年) を、テストの実行日に依存させないため。
+    """
+
+    class FrozenDate(date):
+        @classmethod
+        def today(cls) -> "FrozenDate":
+            return cls(2030, 6, 15)
+
+    monkeypatch.setattr(_common, "date", FrozenDate)
+    return FrozenDate.today()
+
+
+@pytest.mark.parametrize(
+    "year, widget",
+    [
+        ("999", "text_input"),
+        ("1000", "number_input"),
+        ("2031", "number_input"),
+        ("2032", "text_input"),
+    ],
+)
+def test_form_switches_the_year_input_at_the_edges_of_the_range(
+    frozen_today: date, year: str, widget: str
+) -> None:
+    """数値入力で入力できる範囲 (1000 〜 来年) の端で入力欄が切り替わる.
+
+    今日が 2030 年なら、範囲は 1000 〜 2031。範囲の中の端は数値入力、すぐ
+    外は警告つきの文字の入力欄になる (要件 7.1)。
+    """
+    at = run_form("article", {**_FILLED_ENTRY, "year": year})
+
+    assert form_result(at)["year"] == year
+    assert displayed_fields(at)["year"] == widget
+    assert bool(at.warning) == (widget == "text_input")
+
+
+def year_switch_screen(initials: list) -> None:
+    """選んだ論文の ``custom_entry`` を出す画面 (AppTest 用).
+
+    編集する論文を選び直したときに、同じキー ``year`` の入力欄が数値入力と
+    文字の入力欄のあいだで切り替わっても動くことを確かめるための画面。
+    """
+    import streamlit as st
+
+    from paper_manager.app.components import custom_entry
+    from paper_manager.entry import Entry
+
+    index = st.selectbox("論文", options=range(len(initials)), key="which")
+    entry = custom_entry(Entry({**initials[index], "ENTRYTYPE": "misc"}))
+    st.session_state["form_result"] = dict(entry)
+
+
+def test_form_follows_the_year_when_another_entry_is_selected() -> None:
+    """選ぶ論文を変えると、その論文の年に合った入力欄に切り替わる.
+
+    無効な年 → 有効な年 → 別の無効な年と選び直しても、例外にならず、元の
+    値が保たれる (要件 7.1, 7.2)。
+    """
+    initials = [
+        {"title": "First", "year": "n.d."},
+        {"title": "Second", "year": "2020"},
+        {"title": "Third", "year": "2020a"},
+    ]
+    at = AppTest.from_function(
+        year_switch_screen,
+        default_timeout=APP_TIMEOUT_SECONDS,
+        args=(initials,),
+    ).run()
+
+    for index in (0, 1, 2, 1, 0):
+        at.selectbox(key="which").select(index).run()
+
+        result = form_result(at)
+        expected = initials[index]["year"]
+        assert result["year"] == expected
+        valid = expected == "2020"
+        assert displayed_fields(at)["year"] == (
+            "number_input" if valid else "text_input"
+        )
+        assert bool(at.warning) != valid
+
+
+def test_form_keeps_the_year_entered_across_reruns() -> None:
+    """年のない新しいエントリで入力した年は、画面が再実行されても保たれる.
+
+    登録ページの手動入力の使い方に当たる (数値入力のまま、要件 7 の対象外)。
+    """
+    at = run_form("misc")
+    fill(at, {"year": 2019})
+
+    at.run()
+
+    assert form_result(at) == {"ENTRYTYPE": "misc", "year": "2019"}
+    assert displayed_fields(at)["year"] == "number_input"
+    assert not at.warning
 
 
 # --- PDF アップロード欄: pdf_upload_form (要件 9.12) -----------------------
