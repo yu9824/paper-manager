@@ -5,6 +5,7 @@
 
 主な関数:
     load_bib: BibTeXファイルまたは文字列から論文エントリを読み込む
+    format_person: BibTeXの人名を ``<名> <姓>`` の形に整形する
 
 例:
     >>> from paper_manager.bib import load_bib
@@ -22,6 +23,6 @@
 
 """
 
-from ._load import load_bib
+from ._load import format_person, load_bib
 
-__all__ = ("load_bib",)
+__all__ = ("format_person", "load_bib")
