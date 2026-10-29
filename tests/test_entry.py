@@ -29,6 +29,15 @@
   残した修正前の規則が、このモジュールの独立した写しと一致すること
 - フォルダ名が保存先ディレクトリの長さに依存しないこと (known-bug-fixes
   要件 1.3)
+- 引用キー (known-bug-fixes 要件 13): ``get_key`` が作るキーに空白・``,``・
+  ``{``・``}`` が入らず、``, `` 区切りの著者、接尾辞付きの筆頭著者
+  (``King, Jr., Martin``)、波括弧を含む人名、空白を含む年から作ったキーを
+  pybtex が解析できること (同 13.1)。これらの文字を含まない著者と年からは、
+  修正前の ``get_key`` の写しと完全に同じキーになること (同 13.2)。
+  ``sanitize_citation_key`` が除く文字だけを除いて冪等であること、
+  ``unique_citation_keys`` が整えたうえで大文字小文字を区別せずに重複しない
+  キーを入力と同じ長さ・順序で返し、pybtex の ``BibliographyData`` に全キー
+  を加えても重複の例外が出ないこと (同 13.4)
 - 修正前の名前 (``legacy_pdf_dir_name``) が KB7 の範囲で、修正後と異なり
   255 文字以内のときだけ値を持つこと。PDF 一覧の取得で、修正前の名前の
   フォルダが現在の名前へ移り、移す先が既にあれば何も移さずに警告が出ること
@@ -54,8 +63,15 @@ OS の判定は ``paper_manager.entry._entry`` の ``platform.system()`` で行�
 """
 
 import errno
+import io
 import logging
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import (
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+)
 from itertools import product
 from pathlib import Path
 from types import SimpleNamespace
@@ -70,8 +86,18 @@ from conftest import (
     run_page,
     write_pdf,
 )
+from pybtex.database import BibliographyData, BibliographyDataError
+from pybtex.database import Entry as PybtexEntry
+from pybtex.database.input import bibtex
 
-from paper_manager.entry import Entry, PaperList, _entry
+from paper_manager.bib import load_bib
+from paper_manager.entry import (
+    Entry,
+    PaperList,
+    _entry,
+    sanitize_citation_key,
+    unique_citation_keys,
+)
 from paper_manager.entry._entry import sanitize_filename
 from paper_manager.helper import to_display_path, to_fs_path
 
@@ -324,6 +350,469 @@ def test_get_key_avoids_existing_key_built_from_defaults(
     entry = make_partial_entry(drop=("author", "year"))
 
     assert entry.get_key(["UnknownYYYY_0"]) == "UnknownYYYY_1"
+
+
+# --- 引用キー: 読めない文字の除去と重複の解消 (known-bug-fixes 要件 13) -----
+
+# pybtex が波括弧で囲んだ引用キーの区切りとして読む文字 (空白・``,``・``}``)
+# と、波括弧の対応を崩す ``{``.
+UNREADABLE_PUNCTUATION = ",{}"
+# ``str.isspace`` が真になる文字 (最後の空白は U+3000)
+WHITESPACE_CHARS = tuple(
+    chr(code) for code in range(0x3100) if chr(code).isspace()
+)
+
+
+def _is_readable_key(key: str) -> bool:
+    """``key`` が空白・``,``・``{``・``}`` を含まなければ真を返す."""
+    return key != "" and not any(
+        c.isspace() or c in UNREADABLE_PUNCTUATION for c in key
+    )
+
+
+def _get_key_before_fix(entry: Entry, keys: Iterable[str]) -> str:
+    """修正前の ``Entry.get_key`` の写し (後方互換の比較の基準).
+
+    筆頭著者の ``" "`` だけを除き、年と連番をつなぐ。既存のキーとの重複は
+    大文字小文字を区別して判定する。
+    """
+    i = 0
+    st_keys = set(keys)
+    first_author = (
+        entry["author"].split(" and ")[0] if "author" in entry else "Unknown"
+    )
+    while (
+        key := "{0}{1}_{2}".format(
+            first_author.replace(" ", ""), entry.get("year", "YYYY"), i
+        )
+    ) in st_keys:
+        i += 1
+    return key
+
+
+def _parse_keys(key: str) -> list[str]:
+    """``key`` を引用キーにした最小の BibTeX を pybtex で解析して返す.
+
+    Returns
+    -------
+    list[str]
+        pybtex が読み取ったエントリの引用キーの一覧。
+    """
+    data = bibtex.Parser().parse_string(f"@article{{{key}, title = {{T}}}}")
+    return list(data.entries.keys())
+
+
+def _add_to_bibliography(keys: Iterable[str]) -> BibliographyData:
+    """pybtex の ``BibliographyData`` に ``keys`` を順に加えて返す.
+
+    引用キーが (大文字小文字を区別せずに) 重複すると
+    ``BibliographyDataError`` が送出される。
+    """
+    data = BibliographyData()
+    for key in keys:
+        data.add_entry(key, PybtexEntry("article"))
+    return data
+
+
+# 修正前と同じキーになる著者・年 (読めない文字を含まない)
+READABLE_AUTHORS = (
+    "Alice Smith",
+    "Alice Marie Smith and Bob Jones and Carol Orphan",
+    "Smith",
+    "Alice  Smith",
+    "O'Brien Pat",
+    "Dr. A.-B. Smith-Jones",
+    "Zoë Müller",
+    "山田 太郎",
+    "van der Waals Johannes Diderik",
+    'Say "Hi"',
+    "Back\\slash",
+    "Alice (Al) Smith",
+)
+READABLE_YEARS = ("2020", "1999", "YYYY", "n.d.", "2020a", "20-21", "'20")
+
+# 空白・``,``・``{``・``}`` を含む著者と年から、除いた後の期待するキーを返す
+UNREADABLE_KEY_CASES = [
+    pytest.param(
+        "Smith, Alice", "2020", "SmithAlice2020_0", id="comma-space-author"
+    ),
+    pytest.param("Smith,Alice", "2020", "SmithAlice2020_0", id="comma-author"),
+    pytest.param(
+        "Smith, Alice and Bob Jones",
+        "2020",
+        "SmithAlice2020_0",
+        id="comma-author-of-many",
+    ),
+    pytest.param(
+        "King, Jr., Martin Luther",
+        "2020",
+        "KingJr.MartinLuther2020_0",
+        id="suffix-form",
+    ),
+    pytest.param(
+        "Doe, {Jr.}, John", "2020", "DoeJr.John2020_0", id="braced-suffix"
+    ),
+    pytest.param(
+        'M{\\"u}ller, Hans', "2020", 'M\\"ullerHans2020_0', id="braces-accent"
+    ),
+    pytest.param(
+        "{ACME Collaboration}",
+        "2020",
+        "ACMECollaboration2020_0",
+        id="braced-name",
+    ),
+    pytest.param("{{A} B} C", "2020", "ABC2020_0", id="nested-braces"),
+    pytest.param(
+        "Alice Smith", "2020 a", "AliceSmith2020a_0", id="year-space"
+    ),
+    pytest.param("Alice Smith", "n. d.", "AliceSmithn.d._0", id="year-dots"),
+    pytest.param("Alice Smith", "20,20", "AliceSmith2020_0", id="year-comma"),
+    pytest.param(
+        "Alice Smith", "{2020}", "AliceSmith2020_0", id="year-braces"
+    ),
+    pytest.param("Alice\tSmith", "2020", "AliceSmith2020_0", id="tab"),
+    pytest.param("Alice\nSmith", "2020", "AliceSmith2020_0", id="newline"),
+    pytest.param("Alice\u00a0Smith", "2020", "AliceSmith2020_0", id="nbsp"),
+    pytest.param(
+        "Alice\u3000Smith", "2020", "AliceSmith2020_0", id="ideographic-space"
+    ),
+    pytest.param("Alice Smith", "20\t20", "AliceSmith2020_0", id="year-tab"),
+]
+
+
+@pytest.mark.parametrize("year", READABLE_YEARS)
+@pytest.mark.parametrize("author", READABLE_AUTHORS)
+def test_get_key_is_unchanged_without_unreadable_characters(
+    make_entry: Callable[..., Entry], author: str, year: str
+) -> None:
+    """読めない文字を含まない著者と年からは、修正前と同じキーを作る (13.2).
+
+    既存のキーがない場合と、既存のキーと重なる場合の両方で、修正前の
+    ``get_key`` の写しと完全に一致する。
+    """
+    entry = make_entry(author=author, year=year)
+    first = _get_key_before_fix(entry, ())
+    second = _get_key_before_fix(entry, {first})
+    existing_sets: list[Collection[str]] = [
+        (),
+        {first},
+        {first, second},
+        {"Other2020_0", first.lower()},
+    ]
+
+    for existing in existing_sets:
+        assert entry.get_key(existing) == _get_key_before_fix(
+            entry, existing
+        ), existing
+
+
+@pytest.mark.parametrize(("author", "year", "expected"), UNREADABLE_KEY_CASES)
+def test_get_key_drops_unreadable_characters(
+    make_entry: Callable[..., Entry], author: str, year: str, expected: str
+) -> None:
+    """空白・``,``・``{``・``}`` を除き、ほかの文字は変えない (13.1)."""
+    entry = make_entry(author=author, year=year)
+
+    key = entry.get_key([])
+
+    assert key == expected
+    assert _is_readable_key(key)
+
+
+@pytest.mark.parametrize(("author", "year", "expected"), UNREADABLE_KEY_CASES)
+def test_get_key_result_is_readable_by_pybtex(
+    make_entry: Callable[..., Entry], author: str, year: str, expected: str
+) -> None:
+    """作ったキーを引用キーにした BibTeX を pybtex が解析できる (13.1)."""
+    key = make_entry(author=author, year=year).get_key([])
+
+    assert _parse_keys(key) == [key]
+
+
+def test_get_key_checks_duplicates_after_removing_characters(
+    make_entry: Callable[..., Entry],
+) -> None:
+    """重複の判定は、読めない文字を除いたキーで行う (13.1)."""
+    entry = make_entry(author="Smith, Alice", year="2020")
+
+    assert entry.get_key(["SmithAlice2020_0"]) == "SmithAlice2020_1"
+    assert (
+        entry.get_key(["SmithAlice2020_0", "SmithAlice2020_1"])
+        == "SmithAlice2020_2"
+    )
+    # 整える前の形は既存のキーとして数えない (整えたキーが空いていれば使う)
+    assert entry.get_key(["Smith, Alice2020_0"]) == "SmithAlice2020_0"
+
+
+def test_get_key_duplicate_check_stays_case_sensitive(
+    make_entry: Callable[..., Entry],
+) -> None:
+    """既存のキーとの重複判定は、大文字小文字を区別したままにする (13.2)."""
+    entry = make_entry(author="Alice Smith", year="2020")
+
+    assert entry.get_key(["alicesmith2020_0"]) == "AliceSmith2020_0"
+
+
+# 2.4 の ``load_bib`` が返す人名の形 (接尾辞、波括弧、アクセント) を含む著者
+BIB_AUTHORS = (
+    "King, Jr., Martin Luther",
+    "King, Jr.,",
+    ", Jr., Martin",
+    "Doe, {Jr.}, John",
+    "{ACME Collaboration}",
+    "{\\'E}mile Zola",
+    'M{\\"u}ller, Hans',
+    "{\\relax Ch}arles Dickens",
+    "O'Brien, Pat",
+    "山田, 太郎",
+    "van der Waals, Johannes Diderik",
+    "{\\O}ystein Ore",
+    "Gates, III, William Henry",
+    "{{Nested} Braces} Inc",
+    "Smith, Alice",
+    "Alice Smith",
+)
+
+
+def _entry_from_bib(first_author: str, year: str = "2020") -> Entry:
+    """``load_bib`` の出力から Entry を作る (筆頭著者は ``first_author``)."""
+    bib = (
+        "@article{k, author = {%s and Alice Jones}, title = {T},"
+        " journal = {J}, year = {%s}}" % (first_author, year)
+    )
+    return Entry(dict(load_bib(io.StringIO(bib))["k"]))
+
+
+@pytest.mark.parametrize("raw", BIB_AUTHORS)
+def test_get_key_from_load_bib_output_is_readable_by_pybtex(raw: str) -> None:
+    """``load_bib`` の人名から作ったキーを pybtex が解析できる (13.1)."""
+    key = _entry_from_bib(raw).get_key([])
+
+    assert _is_readable_key(key)
+    assert _parse_keys(key) == [key]
+
+
+def test_get_key_for_suffix_first_author_has_no_comma() -> None:
+    """接尾辞の形 (``King, Jr., Martin``) の筆頭著者でも ``,`` が入らない."""
+    entry = _entry_from_bib("King, Jr., Martin Luther")
+
+    assert entry["author"].split(" and ")[0] == "King, Jr., Martin Luther"
+    assert entry.get_key([]) == "KingJr.MartinLuther2020_0"
+
+
+@pytest.mark.parametrize("char", [*WHITESPACE_CHARS, ",", "}"], ids=repr)
+def test_pybtex_cannot_read_a_key_with_a_separator_character(
+    char: str,
+) -> None:
+    """空白・``,``・``}`` を含むキーは、pybtex が元のままでは読めない.
+
+    pybtex はこれらの文字をキーの区切りとして読む (前提の確認)。``{`` は
+    pybtex が読めるが、波括弧の対応を崩さないために合わせて除く。
+    """
+    key = f"A{char}B2020_0"
+
+    try:
+        keys = _parse_keys(key)
+    except Exception:  # noqa: BLE001  pybtex が構文エラーにする場合
+        return
+    assert keys != [key]
+
+
+@pytest.mark.parametrize("char", [*WHITESPACE_CHARS, ",", "{", "}"], ids=repr)
+def test_sanitize_citation_key_removes_each_unreadable_character(
+    char: str,
+) -> None:
+    """空白 (``str.isspace`` が真の文字)・``,``・``{``・``}`` を除く (13.1)."""
+    assert (
+        sanitize_citation_key(f"Alice{char}Smith2020_0") == "AliceSmith2020_0"
+    )
+    assert sanitize_citation_key(f"{char}Alice{char}{char}") == "Alice"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "AliceSmith2020_0",
+        "O'Brien2020_0",
+        "Smith.Jr-2020_0",
+        'M\\"uller2020_0',
+        "Zoë山田2020_0",
+        'a"b',
+        "a\\b",
+        "a:b/c",
+        "a#b%c@d(e)f=g",
+        "Unknown",
+        "x" * 300,
+    ],
+)
+def test_sanitize_citation_key_keeps_readable_keys(key: str) -> None:
+    """読めない文字を含まないキーはそのまま返す (13.2)."""
+    assert sanitize_citation_key(key) == key
+
+
+@pytest.mark.parametrize(
+    "key", ["", " ", ",", "{}", " \t\n,{ }", "\u3000"], ids=repr
+)
+def test_sanitize_citation_key_returns_unknown_when_nothing_is_left(
+    key: str,
+) -> None:
+    """除いた結果が空になるときは ``Unknown`` にする (13.1)."""
+    assert sanitize_citation_key(key) == "Unknown"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "Smith, Alice2020_0",
+        'M{\\"u}ller2020_0',
+        "A B\tC\nD,E{F}G",
+        " , ",
+        "AliceSmith2020_0",
+        "Unknown",
+    ],
+    ids=repr,
+)
+def test_sanitize_citation_key_is_idempotent_and_readable(key: str) -> None:
+    """整えたキーを整えても変わらず、pybtex が解析できる (13.1)."""
+    once = sanitize_citation_key(key)
+
+    assert sanitize_citation_key(once) == once
+    assert _is_readable_key(once)
+    assert _parse_keys(once) == [once]
+
+
+def test_pybtex_rejects_keys_that_differ_only_in_case() -> None:
+    """pybtex は大文字小文字だけ違うキーを重複として例外にする (前提の確認)."""
+    with pytest.raises(BibliographyDataError):
+        _add_to_bibliography(["Smith2020_0", "smith2020_0"])
+
+
+def test_unique_citation_keys_of_empty_input_is_empty() -> None:
+    """空の入力には空のリストを返す (13.4)."""
+    assert unique_citation_keys([]) == []
+    assert unique_citation_keys(()) == []
+
+
+def test_unique_citation_keys_applies_sanitize_without_duplicates() -> None:
+    """重複がなければ、各要素に ``sanitize_citation_key`` を適用したもの."""
+    keys = ["Smith, Alice2020_0", "Doe2020_0", "A B", "{}", "King,Jr.2020_1"]
+
+    assert unique_citation_keys(keys) == [
+        sanitize_citation_key(key) for key in keys
+    ]
+    assert unique_citation_keys(tuple(keys)) == unique_citation_keys(keys)
+
+
+@pytest.mark.parametrize(
+    ("keys", "expected"),
+    [
+        pytest.param(
+            ["Smith2020_0", "smith2020_0"],
+            ["Smith2020_0", "smith2020_0_1"],
+            id="case-only",
+        ),
+        pytest.param(
+            ["SMITH", "Smith", "smith"],
+            ["SMITH", "Smith_1", "smith_2"],
+            id="three-case-variants",
+        ),
+        pytest.param(
+            ["Smith,Alice", "SmithAlice"],
+            ["SmithAlice", "SmithAlice_1"],
+            id="same-after-sanitize",
+        ),
+        pytest.param(
+            ["A b", "a, B", "AB"],
+            ["Ab", "aB_1", "AB_2"],
+            id="same-after-sanitize-and-case",
+        ),
+        pytest.param(
+            ["Key", "key", "key_1"],
+            ["Key", "key_2", "key_1"],
+            id="skips-existing-suffixed-key",
+        ),
+        pytest.param(
+            ["key_1", "key", "KEY"],
+            ["key_1", "key", "KEY_2"],
+            id="suffixed-key-before-duplicate",
+        ),
+        pytest.param(
+            ["a", "A", "a_1", "a_2"],
+            ["a", "A_3", "a_1", "a_2"],
+            id="smallest-free-number",
+        ),
+        pytest.param(
+            ["a", "A", "A", "a_1"],
+            ["a", "A_2", "A_3", "a_1"],
+            id="generated-keys-do-not-collide",
+        ),
+        pytest.param(
+            ["a", "a", "a"], ["a", "a_1", "a_2"], id="exact-duplicates"
+        ),
+        pytest.param(["", " "], ["Unknown", "Unknown_1"], id="empty-keys"),
+        # pybtex は ``str.lower`` で比べる (``casefold`` ではない)
+        pytest.param(
+            ["Émile2020_0", "émile2020_0"],
+            ["Émile2020_0", "émile2020_0_1"],
+            id="non-ascii-case-differs",
+        ),
+        pytest.param(
+            ["İ", "i̇"], ["İ", "i̇_1"], id="dotted-capital-i"
+        ),
+        pytest.param(["ß", "SS"], ["ß", "SS"], id="sharp-s-is-not-ss"),
+    ],
+)
+def test_unique_citation_keys_resolves_case_insensitive_duplicates(
+    keys: list[str], expected: list[str]
+) -> None:
+    """整えたうえで大文字小文字を区別せずに重複したら、後のものに連番を付ける.
+
+    連番は他のキー (入力の後ろのキーも含む) と重ならない最小の値で、
+    pybtex の ``BibliographyData`` に全キーを加えても例外が出ない (13.4)。
+    大文字小文字の判定は pybtex と同じ ``str.lower`` で、ASCII に限らない。
+    """
+    result = unique_citation_keys(keys)
+
+    assert result == expected
+    assert len(_add_to_bibliography(result).entries) == len(keys)
+
+
+def test_unique_citation_keys_properties_over_many_combinations() -> None:
+    """キーの組み合わせすべてで、長さ・順序・一意性・冪等性が保たれる (13.4)."""
+    pool = ("a", "A", "a_1", "A_1", "a b", "a,", "{a}", "b")
+
+    for keys in product(pool, repeat=4):
+        result = unique_citation_keys(keys)
+        sanitized = [sanitize_citation_key(key) for key in keys]
+        first_seen: dict[str, int] = {}
+        for i, key in enumerate(sanitized):
+            first_seen.setdefault(key.lower(), i)
+        label = f"{keys!r} -> {result!r}"
+
+        assert len(result) == len(keys), label
+        assert len({key.lower() for key in result}) == len(keys), label
+        assert all(_is_readable_key(key) for key in result), label
+        assert len(_add_to_bibliography(result).entries) == len(keys), label
+        assert unique_citation_keys(result) == result, label
+        for i, (before, after) in enumerate(zip(sanitized, result)):
+            if first_seen[before.lower()] == i:
+                assert after == before, label  # 最初に現れたキーは変えない
+            else:
+                prefix, _, number = after.rpartition("_")
+                assert prefix == before and number.isdigit(), label
+        if len(first_seen) == len(keys):
+            assert result == sanitized, label  # 重複がなければ整えるだけ
+
+
+def test_unique_citation_keys_does_not_touch_the_input() -> None:
+    """入力を書き換えず、新しいリストを返す (13.3: 保存された ID を守る)."""
+    keys = ["Smith, A2020_0", "smith, a2020_0"]
+    snapshot = list(keys)
+
+    result = unique_citation_keys(keys)
+
+    assert keys == snapshot
+    assert result is not keys
 
 
 # --- PDF フォルダ名 pdf_dir_name の形式と既定値 (要件 2.3) ------------------

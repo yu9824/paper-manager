@@ -11,6 +11,7 @@ from collections.abc import (
     KeysView,
     Mapping,
     MutableMapping,
+    Sequence,
     ValuesView,
 )
 from datetime import datetime
@@ -48,12 +49,84 @@ MAX_DIRNAME_LENGTH = 200  # フォルダ名の最大長
 # できた長さ)。これを超える修正前の名前のフォルダは存在しえない
 _MAX_LEGACY_DIRNAME_LENGTH = 255
 
+# BibTeX の引用キーとして読めない文字のうち、空白以外の文字。pybtex は引用
+# キーを空白・``,``・``}`` の手前までとして読む。``{`` は波括弧の対応を崩さない
+# ために合わせて除く
+_UNREADABLE_KEY_CHARS = frozenset(",{}")
+
 # 論文リストのファイルが壊れているときに画面に出す警告 (修正前からの文言)
 _BROKEN_PAPER_LIST_WARNING = "Broken paper list (json)"
 # 壊れた論文リストのファイルの退避先の名前の日時の部分の書式。退避先は
 # ``<ファイル名>.broken-<日時>`` (衝突時は ``-1``、``-2`` と連番)。復元が
 # 使う ``list.json.backup`` (復元のたびに上書きされる) とは別の名前にする
 _BROKEN_BACKUP_TIME_FORMAT = "%Y%m%d_%H%M%S"
+
+
+def sanitize_citation_key(key: str) -> str:
+    """Remove the characters that BibTeX cannot read from a citation key.
+
+    pybtex reads the citation key of a brace-delimited entry up to the next
+    whitespace, ``,`` or ``}``. Whitespace (every character for which
+    :meth:`str.isspace` is true), ``,``, ``{`` and ``}`` are removed (``{`` is
+    removed as well so that braces stay balanced). Every other character
+    (``.``, ``-``, ``'``, ``\\``, non-ASCII characters and so on) is kept, so
+    a key that is readable today does not change.
+
+    Parameters
+    ----------
+    key : str
+        A citation key.
+
+    Returns
+    -------
+    str
+        The key without the characters above, or ``Unknown`` when nothing
+        is left. Applying the function again returns the same key.
+    """
+    cleaned = "".join(
+        c for c in key if not (c.isspace() or c in _UNREADABLE_KEY_CHARS)
+    )
+    return cleaned or "Unknown"
+
+
+def unique_citation_keys(keys: Sequence[str]) -> list[str]:
+    """Return citation keys that are unique ignoring case.
+
+    pybtex treats citation keys case-insensitively and raises an exception
+    when two keys differ only in case. Each key is cleaned with
+    :func:`sanitize_citation_key`. A key that duplicates an earlier one
+    (ignoring case) gets the suffix ``_<n>`` (the smallest ``n`` >= 1 that no
+    other key, earlier or later, uses). The first occurrence of a key is
+    never changed.
+
+    Parameters
+    ----------
+    keys : Sequence[str]
+        Citation keys, for example the IDs of the entries to export.
+
+    Returns
+    -------
+    list[str]
+        Keys in the same length and order as ``keys``, with no duplicates
+        ignoring case. Without duplicates, each element is
+        ``sanitize_citation_key`` applied to the input element.
+    """
+    sanitized = [sanitize_citation_key(key) for key in keys]
+    # pybtex compares keys with ``str.lower``. Every cleaned key is reserved
+    # up front so that a generated key never takes over a later key.
+    taken = {key.lower() for key in sanitized}
+    seen: set[str] = set()
+    result: list[str] = []
+    for key in sanitized:
+        if key.lower() in seen:
+            n = 1
+            while f"{key}_{n}".lower() in taken:
+                n += 1
+            key = f"{key}_{n}"
+            taken.add(key.lower())
+        seen.add(key.lower())
+        result.append(key)
+    return result
 
 
 def _warn_pdf_problem(message: str, level: int) -> None:
@@ -428,7 +501,11 @@ class Entry(MutableMapping):
         Returns
         -------
         str
-            A unique key based on the first author's name and the year.
+            A unique key based on the first author's name and the year,
+            ``<first_author><year>_<n>``. Whitespace, ``,``, ``{`` and ``}``
+            are removed (see :func:`sanitize_citation_key`) because BibTeX
+            cannot read them in a citation key. The duplicate check against
+            ``keys`` is case-sensitive.
         """
         i = 0
         st_keys = set(keys)
@@ -439,10 +516,10 @@ class Entry(MutableMapping):
             else "Unknown"
         )
         while (
-            key := "{0}{1}_{2}".format(
-                first_author.replace(" ", ""),
-                self.get(COLNAME_YEAR, "YYYY"),
-                i,
+            key := sanitize_citation_key(
+                "{0}{1}_{2}".format(
+                    first_author, self.get(COLNAME_YEAR, "YYYY"), i
+                )
             )
         ) in st_keys:
             i += 1

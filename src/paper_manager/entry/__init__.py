@@ -11,6 +11,12 @@
         ファイルなし・壊れている) とともに返す (PaperListLoad)
     backup_broken_paper_list: 壊れたファイルを日時入りの別名へ複製する
 
+引用キー:
+    sanitize_citation_key: BibTeX の引用キーとして読めない文字 (空白・``,``・
+        ``{``・``}``) を除く
+    unique_citation_keys: 整えたうえで、大文字小文字を区別せずに重複しない
+        引用キーの並びにする
+
 例:
     >>> from paper_manager.entry import Entry, PaperList
     >>> entry = Entry({
@@ -32,6 +38,8 @@ from ._entry import (
     PaperListStatus,
     backup_broken_paper_list,
     load_paper_list,
+    sanitize_citation_key,
+    unique_citation_keys,
 )
 
 __all__ = (
@@ -41,4 +49,6 @@ __all__ = (
     "PaperListStatus",
     "backup_broken_paper_list",
     "load_paper_list",
+    "sanitize_citation_key",
+    "unique_citation_keys",
 )
