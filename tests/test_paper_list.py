@@ -18,6 +18,9 @@
 - 壊れたファイルの退避 (``backup_broken_paper_list``) が、元のファイルを
   残したまま日時入りの名前 (衝突時は連番) へ複製すること (known-bug-fixes
   要件 10.3)
+- 先頭に BOM の付いた UTF-8 のファイルは、BOM の後が正しい形なら正常と
+  して読み込み (退避もしない)、BOM の後が壊れていれば壊れているとみなす
+  こと。保存は BOM なしの UTF-8 で書くこと (known-bug-fixes 要件 10.4)
 
 要件の番号は、注記がなければ test-suite spec のもの。
 
@@ -27,6 +30,7 @@
 記録して検証する (``AppTest`` を使うテストとは併用しない)。
 """
 
+import codecs
 import json
 import os
 import re
@@ -71,6 +75,9 @@ _HAND_WRITTEN_BYTES = HAND_WRITTEN_JSON.encode("utf-8")
 _TRUNCATED_UTF8 = _HAND_WRITTEN_BYTES[
     : _HAND_WRITTEN_BYTES.index("山".encode("utf-8")) + 1
 ]
+# UTF-8 の BOM (U+FEFF) のバイト列. 古いメモ帳や PowerShell 5 の
+# ``Out-File -Encoding utf8`` が、ファイルの先頭に付ける.
+UTF8_BOM = "\ufeff".encode("utf-8")
 # 文字列から整数への変換の桁数の上限 (既定は 4300 桁) を超える整数.
 # 上限のある版 (3.11 以降、3.9.14 / 3.10.7 以降) の ``json.loads`` は
 # ``ValueError`` を送出し、上限のない版は整数として読む (どちらでも
@@ -854,6 +861,384 @@ def test_from_file_does_not_back_up_broken_file(
 
     assert file_names(tmp_path) == ["list.json"]
     assert st_messages.warning == [BROKEN_WARNING]
+
+
+# --- 先頭に BOM の付いた UTF-8 (known-bug-fixes 要件 10.4) ----------------
+
+# BOM の後が正しい形のファイル. 先頭に BOM を足しても、足さない場合と同じ
+# 論文リストになる (``VALID_FILES`` の各ファイルの先頭に BOM を足す).
+VALID_FILES_WITH_BOM = [
+    pytest.param(UTF8_BOM + content, expected, id=f"bom-{name}")
+    for name, content, expected in VALID_FILES
+]
+# BOM の後が壊れているファイル (``BROKEN_JSON`` と ``BROKEN_BEYOND_JSON``
+# の各ファイルの先頭に BOM を足す). BOM を足しても壊れたままである.
+BROKEN_FILES_WITH_BOM = [
+    pytest.param(UTF8_BOM + content, id=f"bom-{name}")
+    for name, content in BROKEN_JSON + BROKEN_BEYOND_JSON
+]
+# BOM の後が JSON になっていない、または BOM が先頭以外にあるファイル.
+# BOM が 1 つ先頭にあるだけなら無視するが、それ以外の BOM は JSON の
+# 空白でも文字列の一部でもない位置にあれば、従来どおり壊れている.
+MISPLACED_BOM_FILES = [
+    pytest.param(UTF8_BOM, id="bom-only"),
+    pytest.param(UTF8_BOM + UTF8_BOM + b"{}", id="two-boms-then-empty-object"),
+    pytest.param(
+        UTF8_BOM + UTF8_BOM + _HAND_WRITTEN_BYTES, id="two-boms-then-entries"
+    ),
+    pytest.param(
+        UTF8_BOM + b" " + UTF8_BOM + b"{}", id="second-bom-after-space"
+    ),
+    pytest.param(b" " + UTF8_BOM + b"{}", id="bom-after-leading-space"),
+    pytest.param(b"\n" + UTF8_BOM + b"{}", id="bom-after-leading-newline"),
+    pytest.param(b"{" + UTF8_BOM + b"}", id="bom-inside-object"),
+    pytest.param(
+        b'{"a":' + UTF8_BOM + b' {"title": "x"}}', id="bom-before-value"
+    ),
+    pytest.param(b"{}" + UTF8_BOM, id="bom-at-the-end"),
+    pytest.param(UTF8_BOM + b"{}" + UTF8_BOM, id="bom-at-both-ends"),
+    pytest.param(UTF8_BOM[:2] + b"{}", id="truncated-bom"),
+    pytest.param(UTF8_BOM[:2], id="truncated-bom-only"),
+]
+# UTF-8 以外の BOM を持つファイル (中身はその文字コードで書いた ``{}``).
+# UTF-8 の BOM だけを無視するので、従来どおり UTF-8 として読めず壊れている.
+OTHER_BOM_FILES = [
+    pytest.param(
+        codecs.BOM_UTF16_LE + "{}".encode("utf-16-le"), id="utf16-le"
+    ),
+    pytest.param(
+        codecs.BOM_UTF16_BE + "{}".encode("utf-16-be"), id="utf16-be"
+    ),
+    pytest.param(
+        codecs.BOM_UTF16_LE + HAND_WRITTEN_JSON.encode("utf-16-le"),
+        id="utf16-le-entries",
+    ),
+    pytest.param(
+        codecs.BOM_UTF32_LE + "{}".encode("utf-32-le"), id="utf32-le"
+    ),
+    pytest.param(
+        codecs.BOM_UTF32_BE + "{}".encode("utf-32-be"), id="utf32-be"
+    ),
+    pytest.param(codecs.BOM_UTF16_LE, id="utf16-le-bom-only"),
+    pytest.param(codecs.BOM_UTF16_BE + b"{}", id="utf16-be-bom-ascii-body"),
+]
+
+
+def test_utf8_bom_constant_is_the_three_byte_utf8_signature() -> None:
+    """テストの BOM は UTF-8 の署名 (``EF BB BF``) である."""
+    assert UTF8_BOM == b"\xef\xbb\xbf"
+    assert UTF8_BOM == codecs.BOM_UTF8
+
+
+@pytest.mark.parametrize("content, expected", VALID_FILES_WITH_BOM)
+def test_load_valid_file_with_bom_is_ok(
+    tmp_path: Path,
+    st_messages: StMessages,
+    content: bytes,
+    expected: dict[str, dict[str, str]],
+) -> None:
+    """BOM の後が正しい形なら、壊れているとみなさず正常として読み込む.
+
+    論文リストの中身は、BOM を付けない同じ内容を読んだ結果と一致する。
+    読み込みはファイルを変えない (BOM も残す) (要件 10.4)。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+    plain = tmp_path / "plain.json"
+    plain.write_bytes(content[len(UTF8_BOM) :])
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.OK
+    assert reason is None
+    assert as_dicts(paper_list) == expected
+    assert as_dicts(paper_list) == as_dicts(load_paper_list(plain).paper_list)
+    for entry in paper_list.values():
+        assert isinstance(entry, Entry)
+    assert filepath.read_bytes() == content
+    assert file_names(tmp_path) == ["list.json", "plain.json"]
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+def test_load_file_written_by_to_file_with_bom_added_is_ok(
+    mixed_paper_list: PaperList, tmp_path: Path, st_messages: StMessages
+) -> None:
+    """``to_file`` が書いたファイルに BOM を足したものは、正常で中身が一致する."""
+    filepath = tmp_path / "list.json"
+    mixed_paper_list.to_file(filepath)
+    filepath.write_bytes(UTF8_BOM + filepath.read_bytes())
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.OK
+    assert reason is None
+    assert as_dicts(paper_list) == as_dicts(mixed_paper_list)
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+def test_load_file_with_bom_at_default_path_is_ok(
+    mixed_paper_list: PaperList, data_paths: DataPaths
+) -> None:
+    """パスを省略した場合も、BOM 付きの ``list.json`` は正常に読める."""
+    mixed_paper_list.to_file()
+    data_paths.list_file.write_bytes(
+        UTF8_BOM + data_paths.list_file.read_bytes()
+    )
+
+    paper_list, status, reason = load_paper_list()
+
+    assert status is PaperListStatus.OK
+    assert reason is None
+    assert as_dicts(paper_list) == as_dicts(mixed_paper_list)
+
+
+@pytest.mark.parametrize("content", BROKEN_FILES_WITH_BOM)
+def test_load_broken_file_with_bom_is_broken(
+    tmp_path: Path, st_messages: StMessages, content: bytes
+) -> None:
+    """BOM の後が壊れていれば、BOM が付いていても壊れているとみなす.
+
+    JSON として解析できない、UTF-8 として読めない、論文の一覧の形をして
+    いない、値が文字列でない、のどれでも従来どおりである (要件 10.1、10.4)。
+    論文リストは空で、ファイルを変えない。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.BROKEN
+    assert as_dicts(paper_list) == {}
+    assert isinstance(reason, str)
+    assert reason
+    assert filepath.read_bytes() == content
+    assert file_names(tmp_path) == ["list.json"]
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+def test_broken_reason_for_bom_file_keeps_the_wording(tmp_path: Path) -> None:
+    """BOM 付きで壊れたファイルの理由は、従来と同じ文言の始まりになる.
+
+    UTF-8 として読めなければ ``not valid utf-8: ...``、JSON として解析
+    できなければ ``not valid JSON: ...`` で、復号に ``utf-8-sig`` を使う
+    ことによる文言の変化はない。
+    """
+    undecodable = tmp_path / "undecodable.json"
+    undecodable.write_bytes(UTF8_BOM + HAND_WRITTEN_JSON.encode("shift_jis"))
+    not_json = tmp_path / "not-json.json"
+    not_json.write_bytes(UTF8_BOM + b"this is not json")
+
+    assert load_paper_list(undecodable).reason.startswith("not valid utf-8: ")
+    assert load_paper_list(not_json).reason.startswith("not valid JSON: ")
+
+
+@pytest.mark.parametrize("content", MISPLACED_BOM_FILES)
+def test_load_file_with_misplaced_or_bom_only_content_is_broken(
+    tmp_path: Path, st_messages: StMessages, content: bytes
+) -> None:
+    """BOM の後が JSON になっていない、または BOM が先頭以外にあれば壊れている.
+
+    BOM だけのファイル、BOM が 2 つ続くファイル、先頭の空白の後や JSON の
+    途中・末尾にある BOM は、従来どおり壊れている。無視するのは先頭の
+    BOM 1 つだけである (要件 10.4)。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.BROKEN
+    assert as_dicts(paper_list) == {}
+    assert isinstance(reason, str)
+    assert reason
+    assert filepath.read_bytes() == content
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+@pytest.mark.parametrize("content", OTHER_BOM_FILES)
+def test_load_file_with_other_bom_is_broken(
+    tmp_path: Path, st_messages: StMessages, content: bytes
+) -> None:
+    """UTF-16・UTF-32 の BOM を持つファイルは、従来どおり壊れている.
+
+    受け入れる BOM は UTF-8 のものだけで、他の文字コードの BOM を持つ
+    ファイルを正常にはしない (要件 10.4)。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.BROKEN
+    assert as_dicts(paper_list) == {}
+    assert isinstance(reason, str)
+    assert reason
+    assert filepath.read_bytes() == content
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+@pytest.mark.parametrize("with_leading_bom", [False, True])
+def test_load_keeps_a_bom_character_inside_a_value(
+    tmp_path: Path, with_leading_bom: bool
+) -> None:
+    """値の中の U+FEFF は文字として残り、先頭の BOM だけが無視される.
+
+    先頭の BOM の有無にかかわらず、フィールドの値に含まれる U+FEFF (JSON
+    の文字列の一部) は、読み込んだ値にそのまま残る。
+    """
+    body = '{"a": {"title": "\ufeffT\ufeff"}}'.encode("utf-8")
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes((UTF8_BOM if with_leading_bom else b"") + body)
+
+    paper_list, status, _ = load_paper_list(filepath)
+
+    assert status is PaperListStatus.OK
+    assert as_dicts(paper_list) == {"a": {"title": "\ufeffT\ufeff"}}
+
+
+@pytest.mark.parametrize("content, expected", VALID_FILES_WITH_BOM)
+def test_from_file_reads_file_with_bom_without_warning(
+    tmp_path: Path,
+    st_messages: StMessages,
+    content: bytes,
+    expected: dict[str, dict[str, str]],
+) -> None:
+    """``from_file`` は BOM 付きの正常なファイルを、警告なしで読み込む."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    loaded = PaperList.from_file(filepath)
+
+    assert as_dicts(loaded) == expected
+    assert st_messages.warning == []
+    assert st_messages.error == []
+    assert filepath.read_bytes() == content
+
+
+@pytest.mark.parametrize("content", BROKEN_FILES_WITH_BOM)
+def test_from_file_warns_for_broken_file_with_bom(
+    tmp_path: Path, st_messages: StMessages, content: bytes
+) -> None:
+    """BOM の後が壊れたファイルは、従来の警告 1 回と空の論文リストになる."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    loaded = PaperList.from_file(filepath)
+
+    assert as_dicts(loaded) == {}
+    assert st_messages.warning == [BROKEN_WARNING]
+    assert st_messages.error == []
+    assert filepath.read_bytes() == content
+
+
+def test_to_file_writes_utf8_without_bom(
+    mixed_paper_list: PaperList, tmp_path: Path
+) -> None:
+    """保存したファイルの先頭に BOM はない (空の論文リストでも同じ)."""
+    filled = tmp_path / "filled.json"
+    empty = tmp_path / "empty.json"
+
+    mixed_paper_list.to_file(filled)
+    PaperList({}).to_file(empty)
+
+    for filepath in (filled, empty):
+        content = filepath.read_bytes()
+        assert not content.startswith(UTF8_BOM)
+        assert content.startswith(b"{")
+        # BOM を無視しない素の UTF-8 として復号しても BOM は現れない
+        assert "\ufeff" not in content.decode("utf-8")
+        json.loads(content.decode("utf-8"))
+
+
+def test_from_file_then_to_file_drops_the_bom_and_keeps_content(
+    mixed_paper_list: PaperList, tmp_path: Path, st_messages: StMessages
+) -> None:
+    """BOM 付きのファイルを読んで書き戻すと、中身は同じで BOM なしになる.
+
+    読み込みだけではファイルを書き換えず、書き戻した後のバイト列は、
+    同じ論文リストを BOM のない状態から保存したものと一致する。
+    """
+    reference = tmp_path / "reference.json"
+    mixed_paper_list.to_file(reference)
+    plain = reference.read_bytes()
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(UTF8_BOM + plain)
+
+    loaded = PaperList.from_file(filepath)
+
+    assert as_dicts(loaded) == as_dicts(mixed_paper_list)
+    assert filepath.read_bytes() == UTF8_BOM + plain
+
+    loaded.to_file(filepath)
+
+    saved = filepath.read_bytes()
+    assert not saved.startswith(UTF8_BOM)
+    assert saved == plain
+    assert as_dicts(PaperList.from_file(filepath)) == as_dicts(
+        mixed_paper_list
+    )
+    assert load_paper_list(filepath).status is PaperListStatus.OK
+    assert st_messages.warning == []
+    assert st_messages.error == []
+
+
+def test_from_file_then_to_file_of_hand_written_file_with_bom(
+    tmp_path: Path,
+) -> None:
+    """手書きの日本語を含む BOM 付きのファイルも、往復で中身が変わらない."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(UTF8_BOM + _HAND_WRITTEN_BYTES)
+
+    PaperList.from_file(filepath).to_file(filepath)
+
+    saved = filepath.read_bytes()
+    assert not saved.startswith(UTF8_BOM)
+    assert json.loads(saved.decode("utf-8")) == json.loads(HAND_WRITTEN_JSON)
+    assert as_dicts(PaperList.from_file(filepath)) == _EXPECTED_HAND_WRITTEN
+
+
+@pytest.mark.parametrize("content, expected", VALID_FILES_WITH_BOM)
+def test_backup_does_not_copy_valid_file_with_bom(
+    tmp_path: Path, content: bytes, expected: dict[str, dict[str, str]]
+) -> None:
+    """BOM 付きの正常なファイルは退避されず、何も作らず ``None`` を返す.
+
+    保存の前に呼ばれる ``backup_broken_paper_list`` が BOM 付きの正常な
+    ファイルを壊れたものとして退避すると、保存のたびに退避ファイルが
+    増える (要件 10.3、10.4)。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    backup = backup_broken_paper_list(filepath, now=BACKUP_NOW)
+
+    assert backup is None
+    assert file_names(tmp_path) == ["list.json"]
+    assert filepath.read_bytes() == content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(UTF8_BOM + b'{"a": {"title": 1}}', id="bom-field-number"),
+        pytest.param(UTF8_BOM + b"[]", id="bom-top-array"),
+        pytest.param(UTF8_BOM + b'{"a": {"title": "A St', id="bom-truncated"),
+        pytest.param(UTF8_BOM, id="bom-only"),
+        pytest.param(UTF8_BOM + UTF8_BOM + b"{}", id="two-boms"),
+    ],
+)
+def test_backup_copies_broken_file_with_bom_byte_for_byte(
+    tmp_path: Path, content: bytes
+) -> None:
+    """BOM 付きで壊れたファイルは、BOM も含めて同じバイト列を退避する."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    backup = backup_broken_paper_list(filepath, now=BACKUP_NOW)
+
+    assert backup == tmp_path / BACKUP_NAME
+    assert backup.read_bytes() == content
+    assert filepath.read_bytes() == content
 
 
 # --- 画面の状態との往復 (要件 3.4) ----------------------------------------

@@ -56,6 +56,10 @@ _UNREADABLE_KEY_CHARS = frozenset(",{}")
 
 # 論文リストのファイルが壊れているときに画面に出す警告 (修正前からの文言)
 _BROKEN_PAPER_LIST_WARNING = "Broken paper list (json)"
+# 論文リストのファイルを読むときの復号。先頭の UTF-8 の BOM (古いメモ帳や
+# PowerShell 5 が付ける) を無視する。BOM がなければ ``ENCODING`` と同じ。
+# 保存 (``PaperList.to_file``) は BOM を付けない ``ENCODING`` で書く
+_PAPER_LIST_DECODING = "utf-8-sig"
 # 壊れた論文リストのファイルの退避先の名前の日時の部分の書式。退避先は
 # ``<ファイル名>.broken-<日時>`` (衝突時は ``-1``、``-2`` と連番)。復元が
 # 使う ``list.json.backup`` (復元のたびに上書きされる) とは別の名前にする
@@ -1097,6 +1101,9 @@ class PaperList(MutableMapping):
         """
         Saves the current paper list to a JSON file.
 
+        UTF-8 で、BOM を付けずに書く (BOM 付きのファイルも読み込めるが、
+        書き戻すと BOM はなくなる)。
+
         Parameters
         ----------
         _filepath_paper_list_json : Union[os.PathLike, str, None], optional
@@ -1380,6 +1387,11 @@ def _decode_paper_list(
 ) -> Union[tuple[_RawPaperList, None], tuple[None, str]]:
     """Decode the bytes of a paper list file.
 
+    先頭の UTF-8 の BOM は無視する (``utf-8-sig``)。BOM の後が論文リストの
+    形をしていれば正常、そうでなければ壊れている。BOM が先頭以外にある、
+    BOM が 2 つ続く、BOM だけである、UTF-16 などの別の BOM である、のいずれ
+    も壊れている。
+
     Parameters
     ----------
     content : bytes
@@ -1392,7 +1404,7 @@ def _decode_paper_list(
         ``(None, reason)`` if it is broken.
     """
     try:
-        text = content.decode(ENCODING)
+        text = content.decode(_PAPER_LIST_DECODING)
     except UnicodeDecodeError as e:
         return None, f"not valid {ENCODING}: {e}"
     try:
@@ -1451,7 +1463,8 @@ def load_paper_list(
 
     Streamlit を呼ばない (画面に何も出さない)。壊れているときの通知は
     呼び出し元が行う (``PaperList.from_file`` は従来の警告を出す)。
-    ファイルは変更しない。
+    ファイルは変更しない。先頭に BOM の付いた UTF-8 のファイルは、BOM の後が
+    正しい形なら ``OK`` とする。
 
     Parameters
     ----------
