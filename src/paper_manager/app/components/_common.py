@@ -1,5 +1,8 @@
 import errno
+import os
+import re
 import shutil
+import uuid
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -18,7 +21,7 @@ from paper_manager._constants import (
 )
 from paper_manager.app.helper import MAP_FIELDS, MAP_REQUIRED_FIELDS
 from paper_manager.entry import Entry, PaperList
-from paper_manager.helper import to_display_path, to_fs_path
+from paper_manager.helper import folder_name_key, to_display_path, to_fs_path
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
@@ -537,6 +540,339 @@ def save_paper_list(paper_list: PaperList) -> None:
     _logger.debug("PaperList saved")
 
 
+# 大文字小文字だけの改名で、PDF フォルダを一時的に移す名前の接頭辞
+_TEMPORARY_PREFIX = ".rename-"
+# 一時名に含める元の名前の手がかりの最大バイト数。一時名の全体が、ファイル名の
+# 上限 (Linux・macOS は 255 バイト、Windows は 255 文字) に収まるようにする
+_TEMPORARY_HINT_BYTES = 100
+# 一時名の乱数部分が既存の名前と重なったときに、作り直す最大回数
+_TEMPORARY_ATTEMPTS = 100
+# Windows のファイル名に使えない文字と制御文字 (どの OS でも置き換える)
+_UNSAFE_NAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def _find_same_folder_name(
+    paper_list: PaperList, pdf_dir_name: str, exclude_key: Optional[str] = None
+) -> Optional[str]:
+    """``pdf_dir_name`` と比較キーが等しい PDF フォルダ名を持つ論文を探す。
+
+    比較キー (``folder_name_key``) は大文字小文字と Unicode 正規化を区別しない
+    ので、ファイルシステムが大文字小文字を区別するかどうかにかかわらず、
+    すべての OS で同じに判定する。
+
+    Parameters
+    ----------
+    paper_list : PaperList
+        論文リスト
+    pdf_dir_name : str
+        調べる PDF フォルダ名
+    exclude_key : Optional[str], default None
+        調べない論文のキー (更新する論文自身)
+
+    Returns
+    -------
+    Optional[str]
+        比較キーが等しい論文の PDF フォルダ名 (``pdf_dir_name`` と完全に
+        同じこともある)。なければ ``None``
+    """
+    name_key = folder_name_key(pdf_dir_name)
+    for key, existing in paper_list.items():
+        if key == exclude_key:
+            continue
+        if folder_name_key(existing.pdf_dir_name) == name_key:
+            return existing.pdf_dir_name
+    return None
+
+
+def _report_duplicate(headline: str, pdf_dir_name: str, existing: str) -> None:
+    """PDF フォルダ名の重複を、ログと画面の両方に出す。
+
+    既存の論文の名前が ``pdf_dir_name`` と完全に同じでなければ (大文字小文字や
+    Unicode 正規化だけが違う)、利用者が理由を分かるように既存の名前を添える。
+
+    Parameters
+    ----------
+    headline : str
+        エラーの見出し
+    pdf_dir_name : str
+        登録・更新しようとした PDF フォルダ名
+    existing : str
+        重複した、既存の論文の PDF フォルダ名
+    """
+    message = headline
+    if existing != pdf_dir_name:
+        message += (
+            "\nThe PDF folder name is the same as that of an existing paper "
+            f"apart from letter case or Unicode normalization: {existing}"
+        )
+    _logger.error(message)
+    st.error(message)
+
+
+def _differs_only_in_form(old_name: str, new_name: str) -> bool:
+    """フォルダ名が、大文字小文字や Unicode 正規化だけ変わるかを返す。
+
+    Parameters
+    ----------
+    old_name : str
+        元のフォルダ名
+    new_name : str
+        新しいフォルダ名
+
+    Returns
+    -------
+    bool
+        比較キーは等しく、文字列としては異なるとき ``True``
+    """
+    if old_name == new_name:
+        return False
+    return folder_name_key(old_name) == folder_name_key(new_name)
+
+
+def _is_same_folder(first: Path, second: Path) -> bool:
+    """2 つのパスが、同じフォルダの同じ名前を指すかを返す。
+
+    大文字小文字を区別しないファイルシステム (macOS・Windows) では、大文字
+    小文字だけ違う名前は同じフォルダを指す。区別するファイルシステム (Linux)
+    では別のフォルダである。シンボリックリンクをたどらずに比べるので、元の
+    フォルダを指すリンクは同じフォルダとみなさない。
+
+    Parameters
+    ----------
+    first, second : Path
+        存在するパス (変換後のパス)
+
+    Returns
+    -------
+    bool
+        同じデバイスの同じエントリ (inode) なら ``True``
+
+    Raises
+    ------
+    OSError
+        どちらかの状態を取得できないとき
+    """
+    return os.path.samestat(first.lstat(), second.lstat())
+
+
+def _temporary_dir_name(original: str) -> str:
+    """大文字小文字だけの改名で使う、PDF フォルダの一時名を作る。
+
+    ``.rename-<乱数 8 桁>-<元の名前の手がかり>`` の形。PDF フォルダ名
+    (``<年> - <著者> - <タイトル>``) とは重ならず、PDF ルートの走査が拾っても
+    孤立 PDF として元の名前が分かる。手がかりは、元の名前の Windows で使えない
+    文字を ``_`` に置き換え、UTF-8 で 100 バイト以内に切り、末尾の ``.`` と
+    空白を除いたもの。一時名の全体は、どの OS のファイル名の上限 (255) にも
+    収まる。
+
+    Parameters
+    ----------
+    original : str
+        元のフォルダ名
+
+    Returns
+    -------
+    str
+        一時名 (呼ぶたびに別の名前)
+    """
+    hint = _UNSAFE_NAME_CHARS.sub("_", original)
+    hint = (
+        hint.encode("utf-8", errors="ignore")[:_TEMPORARY_HINT_BYTES]
+        .decode("utf-8", errors="ignore")
+        .rstrip(". ")
+    )
+    name = f"{_TEMPORARY_PREFIX}{uuid.uuid4().hex[:8]}"
+    return f"{name}-{hint}" if hint else name
+
+
+def _unused_temporary_path(parent: Path, original: str) -> Path:
+    """``parent`` の下の、まだ存在しない一時名のパスを返す。
+
+    Parameters
+    ----------
+    parent : Path
+        PDF ルート (変換後のパス)
+    original : str
+        元のフォルダ名
+
+    Returns
+    -------
+    Path
+        ``parent`` の直下で、存在しない一時名のパス
+
+    Raises
+    ------
+    FileExistsError
+        何度作り直しても既存の名前と重なったとき
+    """
+    for _ in range(_TEMPORARY_ATTEMPTS):
+        candidate = parent / _temporary_dir_name(original)
+        if not os.path.lexists(candidate):
+            return candidate
+    raise FileExistsError(
+        errno.EEXIST, "No unused temporary folder name", str(parent)
+    )
+
+
+def _report_rename_failure(
+    old_pdf_dir: Path, new_pdf_dir: Path, error: OSError, note: str = ""
+) -> None:
+    """PDF フォルダの改名の失敗を、ログと画面の両方に出す。
+
+    Parameters
+    ----------
+    old_pdf_dir, new_pdf_dir : Path
+        改名の前後のパス (変換後のパス。表示用に戻して出す)
+    error : OSError
+        捕捉した例外 (理由だけを出す。パスは含めない)
+    note : str, default ""
+        理由の後に添える説明
+    """
+    message = (
+        "Failed to rename PDF directory:\n"
+        f"From: {to_display_path(old_pdf_dir)}\n"
+        f"To: {to_display_path(new_pdf_dir)}\n"
+        f"Error: {_failure_reason(error)}{note}"
+    )
+    _logger.error(message)
+    st.error(message)
+
+
+def _report_destination_exists(old_pdf_dir: Path, new_pdf_dir: Path) -> None:
+    """改名先が別のフォルダとして既にあることを、ログと画面の両方に出す。
+
+    Parameters
+    ----------
+    old_pdf_dir, new_pdf_dir : Path
+        改名の前後のパス (変換後のパス。表示用に戻して出す)
+    """
+    message = (
+        "Cannot rename PDF directory: destination already exists\n"
+        f"From: {to_display_path(old_pdf_dir)}\n"
+        f"To: {to_display_path(new_pdf_dir)}\n"
+        "This may indicate a duplicate pdf_dir_name."
+    )
+    _logger.error(message)
+    st.error(message)
+
+
+def _rename_via_temporary_name(old_pdf_dir: Path, new_pdf_dir: Path) -> bool:
+    """大文字小文字だけ違う名前へ、一時名を経由して PDF フォルダを改名する。
+
+    ファイルシステムが大文字小文字を区別するかどうかにかかわらず、元の
+    フォルダを同じ階層の一時名へ移してから、新しい名前へ移す (区別しない
+    ファイルシステムや一部のネットワークファイルシステムは、大文字小文字
+    だけの改名を黙って無視することがある)。2 回目に失敗したら元の名前に
+    戻す。戻すのにも失敗したら、PDF は一時名のフォルダに残っているので、その
+    場所をエラーに含める (PDF は失われない)。
+
+    Parameters
+    ----------
+    old_pdf_dir, new_pdf_dir : Path
+        改名の前後のパス (変換後のパス)
+
+    Returns
+    -------
+    bool
+        改名できたとき ``True``。失敗したとき、エラーを出して ``False``
+        (元の名前に戻せたときは、フォルダは元のまま)
+    """
+    try:
+        temporary = _unused_temporary_path(
+            old_pdf_dir.parent, old_pdf_dir.name
+        )
+        old_pdf_dir.rename(temporary)
+    except OSError as e:
+        _report_rename_failure(old_pdf_dir, new_pdf_dir, e)
+        return False
+
+    try:
+        temporary.rename(new_pdf_dir)
+    except OSError as e:
+        try:
+            temporary.rename(old_pdf_dir)
+        except OSError:
+            _report_rename_failure(
+                old_pdf_dir,
+                new_pdf_dir,
+                e,
+                note=(
+                    "\nThe PDF files were not lost. They are in the "
+                    f"temporary folder {to_display_path(temporary)} "
+                    "(rename it back to the From name to restore them)."
+                ),
+            )
+        else:
+            _report_rename_failure(old_pdf_dir, new_pdf_dir, e)
+        return False
+
+    _logger.debug(
+        "PDF directory renamed via a temporary name: "
+        f"{to_display_path(old_pdf_dir)} -> {to_display_path(new_pdf_dir)}"
+    )
+    return True
+
+
+def _rename_pdf_dir(old_pdf_dir: Path, new_pdf_dir: Path) -> bool:
+    """更新に伴って、論文の PDF フォルダを新しい名前へ改名する。
+
+    元のフォルダがなければ (PDF がまだ保存されていない) 何もしない。新しい
+    名前が、元のフォルダ自身でない既存のフォルダを指すときは、上書き・統合
+    せずに拒否する。大文字小文字を区別しないファイルシステムでは、大文字
+    小文字だけ違う新しい名前は元のフォルダ自身を指して存在するので、これを
+    別のフォルダと誤判定しない。大文字小文字 (または Unicode 正規化) だけが
+    変わるときは一時名を経由し (``_rename_via_temporary_name``)、それ以外は
+    直接改名する。
+
+    Parameters
+    ----------
+    old_pdf_dir, new_pdf_dir : Path
+        改名の前後のパス (``Entry.get_pdf_dir`` の変換後のパス)
+
+    Returns
+    -------
+    bool
+        更新を続けてよいとき ``True`` (改名できた、または改名するフォルダが
+        ない)。拒否・失敗したとき、エラーを出して ``False`` (論文リストと
+        PDF は変えない)
+    """
+    via_temporary_name = _differs_only_in_form(
+        old_pdf_dir.name, new_pdf_dir.name
+    )
+    try:
+        if not _exists_as(old_pdf_dir.is_dir, old_pdf_dir):
+            # PDFがまだ保存されていない場合
+            _logger.debug(
+                "PDF directory does not exist, skipping rename: "
+                f"{to_display_path(old_pdf_dir)}"
+            )
+            return True
+        if os.path.lexists(new_pdf_dir) and not (
+            via_temporary_name and _is_same_folder(old_pdf_dir, new_pdf_dir)
+        ):
+            # 同じpdf_dir_nameを持つ別のエントリーが存在する可能性がある
+            # 重複チェックでエラーになるはずだが、念のためエラーを返す
+            _report_destination_exists(old_pdf_dir, new_pdf_dir)
+            return False
+    except OSError as e:
+        _report_rename_failure(old_pdf_dir, new_pdf_dir, e)
+        return False
+
+    if via_temporary_name:
+        return _rename_via_temporary_name(old_pdf_dir, new_pdf_dir)
+    try:
+        old_pdf_dir.rename(new_pdf_dir)
+    except OSError as e:
+        # リネームに失敗した場合は、更新を中止
+        _report_rename_failure(old_pdf_dir, new_pdf_dir, e)
+        return False
+    _logger.debug(
+        f"PDF directory renamed: {to_display_path(old_pdf_dir)} -> "
+        f"{to_display_path(new_pdf_dir)}"
+    )
+    return True
+
+
 def register_entry_to_list(
     paper_list: PaperList,
     entry: Entry,
@@ -544,7 +880,11 @@ def register_entry_to_list(
 ) -> bool:
     """論文エントリをリストに登録する。
 
-    重複チェックを行い、PDFファイルがあれば保存する。
+    重複チェックを行い、PDFファイルがあれば保存する。重複は、既存の全論文と
+    PDFフォルダ名の比較キー (``folder_name_key``) が一致するかで判定する
+    (大文字小文字やUnicode正規化だけが違う名前も重複。ファイルシステムが
+    大文字小文字を区別するかにかかわらず、すべてのOSで同じ)。重複なら
+    エラーを出し、論文リストもPDFも変えない。
 
     Parameters
     ----------
@@ -565,10 +905,10 @@ def register_entry_to_list(
     # IDを設定
     entry["ID"] = entry.get_key(paper_list.keys())
 
-    # PDFディレクトリ名で重複を確認する
-    existing_pdf_dirs = {_entry.pdf_dir_name for _entry in paper_list.values()}
-    if entry.pdf_dir_name in existing_pdf_dirs:
-        st.error("FAIL: Duplicated")
+    # PDFディレクトリ名の比較キーで重複を確認する
+    duplicate = _find_same_folder_name(paper_list, entry.pdf_dir_name)
+    if duplicate is not None:
+        _report_duplicate("FAIL: Duplicated", entry.pdf_dir_name, duplicate)
         return False
 
     # ラインナップとして追加
@@ -592,6 +932,22 @@ def update_entry_in_list(
     uploaded_files: Optional[list[UploadedFile]] = None,
 ) -> bool:
     """論文エントリを更新する。
+
+    PDFフォルダ名が変わらない更新は、そのまま更新する。変わる更新は、自分
+    以外の論文とPDFフォルダ名の比較キー (``folder_name_key``) が一致する
+    なら重複として拒否する (大文字小文字やUnicode正規化だけが違う名前も重複。
+    ファイルシステムが大文字小文字を区別するかにかかわらず、すべてのOSで
+    同じ)。重複でなければ、PDFフォルダを新しい名前へ改名してから更新する。
+
+    改名の前に、元の論文の旧形式の単一PDFと修正前の名前のフォルダの移行
+    (``Entry.get_pdf_files``) を済ませるので、改名後も新しい名前のフォルダの
+    PDFとして見える。移行は既存のPDFを上書きせず、一覧の表示でも起きる。
+
+    大文字小文字 (またはUnicode正規化) だけが変わる改名は、一時名を経由して
+    行う。改名先が元のフォルダ自身でない既存のフォルダなら、上書き・統合せず
+    に拒否する。拒否・失敗したとき (``False``) は、論文リストを変えず、PDF
+    フォルダは元の名前に保つ (一時名からも戻せなかったときだけ、一時名の場所を
+    エラーに含める)。
 
     Parameters
     ----------
@@ -619,58 +975,24 @@ def update_entry_in_list(
     else:
         # PDFディレクトリ名が変わる場合
         # 0. 新しいpdf_dir_nameが他のエントリーと重複していないかチェック
-        existing_pdf_dirs = {
-            _entry.pdf_dir_name
-            for _key, _entry in paper_list.items()
-            if _key != key_original  # 元のエントリーを除外
-        }
-        if entry_updated.pdf_dir_name in existing_pdf_dirs:
-            st.error(
-                f"FAIL: Duplicated pdf_dir_name: {entry_updated.pdf_dir_name}"
+        duplicate = _find_same_folder_name(
+            paper_list, entry_updated.pdf_dir_name, exclude_key=key_original
+        )
+        if duplicate is not None:
+            _report_duplicate(
+                f"FAIL: Duplicated pdf_dir_name: {entry_updated.pdf_dir_name}",
+                entry_updated.pdf_dir_name,
+                duplicate,
             )
             return False
 
         # 1. 古いPDFディレクトリを新しい名前にリネーム
-        old_pdf_dir = original_entry.get_pdf_dir()
-        new_pdf_dir = entry_updated.get_pdf_dir()
-
-        # 古いディレクトリが存在する場合のみリネームを試みる
-        if old_pdf_dir.is_dir():
-            # 新しいディレクトリが既に存在する場合の処理
-            if new_pdf_dir.exists():
-                # 同じpdf_dir_nameを持つ別のエントリーが存在する可能性がある
-                # 重複チェックでエラーになるはずだが、念のためエラーを返す
-                error_msg = (
-                    f"Cannot rename PDF directory: destination already exists\n"
-                    f"From: {old_pdf_dir}\n"
-                    f"To: {new_pdf_dir}\n"
-                    f"This may indicate a duplicate pdf_dir_name."
-                )
-                _logger.error(error_msg)
-                st.error(error_msg)
-                return False
-            else:
-                # 新しいディレクトリが存在しない場合、リネームを実行
-                try:
-                    old_pdf_dir.rename(new_pdf_dir)
-                    _logger.debug(
-                        f"PDF directory renamed: {old_pdf_dir} -> {new_pdf_dir}"
-                    )
-                except OSError as e:
-                    error_msg = (
-                        f"Failed to rename PDF directory:\n"
-                        f"From: {old_pdf_dir}\n"
-                        f"To: {new_pdf_dir}"
-                    )
-                    _logger.error(f"{error_msg}: {e}")
-                    st.error(f"{error_msg}\nError: {str(e)}")
-                    # リネームに失敗した場合は、更新を中止
-                    return False
-        else:
-            # 古いディレクトリが存在しない場合（PDFがまだ保存されていない場合）
-            _logger.debug(
-                f"PDF directory does not exist, skipping rename: {old_pdf_dir}"
-            )
+        # (旧形式の単一PDFと修正前の名前のフォルダは、改名の前に移行する)
+        original_entry.get_pdf_files()
+        if not _rename_pdf_dir(
+            original_entry.get_pdf_dir(), entry_updated.get_pdf_dir()
+        ):
+            return False
 
         # 2. 新しいキーで登録
         new_id = entry_updated.get_key(paper_list.keys())

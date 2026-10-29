@@ -9,6 +9,10 @@
 - 論文の登録・更新: ``register_entry_to_list`` / ``update_entry_in_list``
   (要件 9.6〜9.10)。このセクションだけで使う補助は、セクションの冒頭に
   ある
+- 大文字小文字だけ違うフォルダ名: 登録・更新の重複判定と、大文字小文字だけの
+  改名 (known-bug-fixes 要件 3.1〜3.4)。比較キーによる判定はどのファイル
+  システムでも同じ結果になる。大文字小文字を区別するファイルシステムでしか
+  起きない状況のテストは、区別しない環境 (macOS・Windows) では skip する
 - 手動入力フォーム: ``custom_entry`` (要件 9.11)。``AppTest`` で実行する。
   このセクションだけで使う補助は、セクションの冒頭にある
 - PDF アップロード欄: ``pdf_upload_form`` (要件 9.12)
@@ -39,6 +43,7 @@ import builtins
 import errno
 import json
 import os
+import re
 import shutil
 import stat
 from collections.abc import Callable, Iterator, Mapping
@@ -69,8 +74,13 @@ from paper_manager.app.components._common import (
     save_pdfs,
     update_entry_in_list,
 )
+from paper_manager.app.helper._orphan_pdf import find_orphaned_pdfs
 from paper_manager.entry import Entry, PaperList
-from paper_manager.helper import to_display_path
+from paper_manager.helper import (
+    folder_name_key,
+    to_display_path,
+    to_fs_path,
+)
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore:(pdf_filename|_migrate_legacy_pdf_filenames) is deprecated"
@@ -1896,6 +1906,853 @@ def test_update_rejects_when_the_destination_folder_already_exists(
     assert read_state(stored.paper_list, data_paths) == before
     assert pdf_tree(pdf_root) == pdfs_before
     assert (existing_dir / "00.pdf").read_bytes() == existing["00.pdf"]
+
+
+# --- 大文字小文字だけ違うフォルダ名 (known-bug-fixes 要件 3.1〜3.4) --------
+# フォルダ名の同一性は比較キー (``folder_name_key``: 大文字小文字と Unicode
+# 正規化を区別しない) で判定する。ファイルシステムが大文字小文字を区別するか
+# どうか (Linux と macOS・Windows) にかかわらず、同じ結果になる。このセクション
+# のテストは、どのファイルシステムでも成功する。大文字小文字を区別する
+# ファイルシステムでしか起きない状況 (大文字小文字だけ違う別のフォルダが実際に
+# ある) のテストだけは、区別しない環境では skip する。
+
+# (既存の論文の変更, 登録・更新後の変更). 比較キーは等しく、文字列は異なる.
+# ``casefold-ss`` の ``ß`` と ``ss`` は、どのファイルシステムでも別のフォルダ
+# 名だが、比較キーでは同じになる (同じとみなす安全側).
+SAME_KEY_CHANGES = [
+    pytest.param({}, {"title": "a study of testing"}, id="lowercase-title"),
+    pytest.param(
+        {},
+        {"author": "ALICE SMITH", "title": "A STUDY OF TESTING"},
+        id="uppercase",
+    ),
+    pytest.param(
+        {"title": "Caf\u00e9"}, {"title": "Cafe\u0301"}, id="nfc-to-nfd"
+    ),
+    pytest.param(
+        {"title": "Cafe\u0301"}, {"title": "Caf\u00e9"}, id="nfd-to-nfc"
+    ),
+    pytest.param(
+        {"title": "Strasse"}, {"title": "Stra\u00dfe"}, id="casefold-ss"
+    ),
+    # フォルダ名が上限の 200 文字ちょうど (一時名も 255 バイトに収まる)
+    pytest.param(
+        {"title": "L" * 179},
+        {"title": "l" + "L" * 178},
+        id="longest-name",
+    ),
+]
+TEMPORARY_PREFIX = ".rename-"
+WINDOWS_RESERVED = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def assert_names_differ_only_in_form(first: Entry, second: Entry) -> None:
+    """2 つのエントリのフォルダ名が、比較キーは等しく文字列は異なると確かめる."""
+    assert first.pdf_dir_name != second.pdf_dir_name
+    assert folder_name_key(first.pdf_dir_name) == folder_name_key(
+        second.pdf_dir_name
+    )
+
+
+def is_case_sensitive(directory: Path) -> bool:
+    """``directory`` のファイルシステムが大文字小文字を区別するかを返す."""
+    probe = directory / "CaseProbe"
+    probe.mkdir()
+    try:
+        return not (directory / "caseprobe").exists()
+    finally:
+        probe.rmdir()
+
+
+def record_renames(
+    monkeypatch: pytest.MonkeyPatch,
+    fails: Callable[[Path, Path], bool] = lambda source, target: False,
+) -> list[tuple[Path, Path]]:
+    """``Path.rename`` の呼び出しを記録し、``fails`` が真の呼び出しを失敗させる.
+
+    ``fails`` が偽の呼び出しは、本物の ``Path.rename`` に渡す。
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        差し替えに使う。テストの後に元へ戻る。
+    fails : Callable[[Path, Path], bool], optional
+        ``(改名元, 改名先)`` を受け取り、その呼び出しを ``PermissionError`` で
+        失敗させるかを返す。既定は失敗させない。
+
+    Returns
+    -------
+    list[tuple[Path, Path]]
+        呼ばれた順の ``(改名元, 改名先)``。
+    """
+    calls: list[tuple[Path, Path]] = []
+    original = Path.rename
+
+    def rename(self: Path, target: Union[str, Path]) -> Any:
+        calls.append((self, Path(target)))
+        if fails(self, Path(target)):
+            raise PermissionError(
+                errno.EACCES, os.strerror(errno.EACCES), str(self)
+            )
+        return original(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    return calls
+
+
+def is_temporary(path: Path) -> bool:
+    """``path`` が、一時名を経由する改名の一時名かを返す."""
+    return path.name.startswith(TEMPORARY_PREFIX)
+
+
+# --- 登録 (要件 3.1, 3.4) ---
+
+
+@pytest.mark.parametrize(("existing_changes", "new_changes"), SAME_KEY_CHANGES)
+def test_register_entry_rejects_a_folder_name_that_differs_only_in_case(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    make_entry: Callable[..., Entry],
+    st_messages: StMessages,
+    path_space: bool,
+    existing_changes: dict[str, str],
+    new_changes: dict[str, str],
+) -> None:
+    """既存の論文と比較キーが等しいフォルダ名の登録は、重複として拒否される (3.1).
+
+    大文字小文字だけ、または Unicode 正規化だけが違う名前も重複になる。重複
+    エラーが 1 回だけ通知され、論文リストも PDF も変わらない (添付した PDF も
+    保存されない)。判定は文字列だけで決まり、ファイルシステムに依存しない (3.4)。
+    """
+    existing = make_entry(**existing_changes)
+    paper_list, _ = seed_paper_list(data_paths, existing)
+    make_pdfs(existing.get_pdf_dir(pdf_root), ["00.pdf"])
+    candidate = make_entry(**new_changes)
+    assert_names_differ_only_in_form(existing, candidate)
+    before = read_state(paper_list, data_paths)
+    pdfs_before = pdf_tree(pdf_root)
+
+    registered = register_entry_to_list(paper_list, candidate, make_uploads(2))
+
+    assert registered is False
+    assert len(st_messages.error) == 1
+    assert "Duplicated" in st_messages.error[0]
+    assert existing.pdf_dir_name in st_messages.error[0]
+    assert st_messages.success == []
+    assert read_state(paper_list, data_paths) == before
+    assert pdf_tree(pdf_root) == pdfs_before
+
+
+# --- 更新: 大文字小文字だけの改名 (要件 3.2, 3.4) ---
+
+
+@pytest.mark.parametrize(("existing_changes", "new_changes"), SAME_KEY_CHANGES)
+def test_update_accepts_a_folder_rename_that_changes_only_the_case(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    make_entry: Callable[..., Entry],
+    other_entry: Entry,
+    st_messages: StMessages,
+    path_space: bool,
+    existing_changes: dict[str, str],
+    new_changes: dict[str, str],
+) -> None:
+    """大文字小文字だけ変わるフォルダ名の更新は受け付けられ、PDF が保たれる (3.2).
+
+    ディスク上のフォルダの名前が新しい表記になり (古い表記も一時名も残らない)、
+    中の PDF は番号も中身も保たれる。ほかの論文のフォルダは変わらない。
+    論文は新しい識別子で登録し直される。
+    """
+    existing = make_entry(**existing_changes)
+    paper_list, (key, other_key) = seed_paper_list(
+        data_paths, existing, other_entry
+    )
+    pdfs = make_pdfs(existing.get_pdf_dir(pdf_root), ["00.pdf", "01.pdf"])
+    other_pdfs = make_pdfs(other_entry.get_pdf_dir(pdf_root), ["00.pdf"])
+    updated = edited(paper_list[key], **new_changes)
+    assert_names_differ_only_in_form(existing, updated)
+    new_dir = updated.get_pdf_dir(pdf_root)
+    before = read_state(paper_list, data_paths)
+
+    result = update_entry_in_list(paper_list, key, updated)
+
+    assert result is True
+    # ディスク上の名前そのもの (大文字小文字を区別しない環境でも表記を比べる)
+    assert pdf_names(pdf_root) == sorted(
+        [updated.pdf_dir_name, other_entry.pdf_dir_name]
+    )
+    assert pdf_names(new_dir) == ["00.pdf", "01.pdf"]
+    for name, content in pdfs.items():
+        assert (new_dir / name).read_bytes() == content
+    other_dir = other_entry.get_pdf_dir(pdf_root)
+    assert pdf_names(other_dir) == ["00.pdf"]
+    assert (other_dir / "00.pdf").read_bytes() == other_pdfs["00.pdf"]
+    new_key = updated["ID"]
+    assert new_key != key
+    expected = {
+        other_key: before.file[other_key],
+        new_key: {**before.file[key], **new_changes, "ID": new_key},
+    }
+    assert_list_is(read_state(paper_list, data_paths), expected)
+    assert st_messages.error == []
+
+
+def test_update_saves_new_uploads_into_the_case_renamed_folder(
+    pdf_root: Path,
+    entry: Entry,
+    other_entry: Entry,
+    stored: Stored,
+    st_messages: StMessages,
+) -> None:
+    """大文字小文字だけ変わる更新で添付した PDF は、改名後のフォルダに追加される.
+
+    既存の PDF は上書きされず、新しい PDF は既存の後ろの番号になる (3.2)。
+    """
+    updated = edited(stored.paper_list[stored.key], title="a study of testing")
+    assert_names_differ_only_in_form(entry, updated)
+    new_dir = updated.get_pdf_dir(pdf_root)
+    uploads = make_uploads(1)
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, uploads
+    )
+
+    assert result is True
+    assert pdf_names(pdf_root) == sorted(
+        [updated.pdf_dir_name, other_entry.pdf_dir_name]
+    )
+    assert pdf_names(new_dir) == ["00.pdf", "01.pdf", "02.pdf"]
+    for name, content in stored.pdfs.items():
+        assert (new_dir / name).read_bytes() == content
+    assert (new_dir / "02.pdf").read_bytes() == uploads[0].getvalue()
+    assert st_messages.error == []
+
+
+def test_update_with_a_case_only_change_works_without_a_pdf_folder(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    entry: Entry,
+    other_entry: Entry,
+    st_messages: StMessages,
+) -> None:
+    """PDF のフォルダがなくても、大文字小文字だけ変わる更新を受け付ける (3.2).
+
+    改名するフォルダがないので何も作られず、識別子だけが新しくなる。
+    """
+    paper_list, (key, other_key) = seed_paper_list(
+        data_paths, entry, other_entry
+    )
+    updated = edited(paper_list[key], title="a study of testing")
+    assert not any(pdf_root.iterdir())  # 前提: PDF はどこにもない
+
+    result = update_entry_in_list(paper_list, key, updated)
+
+    assert result is True
+    state = read_state(paper_list, data_paths)
+    assert sorted(state.file) == sorted([other_key, "AliceSmith2020_1"])
+    assert state.file["AliceSmith2020_1"]["title"] == "a study of testing"
+    assert state.session == state.held == state.file
+    assert not any(pdf_root.iterdir())
+    assert st_messages.error == []
+
+
+def test_update_leaves_a_duplicate_pair_alone_when_the_folder_is_unchanged(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    entry: Entry,
+    make_entry: Callable[..., Entry],
+    st_messages: StMessages,
+) -> None:
+    """フォルダ名を変えない更新は、既にある重複の組に妨げられない.
+
+    修正前に登録された、大文字小文字だけ違う論文の組 (フォルダ名を共有しうる)
+    でも、フォルダ名が変わらない更新 (タグの追加など) は受け付ける。フォルダは
+    動かさず、重複を新しく作る更新ではないので拒否しない。
+    """
+    twin = make_entry(title=entry["title"].lower())
+    paper_list, (key, twin_key) = seed_paper_list(data_paths, entry, twin)
+    assert_names_differ_only_in_form(entry, twin)
+    updated = edited(paper_list[key], journal="Journal of Updated Results")
+    before = read_state(paper_list, data_paths)
+
+    result = update_entry_in_list(paper_list, key, updated)
+
+    assert result is True
+    state = read_state(paper_list, data_paths)
+    assert state.file[key]["journal"] == "Journal of Updated Results"
+    assert state.file[twin_key] == before.file[twin_key]
+    assert st_messages.error == []
+    assert not any(pdf_root.iterdir())
+
+
+# --- 更新: 一時名を経由する改名 (要件 3.2) ---
+
+
+def test_a_case_only_rename_goes_through_a_temporary_name(
+    pdf_root: Path,
+    entry: Entry,
+    stored: Stored,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+    path_space: bool,
+) -> None:
+    """大文字小文字だけの改名は、同じ階層の一時名を経由して 2 回で行う.
+
+    1 回目は元のフォルダを一時名へ、2 回目は一時名から新しい名前へ。
+    ファイルシステムが大文字小文字を区別するかどうかにかかわらず、この
+    手順は同じで、結果も同じになる (3.2, 3.4)。変換後のパスの空間にとどまる。
+    """
+    updated = edited(stored.paper_list[stored.key], title="a study of testing")
+    calls = record_renames(monkeypatch)
+    old_dir = entry.get_pdf_dir(pdf_root)
+    new_dir = updated.get_pdf_dir(pdf_root)
+
+    result = update_entry_in_list(stored.paper_list, stored.key, updated)
+
+    assert result is True
+    assert len(calls) == 2
+    (first_source, first_target), (second_source, second_target) = calls
+    assert first_source == old_dir
+    assert second_target == new_dir
+    temporary = first_target
+    assert is_temporary(temporary)
+    assert second_source == temporary
+    assert temporary.parent == old_dir.parent
+    assert pdf_names(new_dir) == ["00.pdf", "01.pdf"]
+    assert not any(is_temporary(path) for path in pdf_root.iterdir())
+    assert st_messages.error == []
+
+
+def test_a_rename_that_changes_more_than_the_case_is_direct(
+    pdf_root: Path,
+    entry: Entry,
+    stored: Stored,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """大文字小文字以外も変わる改名は、一時名を経由せず 1 回で行う."""
+    updated = edited(
+        stored.paper_list[stored.key], title="A Revised Study of Testing"
+    )
+    calls = record_renames(monkeypatch)
+
+    result = update_entry_in_list(stored.paper_list, stored.key, updated)
+
+    assert result is True
+    assert calls == [
+        (entry.get_pdf_dir(pdf_root), updated.get_pdf_dir(pdf_root))
+    ]
+    assert st_messages.error == []
+
+
+def test_a_case_only_rename_is_restored_when_the_second_step_fails(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    entry: Entry,
+    stored: Stored,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+    path_space: bool,
+) -> None:
+    """一時名から新しい名前への改名に失敗したら、元の名前に戻してエラーを出す.
+
+    更新は中止され (``False``)、論文リストは変わらず、PDF のフォルダは元の
+    名前・元の中身に戻る。一時名のフォルダは残らない (3.2)。
+    """
+    updated = edited(stored.paper_list[stored.key], title="a study of testing")
+    old_dir = entry.get_pdf_dir(pdf_root)
+    new_dir = updated.get_pdf_dir(pdf_root)
+    before = read_state(stored.paper_list, data_paths)
+    pdfs_before = pdf_tree(pdf_root)
+    calls = record_renames(
+        monkeypatch,
+        fails=lambda source, target: is_temporary(source)
+        and target == new_dir,
+    )
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, make_uploads(1)
+    )
+
+    assert result is False
+    assert [target for _, target in calls][-1] == old_dir  # 元に戻した
+    assert len(st_messages.error) == 1
+    message = st_messages.error[0]
+    assert "Failed to rename" in message
+    assert to_display_path(old_dir) in message
+    assert to_display_path(new_dir) in message
+    assert "Permission denied" in message
+    if path_space:
+        assert str(old_dir) not in message
+    assert read_state(stored.paper_list, data_paths) == before
+    assert pdf_tree(pdf_root) == pdfs_before
+    assert pdf_names(pdf_root) == sorted(
+        [entry.pdf_dir_name, stored.paper_list[stored.other_key].pdf_dir_name]
+    )
+
+
+def test_a_case_only_rename_stops_when_the_first_step_fails(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    stored: Stored,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """元のフォルダを一時名へ移せなかったら、何も動かさずにエラーを出す."""
+    updated = edited(stored.paper_list[stored.key], title="a study of testing")
+    before = read_state(stored.paper_list, data_paths)
+    pdfs_before = pdf_tree(pdf_root)
+    calls = record_renames(
+        monkeypatch, fails=lambda source, target: is_temporary(target)
+    )
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, make_uploads(1)
+    )
+
+    assert result is False
+    assert len(calls) == 1
+    assert len(st_messages.error) == 1
+    assert "Failed to rename" in st_messages.error[0]
+    assert read_state(stored.paper_list, data_paths) == before
+    assert pdf_tree(pdf_root) == pdfs_before
+
+
+def test_a_case_only_rename_reports_where_the_pdfs_are_when_it_cannot_restore(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    entry: Entry,
+    stored: Stored,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+    path_space: bool,
+) -> None:
+    """元の名前に戻すのにも失敗したら、一時名のフォルダの場所をエラーに含める.
+
+    PDF は一時名のフォルダに残り (失われない)、論文リストは変わらない。一時名
+    は、長さと文字の制限に触れない (255 バイト以内、Windows の予約文字を含まない)。
+    """
+    updated = edited(stored.paper_list[stored.key], title="a study of testing")
+    before = read_state(stored.paper_list, data_paths)
+    record_renames(
+        monkeypatch, fails=lambda source, target: is_temporary(source)
+    )
+
+    result = update_entry_in_list(stored.paper_list, stored.key, updated)
+
+    assert result is False
+    temporaries = [
+        name
+        for name in pdf_names(pdf_root)
+        if name.startswith(TEMPORARY_PREFIX)
+    ]
+    assert len(temporaries) == 1
+    temporary = temporaries[0]
+    assert len(temporary.encode("utf-8")) <= 255
+    assert not WINDOWS_RESERVED.search(temporary)
+    assert temporary == temporary.rstrip(". ")
+    temporary_dir = to_fs_path(pdf_root) / temporary
+    assert pdf_names(temporary_dir) == ["00.pdf", "01.pdf"]
+    for name, content in stored.pdfs.items():
+        assert (temporary_dir / name).read_bytes() == content
+    assert len(st_messages.error) == 1
+    message = st_messages.error[0]
+    assert to_display_path(temporary_dir) in message
+    assert entry.pdf_dir_name in message
+    if path_space:
+        assert str(temporary_dir) not in message
+    assert read_state(stored.paper_list, data_paths) == before
+    # 孤立 PDF の走査が拾っても問題ない (PDF は一覧に出て、失われない)
+    assert find_orphaned_pdfs(stored.paper_list) == [
+        temporary_dir / "00.pdf",
+        temporary_dir / "01.pdf",
+    ]
+
+
+def test_a_failed_direct_rename_stops_the_update(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    stored: Stored,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """通常の改名に失敗したら、更新を中止して論文リストも PDF も変えない."""
+    updated = edited(
+        stored.paper_list[stored.key], title="A Revised Study of Testing"
+    )
+    before = read_state(stored.paper_list, data_paths)
+    pdfs_before = pdf_tree(pdf_root)
+    record_renames(monkeypatch, fails=lambda source, target: True)
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, make_uploads(1)
+    )
+
+    assert result is False
+    assert len(st_messages.error) == 1
+    assert "Failed to rename" in st_messages.error[0]
+    assert read_state(stored.paper_list, data_paths) == before
+    assert pdf_tree(pdf_root) == pdfs_before
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        pytest.param("2020 - Alice Smith - A Study", id="ordinary"),
+        pytest.param("x" * 255, id="255-bytes"),
+        pytest.param("あ" * 85, id="255-bytes-of-multibyte-characters"),
+        pytest.param('a:b*c?"d<e>f|g\\h\x01i', id="reserved-characters"),
+        pytest.param("ends with dots. . .", id="trailing-dots-and-spaces"),
+        pytest.param("", id="empty"),
+    ],
+)
+def test_temporary_dir_name_is_valid_on_every_file_system(
+    original: str,
+) -> None:
+    """一時名は、長さと文字の制限に触れず、元の名前とは別の名前になる."""
+    names = {_common._temporary_dir_name(original) for _ in range(20)}
+
+    assert len(names) == 20  # 呼ぶたびに別の名前
+    for name in names:
+        assert name.startswith(TEMPORARY_PREFIX)
+        assert len(name.encode("utf-8")) <= 255
+        assert len(name) <= 255
+        assert not WINDOWS_RESERVED.search(name)
+        assert name == name.rstrip(". ")
+        assert name != original
+
+
+# --- 更新: 大文字小文字だけ違う別の論文・別のフォルダ (要件 3.3, 3.4) ---
+
+
+@pytest.mark.parametrize(
+    ("other_changes", "new_changes"),
+    [
+        pytest.param(
+            {
+                "author": "Bob Jones",
+                "title": "Quantum Widgets",
+                "year": "2019",
+            },
+            {
+                "author": "bob jones",
+                "title": "QUANTUM WIDGETS",
+                "year": "2019",
+            },
+            id="case",
+        ),
+        pytest.param(
+            {"title": "Caf\u00e9"}, {"title": "Cafe\u0301"}, id="nfc-vs-nfd"
+        ),
+        pytest.param(
+            {"title": "Strasse"}, {"title": "Stra\u00dfe"}, id="casefold-ss"
+        ),
+    ],
+)
+def test_update_rejects_a_name_that_differs_only_in_form_from_another(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    entry: Entry,
+    make_entry: Callable[..., Entry],
+    st_messages: StMessages,
+    path_space: bool,
+    other_changes: dict[str, str],
+    new_changes: dict[str, str],
+) -> None:
+    """ほかの論文と比較キーが等しくなる更新は、重複として拒否される (3.3).
+
+    更新後のフォルダ名が、ほかの論文のフォルダ名と大文字小文字 (または Unicode
+    正規化) だけ違う。重複エラーに両方の名前が示され、論文リストも PDF も変わらない
+    (添付した PDF も保存されない)。判定はファイルシステムに依存しない (3.4)。
+    """
+    other = make_entry(**other_changes)
+    paper_list, (key, _other_key) = seed_paper_list(data_paths, entry, other)
+    make_pdfs(entry.get_pdf_dir(pdf_root), ["00.pdf", "01.pdf"])
+    make_pdfs(other.get_pdf_dir(pdf_root), ["00.pdf"])
+    updated = edited(paper_list[key], **new_changes)
+    assert_names_differ_only_in_form(updated, other)
+    before = read_state(paper_list, data_paths)
+    pdfs_before = pdf_tree(pdf_root)
+
+    result = update_entry_in_list(paper_list, key, updated, make_uploads(1))
+
+    assert result is False
+    assert len(st_messages.error) == 1
+    message = st_messages.error[0]
+    assert "Duplicated" in message
+    assert updated.pdf_dir_name in message
+    assert other.pdf_dir_name in message
+    assert read_state(paper_list, data_paths) == before
+    assert pdf_tree(pdf_root) == pdfs_before
+
+
+@pytest.mark.parametrize(
+    ("old_title", "new_title"),
+    [
+        pytest.param("A Study of Testing", "a study of testing", id="case"),
+        pytest.param("Strasse", "Stra\u00dfe", id="casefold-ss"),
+    ],
+)
+def test_update_rejects_a_case_only_rename_onto_a_different_existing_folder(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    make_entry: Callable[..., Entry],
+    st_messages: StMessages,
+    path_space: bool,
+    old_title: str,
+    new_title: str,
+) -> None:
+    """大文字小文字だけ違う別のフォルダが実際にあれば、改名を拒否する (3.2).
+
+    大文字小文字を区別するファイルシステム (Linux) では、``A Study of
+    Testing`` と ``a study of testing`` は別のフォルダになれる。孤立した後者
+    があれば、上書き・統合せずに「既にある」エラーで拒否し、論文リストも両方の
+    フォルダの中身も変えない。区別しない環境 (macOS・Windows) では 2 つの名前が
+    同じフォルダを指して別のフォルダを作れないので、そのときは skip する。
+    macOS の APFS は ``ß`` と ``ss`` も同じフォルダにする。
+    """
+    existing = make_entry(title=old_title)
+    paper_list, (key,) = seed_paper_list(data_paths, existing)
+    updated = edited(paper_list[key], title=new_title)
+    assert_names_differ_only_in_form(existing, updated)
+    own = make_pdfs(existing.get_pdf_dir(pdf_root), ["00.pdf", "01.pdf"])
+    orphan_dir = updated.get_pdf_dir(pdf_root)
+    orphan = make_pdfs(orphan_dir, ["00.pdf", "07.pdf"])
+    if len(pdf_names(pdf_root)) != 2:
+        pytest.skip("this file system treats the two names as one folder")
+    before = read_state(paper_list, data_paths)
+    pdfs_before = pdf_tree(pdf_root)
+
+    result = update_entry_in_list(paper_list, key, updated, make_uploads(1))
+
+    assert result is False
+    assert len(st_messages.error) == 1
+    assert "already exists" in st_messages.error[0]
+    assert read_state(paper_list, data_paths) == before
+    assert pdf_tree(pdf_root) == pdfs_before
+    for name, content in orphan.items():
+        assert (orphan_dir / name).read_bytes() == content
+    own_dir = existing.get_pdf_dir(pdf_root)
+    for name, content in own.items():
+        assert (own_dir / name).read_bytes() == content
+
+
+def test_a_link_to_the_folder_is_not_the_same_folder(tmp_path: Path) -> None:
+    """元のフォルダを指すシンボリックリンクは、同じフォルダとみなさない.
+
+    ``os.path.samefile`` はリンクをたどって同じとみなし、リンクを改名先と
+    みなした改名が進んでしまう。比較は ``lstat`` の ``samestat`` で行う。
+    """
+    folder = tmp_path / "Folder"
+    folder.mkdir()
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(folder, target_is_directory=True)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"symbolic links are not available: {e}")
+
+    assert os.path.samefile(link, folder)  # たどると同じ (誤判定の原因)
+    assert not _common._is_same_folder(link, folder)
+    assert not _common._is_same_folder(folder, link)
+    assert _common._is_same_folder(folder, folder)
+
+
+def test_update_never_renames_onto_a_folder_that_is_not_the_original(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    entry: Entry,
+    stored: Stored,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+    path_space: bool,
+) -> None:
+    """改名先が、元のフォルダ自身でない既存のフォルダなら、何も動かさない (3.2).
+
+    大文字小文字を区別しない環境で、改名先の名前が元のフォルダ自身を指すとき
+    に、これを別のフォルダと誤判定しないことは、大文字小文字だけの改名を受け
+    付けるテストが確かめる。ここでは逆に、改名先が元のフォルダ自身でない
+    既存のフォルダだと判定される状況を、フォルダ自身かの判定を差し替えて
+    どの環境でも再現し、改名を 1 回も試みずに拒否することを確かめる。
+    """
+    updated = edited(stored.paper_list[stored.key], title="a study of testing")
+    assert_names_differ_only_in_form(entry, updated)
+    pdf_dir = entry.get_pdf_dir(pdf_root)
+    new_dir = updated.get_pdf_dir(pdf_root)
+    # 区別しない環境では、新しい名前が元のフォルダ自身を指して存在する.
+    # 区別する環境では、別のフォルダを作って、同じ状況にする
+    if not os.path.lexists(new_dir):
+        make_pdfs(new_dir, ["00.pdf"])
+    monkeypatch.setattr(_common, "_is_same_folder", lambda *_: False)
+    calls = record_renames(monkeypatch)
+    before = read_state(stored.paper_list, data_paths)
+    pdfs_before = pdf_tree(pdf_root)
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, make_uploads(1)
+    )
+
+    assert result is False
+    assert calls == []
+    assert len(st_messages.error) == 1
+    assert "already exists" in st_messages.error[0]
+    assert to_display_path(pdf_dir) in st_messages.error[0]
+    assert to_display_path(new_dir) in st_messages.error[0]
+    assert read_state(stored.paper_list, data_paths) == before
+    assert pdf_tree(pdf_root) == pdfs_before
+
+
+# --- 更新: 改名の前の移行 (要件 3.2, 2.7, 8.3) ---
+# 旧形式の単一 PDF と、修正前の名前のフォルダは、PDF の一覧を取得するときに
+# 現在の名前のフォルダへ移る。更新は改名の前にこの移行を済ませるので、改名後に
+# 新しい名前のフォルダの PDF として見え、孤立 PDF にならない。
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        pytest.param({"title": "a study of testing"}, id="case-only"),
+        pytest.param({"title": "A Revised Study"}, id="other-name"),
+    ],
+)
+def test_update_moves_a_legacy_single_pdf_before_renaming_the_folder(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    entry: Entry,
+    st_messages: StMessages,
+    changes: dict[str, str],
+) -> None:
+    """旧形式の単一 PDF は、改名の前にフォルダへ移り、改名後も PDF として見える.
+
+    フォルダがまだない論文で、PDF ルート直下に旧形式の PDF がある。更新後に
+    ルート直下には残らず、新しい名前のフォルダの ``00.pdf`` になり、孤立 PDF
+    にならない。
+    """
+    paper_list, (key,) = seed_paper_list(data_paths, entry)
+    legacy_pdf = write_pdf(
+        pdf_root / entry.pdf_filename, PDF_BYTES + b"%legacy"
+    )
+    updated = edited(paper_list[key], **changes)
+
+    result = update_entry_in_list(paper_list, key, updated)
+
+    assert result is True
+    assert pdf_names(pdf_root) == [updated.pdf_dir_name]
+    assert not legacy_pdf.exists()
+    assert updated.get_pdf_files() == [
+        updated.get_pdf_dir(pdf_root) / "00.pdf"
+    ]
+    assert (updated.get_pdf_dir(pdf_root) / "00.pdf").read_bytes() == (
+        PDF_BYTES + b"%legacy"
+    )
+    assert find_orphaned_pdfs(paper_list) == []
+    assert st_messages.error == []
+
+
+@pytest.mark.parametrize(
+    "author",
+    [
+        pytest.param("a" + "A" * 187, id="case-only"),
+        pytest.param("B" * 188, id="other-name"),
+    ],
+)
+def test_update_moves_a_pre_fix_folder_before_renaming_it(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    make_entry: Callable[..., Entry],
+    st_messages: StMessages,
+    author: str,
+) -> None:
+    """修正前の名前のフォルダは、改名の前に現在の名前へ移り、改名後も見える.
+
+    KB7 の範囲の論文で、修正前の名前のフォルダだけがある。更新後は新しい
+    名前のフォルダだけが残り、中の PDF は保たれ、孤立 PDF にならない。
+    """
+    existing = make_entry(author="A" * 188, title="x" * 20, year="2020")
+    legacy_name = existing.legacy_pdf_dir_name
+    assert legacy_name is not None  # 前提: KB7 の範囲
+    paper_list, (key,) = seed_paper_list(data_paths, existing)
+    pdfs = make_pdfs(pdf_root / legacy_name, ["00.pdf", "01.pdf"])
+    updated = edited(paper_list[key], author=author)
+
+    result = update_entry_in_list(paper_list, key, updated)
+
+    assert result is True
+    assert pdf_names(pdf_root) == [updated.pdf_dir_name]
+    new_dir = updated.get_pdf_dir(pdf_root)
+    assert pdf_names(new_dir) == ["00.pdf", "01.pdf"]
+    for name, content in pdfs.items():
+        assert (new_dir / name).read_bytes() == content
+    assert find_orphaned_pdfs(paper_list) == []
+    assert st_messages.error == []
+
+
+def test_update_renames_only_the_current_folder_when_the_pre_fix_one_stays(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    make_entry: Callable[..., Entry],
+    st_messages: StMessages,
+) -> None:
+    """移す先が既にあって移されなかった修正前の名前のフォルダは、動かさない.
+
+    現在の名前のフォルダと修正前の名前のフォルダが両方ある論文を更新すると、
+    現在の名前のフォルダだけが改名される。修正前の名前のフォルダは中身ごと
+    そのまま残る (PDF は失われない)。
+    """
+    existing = make_entry(author="A" * 188, title="x" * 20, year="2020")
+    legacy_name = existing.legacy_pdf_dir_name
+    assert legacy_name is not None  # 前提: KB7 の範囲
+    paper_list, (key,) = seed_paper_list(data_paths, existing)
+    current = make_pdfs(existing.get_pdf_dir(pdf_root), ["00.pdf"])
+    legacy = make_pdfs(pdf_root / legacy_name, ["00.pdf", "01.pdf"])
+    updated = edited(paper_list[key], author="B" * 188)
+
+    result = update_entry_in_list(paper_list, key, updated)
+
+    assert result is True
+    assert pdf_names(pdf_root) == sorted([updated.pdf_dir_name, legacy_name])
+    new_dir = updated.get_pdf_dir(pdf_root)
+    assert (new_dir / "00.pdf").read_bytes() == current["00.pdf"]
+    for name, content in legacy.items():
+        assert (pdf_root / legacy_name / name).read_bytes() == content
+
+
+# --- 更新: 変換後のパスの空間 (要件 1.2, 3.2) ---
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        pytest.param({"title": "a study of testing"}, id="case-only"),
+        pytest.param({"title": "A Revised Study of Testing"}, id="other-name"),
+    ],
+)
+def test_update_renames_inside_the_converted_pdf_root(
+    data_paths: DataPaths,
+    entry: Entry,
+    redirected_pdf_root: Path,
+    st_messages: StMessages,
+    changes: dict[str, str],
+) -> None:
+    """改名は、変換後の PDF ルートの下で行う (変換前のパスを使わない).
+
+    変換が別のディレクトリへ写す状態で、PDF は写し先にだけある。改名 (一時名
+    の経由を含む) は写し先で行われ、変換前の PDF ルートには何も作られない。
+    """
+    paper_list, (key,) = seed_paper_list(data_paths, entry)
+    pdfs = make_pdfs(entry.get_pdf_dir(), ["00.pdf", "01.pdf"])
+    assert pdf_names(redirected_pdf_root) == [entry.pdf_dir_name]  # 前提
+    updated = edited(paper_list[key], **changes)
+
+    result = update_entry_in_list(paper_list, key, updated)
+
+    assert result is True
+    assert pdf_names(redirected_pdf_root) == [updated.pdf_dir_name]
+    new_dir = redirected_pdf_root / updated.pdf_dir_name
+    assert pdf_names(new_dir) == ["00.pdf", "01.pdf"]
+    for name, content in pdfs.items():
+        assert (new_dir / name).read_bytes() == content
+    assert not any(data_paths.pdf.iterdir())
+    assert st_messages.error == []
 
 
 # --- 手動入力フォーム: 補助 ------------------------------------------------
