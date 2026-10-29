@@ -6,6 +6,11 @@
     Entry: 個々の論文エントリを表す辞書風のクラス
     PaperList: 複数の論文エントリを管理する辞書風のクラス
 
+論文リストのファイルの読み込みと退避:
+    load_paper_list: ファイルを読み込み、状態 (PaperListStatus: 正常・
+        ファイルなし・壊れている) とともに返す (PaperListLoad)
+    backup_broken_paper_list: 壊れたファイルを日時入りの別名へ複製する
+
 例:
     >>> from paper_manager.entry import Entry, PaperList
     >>> entry = Entry({
@@ -20,6 +25,20 @@
 
 """
 
-from ._entry import Entry, PaperList
+from ._entry import (
+    Entry,
+    PaperList,
+    PaperListLoad,
+    PaperListStatus,
+    backup_broken_paper_list,
+    load_paper_list,
+)
 
-__all__ = ("Entry", "PaperList")
+__all__ = (
+    "Entry",
+    "PaperList",
+    "PaperListLoad",
+    "PaperListStatus",
+    "backup_broken_paper_list",
+    "load_paper_list",
+)

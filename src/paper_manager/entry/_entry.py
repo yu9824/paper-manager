@@ -4,6 +4,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 from collections.abc import (
     Collection,
     ItemsView,
@@ -12,8 +13,10 @@ from collections.abc import (
     MutableMapping,
     ValuesView,
 )
+from datetime import datetime
+from enum import Enum
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Literal, NamedTuple, Optional, Union, cast
 
 import streamlit as st
 
@@ -44,6 +47,13 @@ MAX_DIRNAME_LENGTH = 200  # フォルダ名の最大長
 # 修正前の規則の名前のフォルダを作れた長さの上限 (いずれかの OS で作成
 # できた長さ)。これを超える修正前の名前のフォルダは存在しえない
 _MAX_LEGACY_DIRNAME_LENGTH = 255
+
+# 論文リストのファイルが壊れているときに画面に出す警告 (修正前からの文言)
+_BROKEN_PAPER_LIST_WARNING = "Broken paper list (json)"
+# 壊れた論文リストのファイルの退避先の名前の日時の部分の書式。退避先は
+# ``<ファイル名>.broken-<日時>`` (衝突時は ``-1``、``-2`` と連番)。復元が
+# 使う ``list.json.backup`` (復元のたびに上書きされる) とは別の名前にする
+_BROKEN_BACKUP_TIME_FORMAT = "%Y%m%d_%H%M%S"
 
 
 def _warn_pdf_problem(message: str, level: int) -> None:
@@ -961,6 +971,12 @@ class PaperList(MutableMapping):
         """
         Loads a paper list from a JSON file.
 
+        ``load_paper_list`` の互換のための薄いラッパー。ファイルが壊れて
+        いる (``PaperListStatus.BROKEN``) ときは、例外を送出せずに、画面に
+        警告 ``Broken paper list (json)`` を、ログに理由を出し、空の論文
+        リストを返す。ファイルがないときは、警告を出さずに空の論文リストを
+        返す。ファイルは変更しない (壊れたファイルの退避もしない)。
+
         Parameters
         ----------
         _filepath_paper_list_json : Union[os.PathLike, str, None], optional
@@ -970,34 +986,21 @@ class PaperList(MutableMapping):
         -------
         PaperList
             An instance of `PaperList` initialized with the loaded data.
-        """
-        _filepath_paper_list_json = cls._get_filepath_paper_list(
-            _filepath_paper_list_json
-        )
-        if _filepath_paper_list_json.is_file():
-            with open(
-                _filepath_paper_list_json,
-                mode="r",
-                encoding=ENCODING,
-            ) as f:
-                try:
-                    _paper_list_raw: Union[dict, None] = json.load(f)
-                except json.JSONDecodeError:
-                    st.warning("Broken paper list (json)")
-                    _paper_list_raw = None
-        else:
-            _paper_list_raw = None
 
-        return (
-            cls(dict())
-            if _paper_list_raw is None
-            else cls(
-                {
-                    _key: Entry(_value)
-                    for _key, _value in _paper_list_raw.items()
-                }
+        Raises
+        ------
+        OSError
+            If the file exists but cannot be read (e.g. no permission to
+            read it). See ``load_paper_list``.
+        """
+        filepath = cls._get_filepath_paper_list(_filepath_paper_list_json)
+        paper_list, status, reason = load_paper_list(filepath)
+        if status is PaperListStatus.BROKEN:
+            _logger.warning(
+                "%s: %s: %s", _BROKEN_PAPER_LIST_WARNING, filepath, reason
             )
-        )
+            st.warning(_BROKEN_PAPER_LIST_WARNING)
+        return paper_list
 
     @classmethod
     def from_session_state(cls) -> "PaperList":
@@ -1182,6 +1185,338 @@ class PaperList(MutableMapping):
             A view of the keys in the dictionary.
         """
         return super().keys()
+
+
+class PaperListStatus(str, Enum):
+    """State of the paper list file, judged from its contents.
+
+    Attributes
+    ----------
+    OK
+        The file is a JSON object of entries (key -> JSON object of fields)
+        whose field values are all strings.
+    MISSING
+        There is no file at the path. A directory at the path also counts
+        as no file (as before this state was introduced).
+    BROKEN
+        The file cannot be decoded as UTF-8, cannot be parsed as JSON, or
+        is not a JSON object of entries whose field values are strings
+        (the top level is not an object, including ``null``; an entry is
+        not an object; or a field value is not a string).
+    """
+
+    OK = "ok"
+    MISSING = "missing"
+    BROKEN = "broken"
+
+
+class PaperListLoad(NamedTuple):
+    """Result of ``load_paper_list``.
+
+    Attributes
+    ----------
+    paper_list : PaperList
+        The loaded paper list. Empty when ``status`` is ``MISSING`` or
+        ``BROKEN`` (no entry of a broken file is loaded).
+    status : PaperListStatus
+        The state of the file.
+    reason : Optional[str]
+        Why the file is broken. ``None`` unless ``status`` is ``BROKEN``.
+    """
+
+    paper_list: PaperList
+    status: PaperListStatus
+    reason: Optional[str]
+
+
+# 論文リストのファイルの中身 (キー -> フィールド名 -> 値の文字列)
+_RawPaperList = dict[str, dict[str, str]]
+
+
+def _json_type_name(value: object) -> str:
+    """Return the JSON type name of a value decoded by ``json``.
+
+    Parameters
+    ----------
+    value : object
+        A value returned by ``json.loads``.
+
+    Returns
+    -------
+    str
+        ``object``, ``array``, ``string``, ``number``, ``boolean`` or
+        ``null``.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    return "object"
+
+
+def _find_shape_problem(raw: object) -> Optional[str]:
+    """Return why ``raw`` is not a paper list, or ``None`` if it is one.
+
+    論文リストの形は、キーから論文 (フィールド名から値への辞書) への辞書で、
+    フィールドの値はすべて文字列。修正前の保存処理 (``PaperList.to_file``)
+    はこの形だけを書き、修正前の読み込みはこの形以外で例外を送出していた
+    (``null`` だけは空の論文リストとして読んでいた)。
+
+    Parameters
+    ----------
+    raw : object
+        The value decoded from the file by ``json.loads``.
+
+    Returns
+    -------
+    Optional[str]
+        The first problem found, or ``None``.
+    """
+    if not isinstance(raw, dict):
+        return (
+            f"the top level is a JSON {_json_type_name(raw)}, "
+            "not an object of entries"
+        )
+    for key, fields in raw.items():
+        if not isinstance(fields, dict):
+            return (
+                f"entry {key!r} is a JSON {_json_type_name(fields)}, "
+                "not an object of fields"
+            )
+        for name, value in fields.items():
+            if not isinstance(value, str):
+                return (
+                    f"field {name!r} of entry {key!r} is a JSON "
+                    f"{_json_type_name(value)}, not a string"
+                )
+    return None
+
+
+def _decode_paper_list(
+    content: bytes,
+) -> Union[tuple[_RawPaperList, None], tuple[None, str]]:
+    """Decode the bytes of a paper list file.
+
+    Parameters
+    ----------
+    content : bytes
+        The contents of the file.
+
+    Returns
+    -------
+    Union[tuple[_RawPaperList, None], tuple[None, str]]
+        ``(raw, None)`` if ``content`` is a paper list, or
+        ``(None, reason)`` if it is broken.
+    """
+    try:
+        text = content.decode(ENCODING)
+    except UnicodeDecodeError as e:
+        return None, f"not valid {ENCODING}: {e}"
+    try:
+        raw = json.loads(text)
+    except (ValueError, RecursionError) as e:
+        # JSONDecodeError (ValueError の派生) のほか、桁数の上限を超える
+        # 整数 (Python 3.11 以降の ValueError) と深すぎる入れ子
+        # (RecursionError) も、JSON として読めないものとして扱う
+        return None, f"not valid JSON: {e}"
+    problem = _find_shape_problem(raw)
+    if problem is not None:
+        return None, problem
+    return cast(_RawPaperList, raw), None
+
+
+def _read_paper_list(
+    filepath: Path,
+) -> tuple[PaperListStatus, Optional[_RawPaperList], Optional[str]]:
+    """Read the paper list file and judge its state, without Streamlit.
+
+    Parameters
+    ----------
+    filepath : Path
+        The paper list file.
+
+    Returns
+    -------
+    tuple[PaperListStatus, Optional[_RawPaperList], Optional[str]]
+        The state, the contents (only when ``OK``) and the reason (only
+        when ``BROKEN``).
+
+    Raises
+    ------
+    OSError
+        If the file exists but cannot be read (e.g. no permission). This is
+        not ``BROKEN``: the contents are unknown, so they must not be
+        treated as replaceable.
+    """
+    if not filepath.is_file():
+        return PaperListStatus.MISSING, None, None
+    try:
+        content = filepath.read_bytes()
+    except FileNotFoundError:
+        # 有無を確かめてから読むまでの間に削除された
+        return PaperListStatus.MISSING, None, None
+    raw, reason = _decode_paper_list(content)
+    if raw is None:
+        return PaperListStatus.BROKEN, None, reason
+    return PaperListStatus.OK, raw, None
+
+
+def load_paper_list(
+    filepath: Union[os.PathLike, str, None] = None,
+) -> PaperListLoad:
+    """Load the paper list file and report its state.
+
+    Streamlit を呼ばない (画面に何も出さない)。壊れているときの通知は
+    呼び出し元が行う (``PaperList.from_file`` は従来の警告を出す)。
+    ファイルは変更しない。
+
+    Parameters
+    ----------
+    filepath : Union[os.PathLike, str, None], optional
+        The paper list file. If None, ``FILEPATH_LIST`` is used.
+
+    Returns
+    -------
+    PaperListLoad
+        The paper list (empty unless ``OK``), the state (see
+        ``PaperListStatus``) and the reason why the file is broken.
+
+    Raises
+    ------
+    OSError
+        If the file exists but cannot be read (e.g. no permission to read
+        it). Broken contents never raise.
+    """
+    status, raw, reason = _read_paper_list(
+        PaperList._get_filepath_paper_list(filepath)
+    )
+    entries = {} if raw is None else raw
+    return PaperListLoad(
+        paper_list=PaperList(
+            {key: Entry(fields) for key, fields in entries.items()}
+        ),
+        status=status,
+        reason=reason,
+    )
+
+
+def _reserve_backup_path(directory: Path, base_name: str) -> Path:
+    """Create an empty file at the first free backup name and return it.
+
+    名前は ``base_name``、``base_name-1``、``base_name-2`` … の順に試す。
+    排他的な作成 (``O_EXCL``) で名前を確保するので、既にあるファイルを
+    上書きせず、その名前のリンク (指す先がないものを含む) もたどらない。
+
+    Parameters
+    ----------
+    directory : Path
+        The directory to create the file in.
+    base_name : str
+        The name to try first.
+
+    Returns
+    -------
+    Path
+        The created (empty) file.
+
+    Raises
+    ------
+    OSError
+        If the file cannot be created for a reason other than the name
+        being taken.
+    """
+    number = 0
+    while True:
+        name = base_name if number == 0 else f"{base_name}-{number}"
+        candidate = directory / name
+        try:
+            fd = os.open(
+                candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666
+            )
+        except FileExistsError:
+            number += 1
+            continue
+        os.close(fd)
+        return candidate
+
+
+def _discard_reserved_backup(path: Path) -> None:
+    """Remove a backup file reserved by ``_reserve_backup_path``.
+
+    複製に失敗した退避先 (空、または途中まで書いたファイル) を残さない。
+    削除にも失敗したら、ログに出す (元の失敗を優先して呼び出し元へ送る)。
+
+    Parameters
+    ----------
+    path : Path
+        The reserved backup file.
+    """
+    try:
+        path.unlink()
+    except OSError as e:
+        _logger.error(
+            "Failed to remove the incomplete paper list backup: %s: %s",
+            path,
+            _reason(e),
+        )
+
+
+def backup_broken_paper_list(
+    filepath: Union[os.PathLike, str, None] = None,
+    now: Optional[datetime] = None,
+) -> Optional[Path]:
+    """Copy the paper list file aside when it is broken.
+
+    状態が ``BROKEN`` のときだけ、同じディレクトリの
+    ``<ファイル名>.broken-<YYYYmmdd_HHMMSS>`` (既にあれば ``-1``、``-2`` と
+    連番) へ ``shutil.copy2`` で複製する。元のファイルは変更しない。復元が
+    使う ``list.json.backup`` は使わない。Streamlit を呼ばない (退避先の
+    表示は呼び出し元が行う)。
+
+    Parameters
+    ----------
+    filepath : Union[os.PathLike, str, None], optional
+        The paper list file. If None, ``FILEPATH_LIST`` is used.
+    now : Optional[datetime], optional
+        The time put in the name. If None, the current local time is used.
+
+    Returns
+    -------
+    Optional[Path]
+        The backup file, or ``None`` if the file is not broken (``OK`` or
+        ``MISSING``; nothing is created).
+
+    Raises
+    ------
+    OSError
+        If the file cannot be read, or the backup cannot be made. No backup
+        file is left behind then, and the caller must not overwrite the
+        broken file.
+    """
+    path = PaperList._get_filepath_paper_list(filepath)
+    status, _, reason = _read_paper_list(path)
+    if status is not PaperListStatus.BROKEN:
+        return None
+
+    stamp = (datetime.now() if now is None else now).strftime(
+        _BROKEN_BACKUP_TIME_FORMAT
+    )
+    backup = _reserve_backup_path(path.parent, f"{path.name}.broken-{stamp}")
+    try:
+        shutil.copy2(path, backup)
+    except OSError:
+        _discard_reserved_backup(backup)
+        raise
+    _logger.warning(
+        "Backed up the broken paper list (%s): %s -> %s", reason, path, backup
+    )
+    return backup
 
 
 if __name__ == "__main__":

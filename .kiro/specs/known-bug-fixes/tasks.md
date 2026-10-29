@@ -52,7 +52,7 @@
   - _Depends: 1.1_
   - _Requirements: 1.1, 1.2, 1.4, 2.7, 8.3, 12.5_
 
-- [ ] 2.3 論文リストのファイルの読み込み状態の判定と、壊れたファイルの退避を用意する
+- [x] 2.3 論文リストのファイルの読み込み状態の判定と、壊れたファイルの退避を用意する
   - 論文リストのファイルを読み込み、正常・ファイルなし・壊れている、のいずれかの状態を返す（JSON として解析できない、UTF-8 として読めない、論文の一覧の形をしていない、値が文字列でない、を壊れているとみなす）。画面の処理を呼ばない
   - 既存の読み込みは、壊れているときに従来どおりの警告を出し、空の論文リストを返す（例外にならない）
   - 壊れたファイルを、元のファイルを残したまま、日時入りの別名（衝突時は連番）へ退避できるようにする。復元が使う退避名とは別の名前にする
@@ -197,3 +197,5 @@
 - 2.1: 修正前の規則は `_dir_name_before_kb7_fix`（モジュール関数）に残し、2.2 / 3.2 は `Entry._pdf_dir_name_before_kb7_fix()` を使う（著者なし・空、または名前が空なら `None`、例外なし。`None` でなければ修正前の名前）。`legacy_pdf_dir_name` は「`pdf_dir_name` と異なり 255 文字以内」の条件をこれに足して作る。`pdf_dir_name` は空にならない（空になる入力は `Unknown`。空の名前は PDF ルートを指し、削除で全 PDF が消えうるため）。**3.3 で、PDF ルートそのものを削除しない防御を入れる**。後方互換は修正前の規則と約 1,000 万通りの比較で確認済み（違いは KB7・空の名前・KB2a・Windows の `"` だけ）。**2.2 と 3.2 が入るまで、KB7 の範囲の既存フォルダは一覧に出ず孤立 PDF に見えるので、その間でリリースしない**。`tests/test_helper.py` の docstring にある KB2a の記述は 6.1 で更新する
 - 2.2: `Entry.legacy_pdf_dir_name`、`get_pdf_dir`（`to_fs_path(base_dir or DIRPATH_PDF) / pdf_dir_name`）、`get_pdf_files` の移行（修正前の名前のフォルダ → 現在の名前、旧形式の単一 PDF → フォルダの空き番号（フォルダの有無を問わない）、旧命名 → `NN.pdf`。判定は `^\d{2,}\.pdf$`、上書きは `os.path.lexists` で事前に確認）を実装した。移せなかった旧形式の単一 PDF は一覧の末尾に含める。`is_file` / `is_dir` の ENAMETOOLONG は存在しないものとして扱う（Python ≤3.13）。警告は `_warn_pdf_problem`（`st.warning` + ログ、表示用のパス）で、`st.session_state[KEY_SHOWN_PDF_WARNINGS]` で抑止する。`MAX_PATH_LENGTH` は削除した
 - 2.2 からの申し送り: **5.1** で `config_page` の描画の冒頭（fragment の再実行は含めない）に `st.session_state[KEY_SHOWN_PDF_WARNINGS]` を消し、再描画の後も解消していない警告が 1 回出ることを確かめる AppTest を追加し、`_warn_pdf_problem` / `get_pdf_files` の docstring の「セッションの中で 1 回だけ」を「1 回の描画の中で 1 回だけ」に直す（現状は抑止がセッション単位）。**3.2** で、移せなかった旧形式の単一 PDF（変換後のパス）と PDF ルートの走査（変換前）が Windows で一致せず孤立に見える点を、変換後の空間で比較して解消する。**3.3** で、フォルダごとの削除のとき移せなかった旧形式の単一 PDF も削除の対象にする（変換後のパスで）。**3.4** で、移す先が既にあってフォルダを移さなかった論文のタイトルを変えると、修正前の名前のフォルダが孤立に見える点に留意する（孤立判定で修正前の名前を有効にする 3.2 で、改名後は該当しなくなる。観察として扱う）。FYI: `test_legacy_single_pdf_never_overwrites_a_name_differing_in_case` は Windows の大文字小文字を区別しない glob で失敗しうる（CI は Ubuntu のみ）。`sorted(glob)` は辞書順で、100 件以上あると番号順にならない（以前からの挙動）
+- 2.3: `load_paper_list` / `backup_broken_paper_list` / `PaperListStatus` / `PaperListLoad` を `paper_manager.entry` から再エクスポートした。テストは design の Testing Strategy に合わせて `tests/test_paper_list.py` に置いた。MISSING はパスにファイルがない、またはディレクトリのとき。桁数の上限を超える整数と深すぎる入れ子も BROKEN。退避先の名前は `O_EXCL` で確保してから `copy2` で複製する（既存のファイルやリンクを上書きしない）。修正前の判定と 6,000 通りで突き合わせ、修正前に読めたファイルはすべて OK、挙動が変わるのはトップレベルが `null` のファイル（警告なしの空 → BROKEN）だけ。UTF-8 の BOM 付きファイルは修正前と同じく壊れている扱い（受け付けるかは利用者の判断待ち。変えていない）
+- 2.3 からの申し送り: **5.1** の `save_paper_list` は、`backup_broken_paper_list` が `OSError` を送出したら list.json を書かずにエラーを表示する（`None` は「壊れていない」の意味で、失敗とは区別している）。壊れたファイルに正常な論文が混ざっていても部分的には読み込まない（内容は退避ファイルに残る）
