@@ -13,7 +13,7 @@
 - 利用者のデータ（論文リスト・設定・PDF フォルダ）を壊さないことを最優先とし、既存の PDF フォルダ（`<pdf_dir_name>/NN.pdf`）との後方互換を保つ。
 
 ## Introduction
-paper-manager の既知バグ（test-suite spec の KB1〜KB10）、利用者から報告された Windows で長いパスの PDF が見えない不具合、および test-suite spec で観察として記録した不具合のうち 5 件を修正する。修正後は、該当する xfail の記録を外し、通常のテストとして成功させる。修正によって既存の論文リスト・設定・PDF フォルダが読めなくなったり、黙って書き換えられたりしないことを前提とする。
+paper-manager の既知バグ（test-suite spec の KB1〜KB10）、利用者から報告された Windows で長いパスの PDF が見えない不具合、および test-suite spec で観察として記録した不具合のうち 5 件を修正する。加えて、実装中に見つかった、引用キーに `,` などが入ると BibTeX の表示・エクスポートが落ちる不具合と、BOM 付きの論文リストのファイルが壊れていると判定される問題を修正する。修正後は、該当する xfail の記録を外し、通常のテストとして成功させる。修正によって既存の論文リスト・設定・PDF フォルダが読めなくなったり、黙って書き換えられたりしないことを前提とする。
 
 ## Boundary Context
 - **In scope**:
@@ -25,7 +25,8 @@ paper-manager の既知バグ（test-suite spec の KB1〜KB10）、利用者か
   - 年が不正な論文の編集
   - 孤立 PDF（フォルダを指定した削除の件数、旧形式の PDF の誤判定）
   - 復元（データディレクトリの外への書き込み。画面と CLI の両方）
-  - 壊れた論文リストのファイルの扱い
+  - 壊れた論文リストのファイルの扱い（BOM 付きの UTF-8 のファイルを含む）
+  - BibTeX の表示・エクスポートで使う引用キー（BibTeX の引用キーとして読めない文字）
   - CLI（`backup` / `restore` / `version`、サイドバーのナビゲーションの指定）
 - **Out of scope**:
   - OS ごとにファイル名の置換規則が違うことによる、OS をまたいだデータ移行時の不整合（`:` や `?` を含むタイトル。別 spec で扱う）
@@ -131,6 +132,7 @@ paper-manager の既知バグ（test-suite spec の KB1〜KB10）、利用者か
 1. If 論文リストのファイルが壊れている（JSON として解析できない、文字コードとして読めない、論文の一覧の形をしていない）, then the Paper Manager shall 画面を例外で落とさずに、壊れている旨の警告を表示する
 2. While 論文リストのファイルが壊れている, the Paper Manager shall ページを表示しただけでは、論文リストのファイルを書き換えない
 3. If 論文リストのファイルが壊れた状態で、利用者が論文の登録・更新・削除などによって論文リストを保存した, then the Paper Manager shall 保存する前に壊れたファイルの内容を別のファイルに退避し、退避先を画面に表示する
+4. When 論文リストのファイルが先頭に BOM の付いた UTF-8 で、それ以外は正しい形をしている, the Paper Manager shall 壊れているとみなさずに、論文リストとして読み込む
 
 ### Requirement 11: CLI
 **Objective:** As a CLI を使う利用者, I want `backup`・`restore`・`version` が動き、ナビゲーションの指定が正しく扱われること, so that 画面を開かずにバックアップ・復元やバージョン確認ができる
@@ -150,7 +152,16 @@ paper-manager の既知バグ（test-suite spec の KB1〜KB10）、利用者か
 
 #### Acceptance Criteria
 1. When 既知バグを修正した, the Test Suite shall その既知バグの xfail の記録を外し、本来あるべき振る舞いを通常のテストとして検証する
-2. The Test Suite shall この spec で修正した観察事項（Requirement 1、3、6.2〜6.4、7、8.2〜8.3、9.2〜9.3、10 の振る舞い）を検証するテストを持つ
+2. The Test Suite shall この spec で修正した観察事項（Requirement 1、3、6.2〜6.4、7、8.2〜8.3、9.2〜9.3、10、13 の振る舞い）を検証するテストを持つ
 3. The Test Suite shall Windows に固有の振る舞い（Requirement 1、2.5）を、CI の実行環境にかかわらず検証する
 4. The Test Suite shall 既知の失敗として記録したもの以外のテストがすべて成功する状態で、CI の全 Python バージョン（3.9〜3.13）で成功する
 5. The Paper Manager shall 修正前に作成された論文リスト・設定・PDF フォルダを、修正後もそのまま読み込み、PDF を表示する
+
+### Requirement 13: 引用キー
+**Objective:** As a 論文の BibTeX を表示・エクスポートする利用者, I want 著者の表記にかかわらず BibTeX を表示・エクスポートできること, so that 登録した論文を引用に使える
+
+#### Acceptance Criteria
+1. When 論文を登録・更新して引用キーを作った, the Paper Manager shall 引用キーに、BibTeX の引用キーとして読めない文字（空白、`,`、`{`、`}`）を含めない
+2. The Paper Manager shall BibTeX の引用キーとして読めない文字を含まない著者と年からは、修正前と同じ引用キーを作る
+3. When 引用キーに BibTeX の引用キーとして読めない文字を含む既存の論文の BibTeX を表示・エクスポートした, the Paper Manager shall 画面を例外で落とさずに、その文字を除いた引用キーで出力し、論文リストに保存された引用キーは書き換えない
+4. When 複数の論文をまとめてエクスポートし、出力する引用キーが大文字小文字を区別せずに重複した, the Paper Manager shall 画面を例外で落とさずに、重複しない引用キーで出力する

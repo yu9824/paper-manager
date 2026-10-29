@@ -1,11 +1,11 @@
 # Design Document
 
 ## Overview
-**Purpose**: paper-manager の既知バグ（test-suite spec の KB1〜KB10）、利用者から報告された Windows で長いパスの PDF が表示されない不具合、および観察として記録した不具合 5 件を修正する。修正した既知バグの strict xfail は外し、通常のテストとして成功させる。
+**Purpose**: paper-manager の既知バグ（test-suite spec の KB1〜KB10）、利用者から報告された Windows で長いパスの PDF が表示されない不具合、観察として記録した不具合 5 件、および実装中に見つかった引用キーと BOM 付きの論文リストの問題を修正する。修正した既知バグの strict xfail は外し、通常のテストとして成功させる。
 
 **Users**: ローカルで論文と PDF を管理する単一の利用者。特に、Windows で保存先ディレクトリを長いパスにしている利用者と、BibTeX・DOI・手動入力で論文を登録・編集する利用者。
 
-**Impact**: PDF のファイル操作は、Windows では拡張長のパスを通して行うようになる。PDF フォルダ名の生成、重複の判定、論文リストの保存経路、復元、CLI の引数処理を修正する。既存の論文リスト・設定・PDF フォルダはそのまま読み込め、KB7 の範囲のフォルダだけが新しい名前へ自動で移る。
+**Impact**: PDF のファイル操作は、Windows では拡張長のパスを通して行うようになる。PDF フォルダ名の生成、重複の判定、論文リストの保存経路、復元、CLI の引数処理、引用キーの生成と BibTeX の表示・エクスポートを修正する。既存の論文リスト・設定・PDF フォルダはそのまま読み込め、KB7 の範囲のフォルダだけが新しい名前へ自動で移る。
 
 ### Goals
 - Windows で、パス全体が 260 文字を超える PDF を、他の PDF と同じように保存・表示・削除・エクスポート・バックアップ・復元できる
@@ -30,7 +30,8 @@
 - 手動入力フォームの著者・タグ・年
 - BibTeX の人名の整形と、著者のない BibTeX の読み込み、登録ページでの構文エラーの扱い
 - DOI のメタデータの取得時のエラー処理と、Crossref の応答から Entry への変換
-- 論文リストの読み込みの状態（正常・ファイルなし・壊れている）の判定、壊れたファイルの退避、ページ描画後の書き戻しの廃止
+- 論文リストの読み込みの状態（正常・ファイルなし・壊れている）の判定（BOM 付きの UTF-8 を正常として読む）、壊れたファイルの退避、ページ描画後の書き戻しの廃止
+- 引用キーの生成規則（BibTeX の引用キーとして読めない文字を除く）と、表示・エクスポートでの既存の引用キーの整形と重複の解消
 - 復元のメンバー名の検証と、復元処理の helper への一本化
 - CLI の引数の振り分け（backup / restore / run / version）
 - 上記に対応するテストの追加・更新と、修正した既知バグの xfail の解除
@@ -52,6 +53,7 @@
 - `pdf_dir_name` の生成規則、または `legacy_pdf_dir_name` の規則の変更（既存フォルダとの互換に直結する）
 - `to_fs_path` / `to_display_path` の契約、またはその差し替え口（`_convert` / `_unconvert`）の変更
 - `load_paper_list` の状態の種類、または壊れたファイルの退避先の名前の規則の変更
+- 引用キーの整形の規則（`sanitize_citation_key` / `unique_citation_keys`）の変更（エクスポートされる引用キーが変わる）
 - 復元で受け付けるメンバー名の規則の変更（バックアップの形式を変える場合を含む）
 - CLI のサブコマンドの引数構成の変更
 - Streamlit の下限バージョン、または CI の Python のマトリクスの変更
@@ -145,11 +147,11 @@ tests/
 
 ### Modified Files
 - `src/paper_manager/_constants.py` — `COLNAME_BOOKTITLE`、`COLNAME_PUBLISHER` を追加
-- `src/paper_manager/entry/_entry.py` — `sanitize_filename`（KB5）、`pdf_dir_name`（KB2a、KB7）、`legacy_pdf_dir_name` の追加、`pdf_filename`（KB2b）、`get_pdf_dir`（変換後のパス、250 文字の警告の削除）、`get_pdf_files`（修正前の名前のフォルダの移行、旧形式の単一 PDF の統合）、`load_paper_list` / `PaperListStatus` / `PaperListLoad` / `backup_broken_paper_list` の追加、`PaperList.from_file`（状態に応じた警告）
+- `src/paper_manager/entry/_entry.py` — `sanitize_filename`（KB5）、`pdf_dir_name`（KB2a、KB7）、`legacy_pdf_dir_name` の追加、`pdf_filename`（KB2b）、`get_pdf_dir`（変換後のパス、250 文字の警告の削除）、`get_pdf_files`（修正前の名前のフォルダの移行、旧形式の単一 PDF の統合）、`load_paper_list` / `PaperListStatus` / `PaperListLoad` / `backup_broken_paper_list` の追加（BOM 付きの UTF-8 を正常として読む）、`PaperList.from_file`（状態に応じた警告）、`sanitize_citation_key` / `unique_citation_keys` の追加、`Entry.get_key`（引用キーとして読めない文字を除く）
 - `src/paper_manager/entry/__init__.py` — 追加した関数と型の再エクスポート
 - `src/paper_manager/bib/_load.py` — `format_person` の追加と、著者のない BibTeX の扱い（KB2c、KB4c）
 - `src/paper_manager/app/components/_common.py` — `custom_entry`（KB4a、KB4b、年）、`save_pdfs`（250 文字の規則の削除、失敗の表示）、`delete_pdfs`（変換後のパス、失敗の表示）、`save_paper_list`（壊れたファイルの退避）、`register_entry_to_list` / `update_entry_in_list`（比較キーによる重複判定、大文字小文字だけの改名）
-- `src/paper_manager/app/_list.py` — ビューア・ダウンロード・zip エクスポートの失敗の表示、孤立 PDF の削除の失敗の表示、編集ダイアログは更新に成功したときだけ rerun する
+- `src/paper_manager/app/_list.py` — ビューア・ダウンロード・zip エクスポートの失敗の表示、孤立 PDF の削除の失敗の表示、編集ダイアログは更新に成功したときだけ rerun する、詳細の BibTeX 表示とエクスポートで整えた引用キーを使う（保存された ID は変えない）
 - `src/paper_manager/app/helper/_orphan_pdf.py` — 変換後の PDF ルートでの走査と比較、比較キーと修正前の名前による照合、旧形式の PDF の除外、KB4d の件数、削除の失敗の報告
 - `src/paper_manager/app/helper/_backup.py` — 変換後のパスでのバックアップと復元、`find_unsafe_member_names` の追加、書き込み前のメンバー名の検証
 - `src/paper_manager/app/helper/_config.py` — `config_page` の書き戻しの削除、保留中の通知の表示
@@ -282,6 +284,7 @@ flowchart TD
 | 10.1 | 壊れたファイルで落ちずに警告する | PaperListStore, ConfigPage | `load_paper_list`, `PaperList.from_file` | 論文リストの読み込みと保存 |
 | 10.2 | 描画だけでは書き換えない | ConfigPage | `config_page.__call__` | 論文リストの読み込みと保存 |
 | 10.3 | 保存前に退避して退避先を出す | PaperListStore, PaperRegistry, ConfigPage | `backup_broken_paper_list`, `save_paper_list` | 論文リストの読み込みと保存 |
+| 10.4 | BOM 付きの UTF-8 を正常として読む | PaperListStore | `load_paper_list` | 論文リストの読み込みと保存 |
 | 11.1 | `backup -o` で作成して 0 で終了 | Cli | `main`, `_run_backup` | — |
 | 11.2 | `backup` の既定の出力先 | Cli | `main`, `_run_backup` | — |
 | 11.3 | `restore --force` で確認なしに復元 | Cli | `main`, `_run_restore` | — |
@@ -295,6 +298,10 @@ flowchart TD
 | 12.3 | Windows に固有の振る舞いを CI で検証 | TestUpdates, PathAdapter | `windows_like_paths` fixture, `_convert` | パスの変換 |
 | 12.4 | CI の全 Python で成功 | TestUpdates | — | — |
 | 12.5 | 修正前のデータをそのまま読み込む | EntryFolderNaming, PaperListStore | `Entry.pdf_dir_name`, `Entry.get_pdf_files`, `load_paper_list` | PDF 一覧の取得 |
+| 13.1 | 引用キーに読めない文字を含めない | CitationKey | `sanitize_citation_key`, `Entry.get_key` | — |
+| 13.2 | 読めない文字がなければ修正前と同じキー | CitationKey | `sanitize_citation_key`, `Entry.get_key` | — |
+| 13.3 | 既存のキーでも落ちずに出力し、保存は変えない | CitationKey, ListPage | `unique_citation_keys`, `_render_citation`, `_render_export` | — |
+| 13.4 | まとめてのエクスポートで重複しない | CitationKey, ListPage | `unique_citation_keys`, `_render_export` | — |
 
 ## Components and Interfaces
 
@@ -302,7 +309,8 @@ flowchart TD
 |-----------|--------------|--------|--------------|--------------------------|-----------|
 | PathAdapter | Domain（`helper/_path.py`） | 拡張長のパスへの変換・表示用の逆変換・フォルダ名の比較キー | 1.1–1.4, 3.1, 3.4, 12.3 | 標準ライブラリ（P0） | Service |
 | EntryFolderNaming | Domain（`entry/_entry.py`） | フォルダ名の生成と PDF 一覧の取得・移行 | 1.1–1.3, 2.1–2.7, 5.2, 8.3, 12.5 | PathAdapter（P0） | Service |
-| PaperListStore | Domain（`entry/_entry.py`） | 論文リストの読み込み状態の判定と壊れたファイルの退避 | 10.1, 10.3, 12.5 | — | Service, State |
+| PaperListStore | Domain（`entry/_entry.py`） | 論文リストの読み込み状態の判定と壊れたファイルの退避 | 10.1, 10.3, 10.4, 12.5 | — | Service, State |
+| CitationKey | Domain（`entry/_entry.py`） | 引用キーの生成と、表示・エクスポート用の整形 | 13.1–13.4 | — | Service |
 | BibLoader | Domain（`bib/_load.py`） | BibTeX の人名の整形と著者のないエントリの読み込み | 5.1–5.3 | pybtex（P0） | Service |
 | BackupRestore | App helper（`app/helper/_backup.py`） | バックアップ・復元のパスの変換と、メンバー名の検証 | 1.2, 9.1–9.3 | PathAdapter（P0） | Service |
 | OrphanPdf | App helper（`app/helper/_orphan_pdf.py`） | 孤立 PDF の検出と削除 | 1.2, 1.4, 2.7, 8.1, 8.2 | PathAdapter, EntryFolderNaming（P0） | Service |
@@ -311,7 +319,7 @@ flowchart TD
 | PaperRegistry | Components（`_common.py`） | 論文の登録・更新と論文リストの保存 | 3.1–3.3, 10.3 | PaperListStore, PathAdapter（P0） | Service |
 | EntryForm | Components（`_common.py`） | 手動入力フォーム | 4.1–4.4, 7.1–7.3 | Streamlit（P0） | — |
 | RegisterPage | Pages（`pages/_register.py`） | BibTeX・DOI からの Entry の作成とエラー表示 | 5.2, 5.4, 6.1–6.4 | BibLoader, crossrefapi（P0） | Service |
-| ListPage | Pages（`app/_list.py`） | ビューア・エクスポート・編集ダイアログ | 1.2, 1.4, 3.3 | PdfStorage, PaperRegistry（P0） | — |
+| ListPage | Pages（`app/_list.py`） | ビューア・エクスポート・編集ダイアログ | 1.2, 1.4, 3.3, 13.3, 13.4 | PdfStorage, PaperRegistry, CitationKey（P0） | — |
 | RestorePage / BackupPage | Pages | helper の呼び出しと件数の表示 | 1.2, 9.3 | BackupRestore（P0） | — |
 | Cli | CLI（`__main__.py`） | サブコマンドの引数の振り分け | 9.3, 11.1–11.8 | BackupRestore（P0） | Service |
 | TestUpdates | Tests（`tests/`） | xfail の解除と新しい振る舞いのテスト | 12.1–12.5 | test-suite の基盤（P0） | — |
@@ -432,6 +440,7 @@ class Entry:
 **Responsibilities & Constraints**
 - 壊れている状態とは、JSON として解析できない、UTF-8 として読めない、トップレベルが辞書でない（`null` を含む）、値が辞書でない、フィールドの値が文字列でない、のいずれか（10.1）
 - `load_paper_list` は Streamlit を呼ばない純粋な関数とする。`PaperList.from_file` は互換のための薄いラッパーとして残し、壊れているときに既存の警告（`Broken paper list (json)`）を出す
+- UTF-8 の復号は先頭の BOM（U+FEFF）を無視する（`utf-8-sig`）。BOM の後が正しい形なら OK、壊れていれば BROKEN とする。保存（`to_file`）は従来どおり BOM なしの UTF-8 で書く（10.4）
 - 退避先は `list.json.broken-<YYYYmmdd_HHMMSS>` とし、既にあれば `-1`、`-2` と連番を付ける。`list.json.backup`（復元のたびに上書きされる名前）は使わない。退避は `shutil.copy2` で行い、元のファイルを残す
 
 **Dependencies**
@@ -464,6 +473,29 @@ def backup_broken_paper_list(
 
 ##### State Management
 - 状態は session に持たず、読み込みと保存のたびに実ファイルから判定する
+
+#### CitationKey
+
+| Field | Detail |
+|-------|--------|
+| Intent | BibTeX の引用キーとして読めない文字を除いた引用キーを作り、表示・エクスポート用に重複のない並びにする |
+| Requirements | 13.1, 13.2, 13.3, 13.4 |
+
+**Responsibilities & Constraints**
+- pybtex は、波括弧で囲んだエントリの引用キーを、空白・`,`・`}` の手前までとして読む（`KEY_BRACE = [^\s,}]+`）。そこで、空白（`str.isspace` が真の文字）、`,`、`{`、`}` を除く（`{` は波括弧の対応を崩さないために合わせて除く）。それ以外の文字（`.`、`-`、`'`、`\`、非 ASCII の文字など）は変えない（13.2。今読めている引用キーを変えない）。除いた結果が空になるときは `Unknown` とする
+- `Entry.get_key` は、`<筆頭著者><年>_<n>` の全体（年に空白などが入る場合を含む）を `sanitize_citation_key` で整えてから、既存のキーとの重複を判定する。重複の判定（大文字小文字を区別する）は変えない（13.1、13.2）
+- `unique_citation_keys` は、各キーを整えたうえで、大文字小文字を区別せずに重複したら、後のものに `_<n>`（n = 1, 2, …。他のキーと重ならない最小の値）を付ける。pybtex は引用キーを大文字小文字を区別せずに扱い、重複すると例外を送出するため（13.4）
+- 表示・エクスポート（ListPage）は、Entry の複製の `ID` だけを整えたキーに置き換えて書き出す。論文リストの Entry と `list.json` の ID は変えない（13.3）
+
+**Contracts**: Service [x]
+
+##### Service Interface
+```python
+def sanitize_citation_key(key: str) -> str: ...
+
+def unique_citation_keys(keys: Sequence[str]) -> list[str]: ...
+```
+- Postconditions: `sanitize_citation_key` は冪等で、読めない文字を含まないキーはそのまま返す。`unique_citation_keys` は入力と同じ長さ・順序で、大文字小文字を区別せずに重複のないキーを返し、重複のない入力では `sanitize_citation_key` を各要素に適用したものと同じになる
 
 #### BibLoader
 
@@ -681,7 +713,7 @@ def _create_entry_from_doi_metadata(metadata: Mapping[str, Any]) -> Entry: ...
 ```
 
 #### ListPage, RestorePage, BackupPage（summary-only）
-- ListPage（`app/_list.py`）: ビューアでの PDF の読み込みと、複数選択の zip エクスポートでの各ファイルの書き込みを、`OSError` を捕捉して `st.error`（表示用のパス）に出す（1.2、1.4）。1 件だけの PDF の名前が `NN` でない場合（移せなかった旧形式の PDF）でもダウンロード名を作れるようにする。孤立 PDF の削除の失敗は `failures` から表示する。編集ダイアログは、`update_entry_in_list` が `True` を返したときだけ `st.rerun()` する（3.3。失敗のエラーを消さない）
+- ListPage（`app/_list.py`）: ビューアでの PDF の読み込みと、複数選択の zip エクスポートでの各ファイルの書き込みを、`OSError` を捕捉して `st.error`（表示用のパス）に出す（1.2、1.4）。1 件だけの PDF の名前が `NN` でない場合（移せなかった旧形式の PDF）でもダウンロード名を作れるようにする。孤立 PDF の削除の失敗は `failures` から表示する。編集ダイアログは、`update_entry_in_list` が `True` を返したときだけ `st.rerun()` する（3.3。失敗のエラーを消さない）。詳細の BibTeX 表示（`_render_citation`）とエクスポート（`_render_export`）は、Entry の複製の `ID` を `unique_citation_keys` で整えたキーにして書き出す（13.3、13.4）
 - RestorePage（`pages/_restore.py`）: helper の `restore_from_zip` を呼ぶ。プレビュー（`version.json` などの表示）は残す（9.3）
 - BackupPage（`pages/_backup.py`）: PDF の件数を `to_fs_path(DIRPATH_PDF)` から数える（1.2）
 
@@ -749,9 +781,9 @@ def main(cli_args: Sequence[str], prog: Optional[str] = None) -> None: ...
 
 ### Unit Tests
 - `tests/test_path.py`: `_to_extended_length` の変換（ドライブ付き、`/` 区切り、`..`、UNC、prefix 付き、ドライブ相対）、`to_display_path` の逆変換、`folder_name_key`（大文字小文字だけ・NFC と NFD だけ違う名前が一致し、別の名前は一致しない）（1.1〜1.4、3.4）
-- `tests/test_entry.py`: KB2a・KB2b・KB5・KB7 の xfail を外す。修正前の規則と出力が一致する範囲（接頭辞 197〜200 文字 × タイトル 0〜300 文字の境界）の検証、`legacy_pdf_dir_name` が KB7 の範囲だけ値を持つこと、修正前の名前のフォルダと旧形式の単一 PDF の移行（上書きしない、移す先がある場合は移さない）（2.1〜2.7、8.3、12.5）
+- `tests/test_entry.py`: KB2a・KB2b・KB5・KB7 の xfail を外す。修正前の規則と出力が一致する範囲（接頭辞 197〜200 文字 × タイトル 0〜300 文字の境界）の検証、`legacy_pdf_dir_name` が KB7 の範囲だけ値を持つこと、修正前の名前のフォルダと旧形式の単一 PDF の移行（上書きしない、移す先がある場合は移さない）（2.1〜2.7、8.3、12.5）。`sanitize_citation_key` / `unique_citation_keys` / `Entry.get_key`（`, ` 区切りの著者、接尾辞付きの筆頭著者、波括弧を含む人名、空白を含む年で作ったキーが pybtex で解析できる、単純な著者と年のキーは修正前と同じ、大文字小文字を区別しない重複の解消）（13.1、13.2、13.4）
 - `tests/test_bib.py`: KB2c・KB4c の xfail を外す。`format_person` の出力（単純な名前は修正前と同じ、ミドルネーム・prelast・lineage、空の人名を捨てる、著者がいなければ `author` キーがない）（5.1、5.3）
-- `tests/test_paper_list.py`: `load_paper_list` の状態（UTF-8 の途中切れ、`[]`、`"x"`、`1`、`null`、`{"a": "str"}`、`{"a": {"title": 1}}` が BROKEN）、`backup_broken_paper_list` の退避先の名前と連番、元のファイルが変わらないこと（10.1、10.3）
+- `tests/test_paper_list.py`: `load_paper_list` の状態（UTF-8 の途中切れ、`[]`、`"x"`、`1`、`null`、`{"a": "str"}`、`{"a": {"title": 1}}` が BROKEN）、`backup_broken_paper_list` の退避先の名前と連番、元のファイルが変わらないこと、BOM 付きの正常なファイルが OK になり退避されないこと（10.1、10.3、10.4）
 - `tests/test_cli.py`: KB1×2・KB8・KB9 の xfail を外す。`with_navigation_default`（`run` だけ、空白形式・`=` 形式の明示指定で付けない）、`version` の転送が与えた引数と完全一致すること、backup / restore に未知の引数があれば終了コード 2（11.1〜11.8）
 
 ### Integration Tests
@@ -762,7 +794,7 @@ def main(cli_args: Sequence[str], prog: Optional[str] = None) -> None: ...
 
 ### E2E/UI Tests
 - `tests/test_register_flow.py`: KB6・KB10 の xfail を外す。著者のない misc の BibTeX を登録できる、書籍（`publisher` 付き）と会議録（`container-title` 付き）の DOI を登録できる、`container-title` / `author` / `published` が欠けた応答でページが落ちず不足した必須項目の名前を含むエラーになる（5.2、5.4、6.1〜6.4）
-- `tests/test_pages_smoke.py`: 壊れた `list.json` を置いて各ページを描画しても、ファイルのバイト列が変わらず、警告が出る（10.1、10.2）
+- `tests/test_pages_smoke.py`: 壊れた `list.json` を置いて各ページを描画しても、ファイルのバイト列が変わらず、警告が出る（10.1、10.2）。引用キーに `,` を含む既存の論文の詳細の BibTeX 表示とエクスポートが落ちず、整えたキーで出力され、`list.json` の ID が変わらない（13.3、13.4）
 - 画面からの復元（`pages/_restore.py`）が helper を呼び、不正な zip で中止されること（9.3）
 
 ### 手動確認
