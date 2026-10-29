@@ -1,8 +1,10 @@
 import io
+from collections.abc import Mapping
 from typing import Optional, Union
 
 import streamlit as st
 from crossref.restful import Works
+from pybtex.exceptions import PybtexError
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from paper_manager._constants import (
@@ -67,6 +69,42 @@ def _create_entry_from_doi_metadata(metadata: dict) -> Entry:
     )
 
 
+def _load_bib_entries(
+    bibtexfile_or_buffer: Union[io.StringIO, io.BytesIO],
+) -> tuple[Optional[Mapping[str, Mapping[str, str]]], Optional[str]]:
+    """BibTeX を読み込み、入力の誤りは画面に出すメッセージとして返す。
+
+    構文として正しくない BibTeX（pybtex の ``PybtexError``。構文エラー、
+    同じ引用キー・同じ項目の重複、読めない人名など）と、UTF-8 として読めない
+    ファイル（``UnicodeDecodeError``）は、例外にせず、メッセージを返す。
+    ほかの例外は想定外のバグなので、握りつぶさずそのまま送出する。
+
+    Parameters
+    ----------
+    bibtexfile_or_buffer : Union[io.StringIO, io.BytesIO]
+        BibTeX のテキストまたはアップロードされたファイル
+
+    Returns
+    -------
+    tuple[Optional[Mapping[str, Mapping[str, str]]], Optional[str]]
+        成功したときは ``(エントリの辞書, None)``、入力の誤りのときは
+        ``(None, 画面に出すメッセージ)``。失敗はログにも ERROR で出す。
+    """
+    try:
+        return load_bib(bibtexfile_or_buffer), None
+    except PybtexError as e:
+        reason = str(e) or type(e).__name__
+        _logger.error("Invalid BibTeX: %s", reason)
+        return None, f"❌ BibTeX の構文が正しくありません: {reason}"
+    except UnicodeDecodeError as e:
+        _logger.error("Undecodable BibTeX file: %s", e)
+        return (
+            None,
+            "❌ BibTeX ファイルの文字コードを読めません"
+            "（UTF-8 で保存してください）。",
+        )
+
+
 def _render_bib_form() -> tuple[bool, Optional[Entry], list[UploadedFile]]:
     """BIB登録フォームを表示する。
 
@@ -120,7 +158,10 @@ def _render_bib_form() -> tuple[bool, Optional[Entry], list[UploadedFile]]:
         )
         assert isinstance(bibtexfile_or_buffer, (io.StringIO, io.BytesIO))
 
-        entries = load_bib(bibtexfile_or_buffer)
+        entries, error_message = _load_bib_entries(bibtexfile_or_buffer)
+        if entries is None:
+            st.error(error_message)
+            return False, None, []
 
         if len(entries) > 1:
             st.error(

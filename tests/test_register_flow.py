@@ -12,12 +12,16 @@
 - BibTeX 経路の登録 (要件 12.1, 12.2)
 - BibTeX 経路のエラー (要件 12.3)
 - 重複登録 (要件 12.8)
-- 既知バグ: KB6 (要件 13.1, 13.2, 13.4)
+- BibTeX の構文エラーと文字コードのエラー (要件 5.4。旧 KB6)
+- 著者のない BibTeX の登録 (要件 5.2)
 - DOI 経路 (要件 12.4, 12.5)
 - 手動入力 (要件 12.6)
 - 必須フィールドの不足 (要件 12.7)
 - PDF の添付 (要件 12.9)
 - 既知バグ: KB10 (要件 13.1, 13.2, 13.4)
+
+要件 12, 13 は test-suite spec、要件 5.2, 5.4 は known-bug-fixes spec の
+番号である。
 
 ウィジェットの特定
 ------------------
@@ -42,6 +46,7 @@
 始めて、誤って登録されたら件数と内容が変わるようにする。
 """
 
+import io
 import json
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
@@ -59,9 +64,11 @@ from conftest import (
     run_page,
 )
 from crossref.restful import Works
+from pybtex.exceptions import PybtexError
 from streamlit.testing.v1 import AppTest
 
 import paper_manager
+from paper_manager.bib import load_bib
 
 # --- 登録ページの操作 -----------------------------------------------------
 
@@ -77,6 +84,11 @@ FORM_CUSTOM = "custom_form"
 # 一致しない。
 BIB_UPLOAD_LABEL = "BibTeXファイルをアップロード"
 
+# PDF のアップロード欄のラベルの接頭辞。BibTeX・DOI・手動入力の 3 つの
+# フォームのすべてが、同じラベル (``PDF file(s) (.pdf)``) の欄を持つ。
+# BibTeX ファイルの欄 (``BIB_UPLOAD_LABEL``) とは一致しない。
+PDF_UPLOAD_LABEL = "PDF file(s)"
+
 # エラーの種類ごとの、メッセージに含まれる語。互いに含まれない語を選び、
 # あるエラーが別の種類のエラーと取り違えられないことを検証する。
 ERROR_MARKERS = {
@@ -85,6 +97,8 @@ ERROR_MARKERS = {
     "no_entry": "有効なエントリ",
     "duplicate": "Duplicated",
     "fetch_failed": "無効なDOI",
+    "syntax": "構文",
+    "encoding": "文字コード",
 }
 
 PaperDicts = dict[str, dict[str, Any]]
@@ -286,25 +300,39 @@ def submit_bib(
 ) -> Callable[..., AppTest]:
     """BibTeX を入力して登録ボタンを押す関数を返す.
 
-    返された関数 ``submit_bib(bib, via="text")`` は、登録ページを開き、
-    ``via`` に応じて BibTeX を入力し、BIB フォームの送信ボタンを押して
+    返された関数 ``submit_bib(bib, via="text", pdfs=None)`` は、登録ページを
+    開き、``via`` に応じて BibTeX を入力し、BIB フォームの送信ボタンを押して
     再実行した ``AppTest`` を返す。
 
-    - ``via="text"``: テキスト入力欄に ``bib`` を入力する
-    - ``via="file"``: ファイルのアップロード欄に、``bib`` を UTF-8 で
-      符号化した ``.bib`` ファイルが選ばれた状態にする (テキスト入力欄は
-      空のまま)
+    - ``via="text"``: テキスト入力欄に ``bib`` (``str``) を入力する
+    - ``via="file"``: ファイルのアップロード欄に、``bib`` が選ばれた状態に
+      する (テキスト入力欄は空のまま)。``str`` は UTF-8 で符号化した
+      ``.bib`` ファイルにする。``bytes`` はそのままの中身にする (文字コード
+      の読めないファイルの検証に使う)
+    - ``pdfs``: 指定すると、PDF のアップロード欄にそのファイルが選ばれた
+      状態にする
     """
 
-    def _submit_bib(bib: str, via: BibVia = "text") -> AppTest:
+    def _submit_bib(
+        bib: Union[str, bytes],
+        via: BibVia = "text",
+        pdfs: Optional[list[FakeUpload]] = None,
+    ) -> AppTest:
+        uploads: dict[str, Union[FakeUpload, list[FakeUpload]]] = {}
         if via == "file":
-            fake_file_uploader(
-                {BIB_UPLOAD_LABEL: FakeUpload("paper.bib", bib.encode())}
-            )
+            content = bib.encode() if isinstance(bib, str) else bib
+            uploads[BIB_UPLOAD_LABEL] = FakeUpload("paper.bib", content)
         elif via != "text":
             raise ValueError(f"unknown way to enter BibTeX: {via!r}")
+        elif not isinstance(bib, str):
+            raise ValueError("only a file can hold bytes of BibTeX")
+        if pdfs is not None:
+            uploads[PDF_UPLOAD_LABEL] = pdfs
+        if uploads:
+            fake_file_uploader(uploads)
         at = open_register_page()
         if via == "text":
+            assert isinstance(bib, str)
             widget_in_form(at.text_area, FORM_BIB).set_value(bib)
         return submit(at, FORM_BIB)
 
@@ -435,7 +463,8 @@ def test_bibtex_without_valid_entry_is_rejected(
     """有効なエントリがない BibTeX は、登録されずエラーになる (12.3).
 
     構文としては成立するが、エントリを含まないテキストを使う
-    (構文エラーになるテキストは KB6)。
+    (構文エラーになるテキストは「BibTeX の構文エラーと文字コードのエラー」
+    の節で扱う)。
     """
     at = submit_bib(text, via)
 
@@ -518,30 +547,337 @@ def test_same_author_and_year_with_other_title_is_not_duplicate(
     )
 
 
-# --- 既知バグ: KB6 (要件 13.1, 13.2, 13.4) ---------------------------------
+# --- BibTeX の構文エラーと文字コードのエラー (要件 5.4。旧 KB6) -------------
 
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BUG: 構文エラーの BibTeX を登録すると、load_bib が送出する "
-        "pybtex の構文エラーを登録ページ (_render_bib_form) が捕捉せず、"
-        "ページが例外で落ちる (KB6). Repro: BibTeX テキストに "
-        "'@article{k, title={T}' (閉じ括弧がない) を入力して登録を押すと、"
-        "pybtex.scanner.PrematureEOF ('syntax error in line 1: premature "
-        "end of file') で at.exception が空でなくなる. 本来は例外に"
-        "ならずにエラーが表示され、論文リストは変わらない"
+# 構文として正しくない BibTeX。pybtex が例外を送出する書き方を、例外の種類
+# ごとに 1 つずつ選ぶ (どれも ``pybtex.exceptions.PybtexError`` を継承する)。
+BROKEN_BIBTEX = [
+    pytest.param("@article{k, title={T}", id="premature-end-of-file"),
+    pytest.param('@article{k, title="T}', id="unbalanced-braces"),
+    pytest.param("@article{}", id="entry-key-expected"),
+    pytest.param("@article{k, title=undefined_macro}", id="undefined-macro"),
+    pytest.param("@article{k, title={A}, title={B}}", id="duplicate-field"),
+    pytest.param(
+        "@article{k, author={a b c d, e, f, g}, title={T}}",
+        id="invalid-name",
     ),
-)
+    pytest.param(
+        "@article{k, title={A}}\n@article{K, title={B}}",
+        id="repeated-key-ignoring-case",
+    ),
+]
+
+# 文字コードが UTF-8 でないために読めないファイルの中身 (同じ BibTeX を
+# 別の文字コードで符号化したもの)。UTF-16 は BOM があっても UTF-8 としては
+# 読めない。
+UNDECODABLE_BIBTEX = [
+    pytest.param(
+        "@article{k, title={日本語の題名}}".encode("shift_jis"),
+        id="shift_jis",
+    ),
+    pytest.param("@article{k, title={é}}".encode("latin-1"), id="latin-1"),
+    pytest.param("@article{k, title={T}}".encode("utf-16"), id="utf-16"),
+]
+
+
+def pybtex_message(bib: str) -> str:
+    """``bib`` を pybtex で読んだときの、構文エラーの理由を返す.
+
+    画面のエラーが、pybtex が示す理由を含むことの期待値にする。
+    """
+    with pytest.raises(PybtexError) as excinfo:
+        load_bib(io.StringIO(bib))
+    return str(excinfo.value)
+
+
+@pytest.mark.parametrize("via", ["text", "file"])
+@pytest.mark.parametrize("bib", BROKEN_BIBTEX)
 def test_syntactically_broken_bibtex_shows_error_without_crashing(
+    bib: str,
+    via: BibVia,
     submit_bib: Callable[..., AppTest],
     data_paths: DataPaths,
     papers_before: PaperDicts,
 ) -> None:
-    """構文エラーの BibTeX は、ページが落ちずにエラーが表示される (KB6)."""
-    at = submit_bib("@article{k, title={T}", "text")
+    """構文エラーの BibTeX は、ページが落ちずにエラーが 1 つ表示される (5.4).
 
-    assert_rejected(at, data_paths.list_file, papers_before)
+    エラーは構文のエラーと分かる文言で、pybtex が示す理由を含む。ほかの
+    種類のエラー (未入力・複数エントリ・有効なエントリなし・重複・無効な
+    DOI) とは取り違えられない。論文リストは変わらない。
+    """
+    reason = pybtex_message(bib)
+
+    at = submit_bib(bib, via)
+
+    assert_rejected(at, data_paths.list_file, papers_before, "syntax")
+    assert reason in error_messages(at)[0]
+
+
+@pytest.mark.parametrize("via", ["text", "file"])
+def test_syntactically_broken_bibtex_saves_no_attached_pdf(
+    via: BibVia,
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """構文エラーの BibTeX と PDF を一緒に送信しても、PDF は保存されない (5.4)."""
+    pdfs_before = pdf_tree(data_paths.pdf)
+    pdfs = [FakeUpload("attached.pdf", PDF_BYTES + b"%attached\n")]
+
+    at = submit_bib("@article{k, title={T}", via, pdfs)
+
+    assert_rejected(at, data_paths.list_file, papers_before, "syntax")
+    assert pdf_tree(data_paths.pdf) == pdfs_before
+
+
+def test_syntactically_broken_bibtex_is_logged_as_an_error(
+    caplog: pytest.LogCaptureFixture,
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """構文エラーは、画面だけでなくログにも ERROR で出る (5.4)."""
+    bib = "@article{k, title={T}"
+    reason = pybtex_message(bib)
+
+    with caplog.at_level("ERROR"):
+        at = submit_bib(bib, "text")
+
+    assert_rejected(at, data_paths.list_file, papers_before, "syntax")
+    logged = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "ERROR"
+    ]
+    assert len(logged) == 1, logged
+    assert reason in logged[0]
+
+
+@pytest.mark.parametrize("content", UNDECODABLE_BIBTEX)
+def test_bibtex_file_with_unreadable_encoding_shows_error_without_crashing(
+    content: bytes,
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """文字コードの読めない BibTeX ファイルは、落ちずにエラーが 1 つ出る (5.4).
+
+    エラーは文字コードのエラーと分かる文言で、UTF-8 で保存し直すよう案内
+    する。構文のエラーとは取り違えられない。論文リストは変わらない。
+    """
+    at = submit_bib(content, "file")
+
+    assert_rejected(at, data_paths.list_file, papers_before, "encoding")
+    assert "UTF-8" in error_messages(at)[0]
+
+
+def test_bibtex_file_with_unreadable_encoding_saves_no_attached_pdf(
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """文字コードの読めない BibTeX ファイルと PDF を送信しても、PDF は保存されない (5.4)."""
+    pdfs_before = pdf_tree(data_paths.pdf)
+    pdfs = [FakeUpload("attached.pdf", PDF_BYTES + b"%attached\n")]
+
+    at = submit_bib(
+        "@article{k, title={日本語}}".encode("shift_jis"), "file", pdfs
+    )
+
+    assert_rejected(at, data_paths.list_file, papers_before, "encoding")
+    assert pdf_tree(data_paths.pdf) == pdfs_before
+
+
+def test_unexpected_exception_from_loading_bibtex_is_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """入力の誤りでない例外 (バグ) は、エラー表示にすり替えずにそのまま出る (5.4).
+
+    捕捉するのは構文エラー (``PybtexError``) と文字コードのエラー
+    (``UnicodeDecodeError``) だけで、想定外の例外はページの例外として
+    現れる。論文リストは変わらない。
+    """
+
+    def broken_loader(*args: Any, **kwargs: Any) -> None:
+        raise IndexError("unexpected failure in the loader")
+
+    monkeypatch.setattr(paper_manager.bib, "load_bib", broken_loader)
+
+    at = submit_bib(BIB_ARTICLE, "text")
+
+    assert [e.proto.type for e in at.exception] == ["IndexError"]
+    assert not error_messages(at)
+    assert not success_messages(at)
+    assert stored_papers(data_paths.list_file) == papers_before
+
+
+def test_bibtex_error_does_not_block_the_next_registration(
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """構文エラーの後に正しい BibTeX を送信すると、登録される (5.4).
+
+    エラーの後も、BIB フォームは次の入力を受け付ける。
+    """
+    broken = submit_bib("@article{k, title={T}", "text")
+    assert_rejected(broken, data_paths.list_file, papers_before, "syntax")
+
+    at = submit_bib(BIB_ARTICLE, "text")
+
+    assert_registered(
+        at,
+        data_paths.list_file,
+        papers_before,
+        {EXPECTED_KEY: EXPECTED_ENTRY},
+    )
+
+
+# --- 著者のない BibTeX の登録 (要件 5.2) ------------------------------------
+
+# 必須項目を満たす、著者のない BibTeX。misc には必須項目がない。
+BIB_MISC_WITHOUT_AUTHOR = """\
+@misc{manual-2022,
+  title = {A Software Manual Without Author},
+  year = {2022},
+  howpublished = {\\url{https://example.com/manual}},
+}
+"""
+
+# BIB_MISC_WITHOUT_AUTHOR から導いた、登録後のエントリ。
+# - 著者のキーを作らない (空の著者を保存しない)
+# - 識別子の第一著者は、著者がないので ``Unknown`` (要件 2.2 の規則)
+# - PDF のフォルダ名の第一著者も ``Unknown`` (KB2a)
+MISC_WITHOUT_AUTHOR_KEY = "Unknown2022_0"
+MISC_WITHOUT_AUTHOR_ENTRY = {
+    "ENTRYTYPE": "misc",
+    "ID": MISC_WITHOUT_AUTHOR_KEY,
+    "title": "A Software Manual Without Author",
+    "year": "2022",
+    "howpublished": "\\url{https://example.com/manual}",
+}
+MISC_WITHOUT_AUTHOR_PDF_DIR = (
+    "2022 - Unknown - A Software Manual Without Author"
+)
+
+
+@pytest.mark.parametrize("via", ["text", "file"])
+def test_bibtex_without_author_registers_misc_entry(
+    via: BibVia,
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """必須項目を満たす著者のない BibTeX (misc) は、登録されて成功が出る (5.2).
+
+    保存されるエントリは著者のキーを持たない。
+    """
+    at = submit_bib(BIB_MISC_WITHOUT_AUTHOR, via)
+
+    assert_registered(
+        at,
+        data_paths.list_file,
+        papers_before,
+        {MISC_WITHOUT_AUTHOR_KEY: MISC_WITHOUT_AUTHOR_ENTRY},
+    )
+    assert (
+        "author"
+        not in stored_papers(data_paths.list_file)[MISC_WITHOUT_AUTHOR_KEY]
+    )
+
+
+@pytest.mark.parametrize("via", ["text", "file"])
+def test_bibtex_without_author_saves_attached_pdfs_in_unknown_folder(
+    via: BibVia,
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """著者のない BibTeX に PDF を添付すると、Unknown の入ったフォルダに保存される (5.2)."""
+    uploads = [
+        FakeUpload("first.pdf", PDF_BYTES + b"%attached first\n"),
+        FakeUpload("second.pdf", PDF_BYTES + b"%attached second\n"),
+    ]
+    pdfs_before = pdf_tree(data_paths.pdf)
+
+    at = submit_bib(BIB_MISC_WITHOUT_AUTHOR, via, uploads)
+
+    assert_registered(
+        at,
+        data_paths.list_file,
+        papers_before,
+        {MISC_WITHOUT_AUTHOR_KEY: MISC_WITHOUT_AUTHOR_ENTRY},
+    )
+    assert pdf_tree(data_paths.pdf) == {
+        **pdfs_before,
+        MISC_WITHOUT_AUTHOR_PDF_DIR: None,
+        f"{MISC_WITHOUT_AUTHOR_PDF_DIR}/00.pdf": uploads[0].getvalue(),
+        f"{MISC_WITHOUT_AUTHOR_PDF_DIR}/01.pdf": uploads[1].getvalue(),
+    }
+
+
+def test_bibtex_without_author_with_the_same_title_and_year_is_duplicate(
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """著者のない BibTeX を 2 回登録すると、2 回目は重複として拒否される (5.2).
+
+    著者のない論文のフォルダ名が ``Unknown`` で一意に決まり、既存の重複の
+    検出が働く。
+    """
+    first = submit_bib(BIB_MISC_WITHOUT_AUTHOR, "text")
+    assert_registered(
+        first,
+        data_paths.list_file,
+        papers_before,
+        {MISC_WITHOUT_AUTHOR_KEY: MISC_WITHOUT_AUTHOR_ENTRY},
+    )
+    papers_after_first = stored_papers(data_paths.list_file)
+
+    at = submit_bib(BIB_MISC_WITHOUT_AUTHOR, "text")
+
+    assert_rejected(at, data_paths.list_file, papers_after_first, "duplicate")
+
+
+@pytest.mark.parametrize(
+    "bib",
+    [
+        pytest.param(
+            "@misc{k, author = {}, title = {T}, year = {2022}}",
+            id="empty-author-field",
+        ),
+        pytest.param(
+            "@misc{k, author = {,}, title = {T}, year = {2022}}",
+            id="author-of-empty-names",
+        ),
+    ],
+)
+def test_bibtex_with_empty_author_registers_without_author(
+    bib: str,
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """空の著者の BibTeX (misc) も、著者のないエントリとして登録される (5.2)."""
+    at = submit_bib(bib, "text")
+
+    assert_registered(
+        at,
+        data_paths.list_file,
+        papers_before,
+        {
+            "Unknown2022_0": {
+                "ENTRYTYPE": "misc",
+                "ID": "Unknown2022_0",
+                "title": "T",
+                "year": "2022",
+            }
+        },
+    )
 
 
 # --- DOI 経路 (要件 12.4, 12.5) --------------------------------------------
@@ -689,7 +1025,9 @@ ENTRY_TYPE_LABEL = "エントリタイプを選択"
 
 # 手動入力フォームに入力する値。文字列はテキスト入力、整数は年の数値入力、
 # リストは複数選択 (著者・タグ)。年は明示的に入力する (既定値は実行日の年
-# なので、実行日に依存させない)。著者は 1 人にする (複数人は KB4a)。
+# なので、実行日に依存させない)。著者は既定では 1 人にする (フォルダ名などの
+# 期待値を単純にするため)。複数人の著者は、``article-two-authors`` の
+# ケースで確かめる (`` and `` で連結して保存される)。
 FormValue = Union[str, int, list[str]]
 
 CUSTOM_ARTICLE_VALUES: dict[str, FormValue] = {
@@ -770,6 +1108,23 @@ def submit_custom(entry_type: str, values: Mapping[str, FormValue]) -> AppTest:
                 if k not in ("ENTRYTYPE", "ID")
             },
             id="article",
+        ),
+        pytest.param(
+            "article",
+            {
+                **CUSTOM_ARTICLE_VALUES,
+                "author": ["Hanako Suzuki", "Taro Yamada"],
+            },
+            CUSTOM_ARTICLE_KEY,
+            {
+                **{
+                    k: v
+                    for k, v in CUSTOM_ARTICLE_ENTRY.items()
+                    if k not in ("ENTRYTYPE", "ID")
+                },
+                "author": "Hanako Suzuki and Taro Yamada",
+            },
+            id="article-two-authors",
         ),
         pytest.param(
             "book",
@@ -924,6 +1279,24 @@ def assert_rejected_for_missing(
             {"author": "Doe, Jane", "year": "2020"},
             id="inbook-without-several",
         ),
+        pytest.param(
+            "article",
+            {
+                "title": "An Article Without Author",
+                "journal": "Journal of Registration",
+                "year": "2020",
+            },
+            id="article-without-author",
+        ),
+        pytest.param(
+            "inproceedings",
+            {
+                "title": "A Talk Without Author",
+                "booktitle": "Proceedings of Registration",
+                "year": "2020",
+            },
+            id="inproceedings-without-author",
+        ),
     ],
 )
 def test_bibtex_with_missing_required_fields_is_rejected(
@@ -938,6 +1311,35 @@ def test_bibtex_with_missing_required_fields_is_rejected(
 
     assert_rejected_for_missing(
         at, data_paths.list_file, papers_before, entry_type, fields
+    )
+
+
+@pytest.mark.parametrize(
+    "author",
+    [
+        pytest.param("", id="empty-author-field"),
+        pytest.param(",", id="author-of-empty-names"),
+    ],
+)
+def test_bibtex_with_empty_author_is_rejected_for_a_type_requiring_it(
+    author: str,
+    submit_bib: Callable[..., AppTest],
+    data_paths: DataPaths,
+    papers_before: PaperDicts,
+) -> None:
+    """空の著者の BibTeX は、著者が必須のタイプでは著者の不足で拒否される (5.2).
+
+    空の著者を、必須項目を満たす著者として扱わない。
+    """
+    fields = {
+        "title": "An Article With Empty Author",
+        "journal": "Journal of Registration",
+        "year": "2020",
+    }
+    at = submit_bib(bibtex_of("article", {"author": author, **fields}), "text")
+
+    assert_rejected_for_missing(
+        at, data_paths.list_file, papers_before, "article", fields
     )
 
 
@@ -1004,11 +1406,6 @@ def test_custom_form_with_missing_required_fields_is_rejected(
 
 
 # --- PDF の添付 (要件 12.9) ------------------------------------------------
-
-# PDF のアップロード欄のラベルの接頭辞。BibTeX・DOI・手動入力の 3 つの
-# フォームのすべてが、同じラベル (``PDF file(s) (.pdf)``) の欄を持つ。
-# BibTeX ファイルの欄 (``BIB_UPLOAD_LABEL``) とは一致しない。
-PDF_UPLOAD_LABEL = "PDF file(s)"
 
 
 class Registration(NamedTuple):
