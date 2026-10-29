@@ -1,18 +1,22 @@
 import io
 from collections.abc import Mapping
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import streamlit as st
 from crossref.restful import Works
 from pybtex.exceptions import PybtexError
+from requests.exceptions import RequestException
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from paper_manager._constants import (
+    AUTHOR_SEPARATOR,
     COLNAME_AUTHOR,
+    COLNAME_BOOKTITLE,
     COLNAME_DOI,
     COLNAME_JOURNAL,
     COLNAME_NUMBER,
     COLNAME_PAGES,
+    COLNAME_PUBLISHER,
     COLNAME_TITLE,
     COLNAME_VOLUME,
     COLNAME_YEAR,
@@ -36,12 +40,153 @@ from paper_manager.logging import get_child_logger
 _logger = get_child_logger(__name__)
 
 
-def _create_entry_from_doi_metadata(metadata: dict) -> Entry:
-    """DOIメタデータからEntryオブジェクトを作成する。
+# Crossref の出版日の候補。年が数値のものを、この順に探して使う。
+_PUBLICATION_DATE_FIELDS = (
+    "issued",
+    "published-print",
+    "published-online",
+    "published",
+)
+
+_DOI_NOT_FOUND_MESSAGE = "❌ 無効なDOI、またはメタデータの取得に失敗しました。"
+
+
+def _as_text(value: Any) -> Optional[str]:
+    """文字列または整数を、前後の空白を除いた文字列にする。
 
     Parameters
     ----------
-    metadata : dict
+    value : Any
+        Crossref の応答の値。
+
+    Returns
+    -------
+    Optional[str]
+        空でない文字列。文字列と整数以外、または空（空白のみを含む）の
+        ときは ``None``。
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return value.strip() or None
+    return None
+
+
+def _first_text(value: Any) -> Optional[str]:
+    """文字列、または文字列のリストから、先頭の空でない文字列を得る。
+
+    Crossref の ``title`` や ``container-title`` はリストで、空のことも
+    ある。
+
+    Parameters
+    ----------
+    value : Any
+        Crossref の応答の値。
+
+    Returns
+    -------
+    Optional[str]
+        先頭の空でない文字列。なければ ``None``。
+    """
+    candidates = value if isinstance(value, (list, tuple)) else [value]
+    return next(
+        (text for text in map(_as_text, candidates) if text is not None),
+        None,
+    )
+
+
+def _author_name(author: Any) -> Optional[str]:
+    """Crossref の著者の要素から、著者名を作る。
+
+    ``given family`` → ``family`` → ``name``（団体著者）→ ``given`` の順に
+    作れるものを使う。
+
+    Parameters
+    ----------
+    author : Any
+        ``author`` の 1 要素。
+
+    Returns
+    -------
+    Optional[str]
+        著者名。名前を作れない要素は ``None``。
+    """
+    if not isinstance(author, Mapping):
+        return None
+    given = _as_text(author.get("given"))
+    family = _as_text(author.get("family"))
+    if given and family:
+        return f"{given} {family}"
+    return family or _as_text(author.get("name")) or given
+
+
+def _author_names(authors: Any) -> Optional[str]:
+    """Crossref の ``author`` から、`` and `` でつないだ著者名を作る。
+
+    Parameters
+    ----------
+    authors : Any
+        ``author``（著者の要素のリスト）。
+
+    Returns
+    -------
+    Optional[str]
+        著者名を `` and `` でつないだ文字列。名前を作れる著者が 1 人も
+        いなければ ``None``。
+    """
+    if not isinstance(authors, (list, tuple)):
+        return None
+    names = [name for name in map(_author_name, authors) if name is not None]
+    return AUTHOR_SEPARATOR.join(names) or None
+
+
+def _publication_year(metadata: Mapping[str, Any]) -> Optional[str]:
+    """出版日の候補を順に探して、最初に見つかった年を得る。
+
+    Parameters
+    ----------
+    metadata : Mapping[str, Any]
+        Crossref から取得したメタデータ。
+
+    Returns
+    -------
+    Optional[str]
+        年。どの候補にも年がなければ ``None``（``[[null]]`` は年がない
+        ものとして扱う）。
+    """
+    for field in _PUBLICATION_DATE_FIELDS:
+        date = metadata.get(field)
+        parts = date.get("date-parts") if isinstance(date, Mapping) else None
+        first = (
+            parts[0] if isinstance(parts, (list, tuple)) and parts else None
+        )
+        year = first[0] if isinstance(first, (list, tuple)) and first else None
+        if isinstance(year, int) and not isinstance(year, bool):
+            return str(year)
+    return None
+
+
+def _create_entry_from_doi_metadata(metadata: Mapping[str, Any]) -> Entry:
+    """DOIメタデータからEntryオブジェクトを作成する。
+
+    応答の項目が欠けていても、空のリストや空の文字列でも、例外にしない。
+    値のない項目は Entry に入れない（空の値は必須項目の判定を通って
+    しまうため）。必須項目が足りるかどうかは、呼び出し側の検証が判定する。
+
+    エントリタイプごとに、``container-title`` は次のように使う。
+
+    - 書籍（``book``）: 出版社（``publisher``）を取り込む。``container-title``
+      はシリーズ名なので、掲載誌名にしない
+    - 会議録の論文（``inproceedings``）: ``container-title`` を会議録名
+      （``booktitle``）にする（なければ ``event.name``）。出版社も取り込む
+    - それ以外（``article``、``misc``）: ``container-title`` を掲載誌名
+      （``journal``）にする
+
+    Parameters
+    ----------
+    metadata : Mapping[str, Any]
         CrossRef APIから取得したメタデータ
 
     Returns
@@ -49,24 +194,78 @@ def _create_entry_from_doi_metadata(metadata: dict) -> Entry:
     Entry
         作成された論文エントリ
     """
+    crossref_type = metadata.get("type")
+    entry_type = entrytype4doi(
+        crossref_type if isinstance(crossref_type, str) else ""
+    )
+    container_title = _first_text(metadata.get("container-title"))
+    event = metadata.get("event")
+    publisher = _as_text(metadata.get("publisher"))
+
+    fields: dict[str, Optional[str]] = {
+        COLNAME_TITLE: _first_text(metadata.get("title")),
+        COLNAME_AUTHOR: _author_names(metadata.get("author")),
+        COLNAME_YEAR: _publication_year(metadata),
+        COLNAME_VOLUME: _as_text(metadata.get("volume")),
+        COLNAME_NUMBER: _as_text(metadata.get("issue")),
+        COLNAME_PAGES: _as_text(metadata.get("page")),
+        COLNAME_DOI: _as_text(metadata.get("DOI")),
+    }
+    if entry_type == "book":
+        fields[COLNAME_PUBLISHER] = publisher
+    elif entry_type == "inproceedings":
+        fields[COLNAME_BOOKTITLE] = container_title or _as_text(
+            event.get("name") if isinstance(event, Mapping) else None
+        )
+        fields[COLNAME_PUBLISHER] = publisher
+    else:
+        fields[COLNAME_JOURNAL] = container_title
+
     return Entry(
         {
-            "ENTRYTYPE": entrytype4doi(metadata["type"]),
-            COLNAME_TITLE: metadata["title"][0],
-            COLNAME_AUTHOR: " and ".join(
-                [
-                    author["given"] + " " + author["family"]
-                    for author in metadata["author"]
-                ]
-            ),
-            COLNAME_JOURNAL: metadata["container-title"][0],
-            COLNAME_YEAR: str(metadata["published"]["date-parts"][0][0]),
-            COLNAME_VOLUME: metadata.get("volume", ""),
-            COLNAME_NUMBER: metadata.get("issue", ""),
-            COLNAME_PAGES: metadata.get("page", ""),
-            COLNAME_DOI: metadata["DOI"],
+            "ENTRYTYPE": entry_type,
+            **{name: value for name, value in fields.items() if value},
         }
     )
+
+
+def _fetch_doi_metadata(doi: str) -> tuple[Optional[dict], Optional[str]]:
+    """DOIのメタデータを Crossref から取得する。
+
+    通信エラー（接続できない、タイムアウト、JSON でない応答など。
+    ``requests.exceptions.RequestException`` の派生）と、応答に
+    ``message`` がない（``KeyError``）ときは、例外にせず、メッセージを返す。
+    ほかの例外は想定外のバグなので、握りつぶさずそのまま送出する。
+
+    Parameters
+    ----------
+    doi : str
+        問い合わせるDOI
+
+    Returns
+    -------
+    tuple[Optional[dict], Optional[str]]
+        成功したときは ``(メタデータ, None)``、失敗したときは
+        ``(None, 画面に出すメッセージ)``。失敗はログにも ERROR で出す。
+        通信エラーのメッセージは、例外の型名だけを含む（例外の文面は
+        入力やプロキシの URL を含みうるので、画面に出さない）。
+    """
+    try:
+        metadata = Works().doi(doi)
+    except (RequestException, KeyError) as e:
+        reason = type(e).__name__
+        _logger.error("Failed to fetch DOI metadata (%s): %s", reason, e)
+        return (
+            None,
+            "❌ DOIのメタデータを取得できませんでした"
+            f"（通信エラー: {reason}）。"
+            "ネットワークの接続を確認して、もう一度お試しください。",
+        )
+
+    if not isinstance(metadata, dict) or _as_text(metadata.get("DOI")) is None:
+        _logger.error("No usable Crossref metadata for the DOI: %r", doi)
+        return None, _DOI_NOT_FOUND_MESSAGE
+    return metadata, None
 
 
 def _load_bib_entries(
@@ -215,11 +414,10 @@ def _render_doi_form() -> tuple[bool, Optional[Entry], list[UploadedFile]]:
         apply_proxy_to_environment()
 
         with st.spinner("🔍 DOIからメタデータを取得中..."):
-            works = Works()
-            metadata: Optional[dict] = works.doi(doi)
+            metadata, error_message = _fetch_doi_metadata(doi)
 
-        if not metadata:
-            st.error("❌ 無効なDOI、またはメタデータの取得に失敗しました。")
+        if metadata is None:
+            st.error(error_message)
             return False, None, []
 
         entry = _create_entry_from_doi_metadata(metadata)
