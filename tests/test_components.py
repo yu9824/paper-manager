@@ -4,7 +4,7 @@
 このモジュールは次のセクションで構成される。
 
 - 共通の補助: fixture と補助関数 (後続のセクションからも使う)
-- PDF の保存: ``save_pdfs`` (要件 9.1, 9.2, 9.3)
+- PDF の保存: ``save_pdfs`` (要件 9.1, 9.2。9.3 は下記)
 - PDF の削除: ``delete_pdfs`` (要件 9.4, 9.5)
 - 論文の登録・更新: ``register_entry_to_list`` / ``update_entry_in_list``
   (要件 9.6〜9.10)。このセクションだけで使う補助は、セクションの冒頭に
@@ -25,10 +25,24 @@ PDF の置き場所は ``Entry.get_pdf_dir`` から導出する。通知 (``st.e
 旧形式の単一 PDF の削除は ``Entry.pdf_filename`` (非推奨) を参照するため、
 ``DeprecationWarning`` が出る。警告の確認が目的ではないので、この 2 つの
 非推奨 API の警告だけを無視する (ほかの警告は隠さない)。
+
+要件 9.3 (保存先のパスが 250 文字を超えると保存をスキップしてエラーを表示
+する) は、known-bug-fixes spec の要件 1.4・1.5 が置き換えた。パス全体の長さ
+を理由に保存を拒否せず、250 文字を超えても保存される。置き換えた後の 9.3 は、
+フォルダの作成やファイルの書き込み・削除に失敗したとき、そのファイルについて
+失敗したことと表示用のパスを通知し、残りのファイルの処理を続けることを検証
+する。変換後のパスの空間 (``windows_like_paths``) でも同じ結果になることも
+確かめる。
 """
 
+import builtins
+import errno
 import json
-from collections.abc import Callable, Mapping
+import os
+import shutil
+import stat
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, NamedTuple, Optional, Union
@@ -46,6 +60,7 @@ from conftest import (
 from streamlit.testing.v1 import AppTest
 
 import paper_manager
+import paper_manager.helper._path as _path_adapter
 from paper_manager.app.components import _common
 from paper_manager.app.components._common import (
     delete_pdfs,
@@ -55,14 +70,18 @@ from paper_manager.app.components._common import (
     update_entry_in_list,
 )
 from paper_manager.entry import Entry, PaperList
+from paper_manager.helper import to_display_path
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore:(pdf_filename|_migrate_legacy_pdf_filenames) is deprecated"
     ":DeprecationWarning"
 )
 
-# save_pdfs が、これを超えるパスのファイルを保存しない上限 (要件 9.3).
-MAX_PATH_LENGTH = 250
+# 保存パスの長さを変えて、保存が長さに左右されないことを確かめる.
+# 250 は修正前の上限、260 は Windows の MAX_PATH. 要件 9.3 (250 文字を超える
+# と保存をスキップする) は、known-bug-fixes 要件 1.5 が置き換えた.
+OLD_LIMIT = 250
+PATH_LENGTHS = [OLD_LIMIT, OLD_LIMIT + 1, 261, 400]
 
 
 # --- 共通の補助 -----------------------------------------------------------
@@ -117,8 +136,9 @@ def padded_base_dir(
 ) -> Path:
     """``file_name`` の保存パスの長さがちょうど ``target_length`` になる基点を作る.
 
-    ``root`` の下に 1 階層の詰め物を足し、
-    ``<基点>/<エントリのフォルダ>/<file_name>`` の文字数を揃える。
+    ``root`` の下に詰め物の階層を足し、
+    ``<基点>/<エントリのフォルダ>/<file_name>`` の文字数を揃える。詰め物の
+    階層は 1 つ 100 文字以内にする (ファイル名の上限 255 文字に収める)。
     基点のフォルダは作らない。
 
     Parameters
@@ -140,15 +160,55 @@ def padded_base_dir(
     """
     unpadded = len(str(root / entry.pdf_dir_name / file_name))
     # 詰め物を 1 階層足すと、詰め物の長さ + 区切り 1 文字だけ長くなる
-    padding = target_length - unpadded - 1
-    assert 1 <= padding <= 200, (
-        f"cannot pad {root} to {target_length} characters (padding={padding})"
+    remaining = target_length - unpadded
+    assert remaining >= 2, (
+        f"cannot pad {root} to {target_length} characters "
+        f"(only {remaining} characters to add)"
     )
-    base_dir = root / ("p" * padding)
-    assert (
-        len(str(base_dir / entry.pdf_dir_name / file_name)) == target_length
-    )
+    base_dir = root
+    while remaining > 102:
+        base_dir = base_dir / ("p" * 100)
+        remaining -= 101
+    base_dir = base_dir / ("p" * (remaining - 1))
+    assert len(str(base_dir / entry.pdf_dir_name / file_name)) == target_length
     return base_dir
+
+
+@contextmanager
+def read_only(path: Path) -> Iterator[None]:
+    """``path`` のディレクトリを、ブロックの間だけ書き込み不可にする.
+
+    権限が効かない環境 (root で実行しているなど) では、テストを skip する。
+    ブロックを抜けるとき (例外のときも) 元の権限に戻す。
+
+    Parameters
+    ----------
+    path : Path
+        書き込み不可にするディレクトリ。存在すること。
+    """
+    original = stat.S_IMODE(path.stat().st_mode)
+    path.chmod(original & ~0o222)
+    try:
+        if os.access(path, os.W_OK):
+            pytest.skip("directory permissions are not enforced here")
+        yield
+    finally:
+        path.chmod(original)
+
+
+@pytest.fixture(
+    params=[False, True], ids=["plain-paths", "windows-like-paths"]
+)
+def path_space(request: pytest.FixtureRequest) -> bool:
+    """変換前のパスだけの空間と、Windows を模した別名変換の空間を切り替える.
+
+    ``True`` のときは ``windows_like_paths`` を有効にする。変換後のパスと
+    変換前のパスを混ぜた比較が不一致になる空間で、同じテストが成功する
+    ことを確かめるために使う。
+    """
+    if request.param:
+        request.getfixturevalue("windows_like_paths")
+    return request.param
 
 
 @pytest.fixture
@@ -174,7 +234,7 @@ def pdf_root(data_paths: DataPaths) -> Path:
     return data_paths.pdf
 
 
-# --- PDF の保存: save_pdfs (要件 9.1, 9.2, 9.3) ----------------------------
+# --- PDF の保存: save_pdfs (要件 9.1, 9.2, 9.3 → 1.4, 1.5) -----------------
 
 
 def test_save_pdfs_numbers_files_from_zero_and_returns_count(
@@ -295,24 +355,18 @@ def test_save_pdfs_with_no_files_leaves_existing_pdfs_untouched(
     assert st_messages.error == []
 
 
-@pytest.mark.parametrize(
-    ("path_length", "expected_saved"),
-    [
-        pytest.param(MAX_PATH_LENGTH, 2, id="250-characters-is-allowed"),
-        pytest.param(MAX_PATH_LENGTH + 1, 0, id="251-characters-is-skipped"),
-    ],
-)
-def test_save_pdfs_path_length_limit_is_250_characters(
+@pytest.mark.parametrize("path_length", PATH_LENGTHS)
+def test_save_pdfs_saves_whatever_the_path_length(
     entry: Entry,
     pdf_root: Path,
     st_messages: StMessages,
     path_length: int,
-    expected_saved: int,
 ) -> None:
-    """保存パスが 250 文字までは保存され、251 文字では 1 件ずつ飛ばされる (要件 9.3).
+    """保存パスが 250 文字を超えても、PDF は保存される (known-bug-fixes 1.5).
 
     基点の長さを調整して、``00.pdf`` と ``01.pdf`` の保存パスをちょうど
-    ``path_length`` 文字にする。巨大なタイトルのエントリは作らない。
+    ``path_length`` 文字にする。250 文字は修正前の上限、261 文字は Windows
+    の MAX_PATH (260 文字) を超える長さ。エラーは出ない。
     """
     base_dir = padded_base_dir(pdf_root, entry, "00.pdf", path_length)
     uploads = make_uploads(2)
@@ -320,50 +374,154 @@ def test_save_pdfs_path_length_limit_is_250_characters(
     saved = save_pdfs(uploads, entry, base_dir)
 
     pdf_dir = entry.get_pdf_dir(base_dir)
-    assert saved == expected_saved
-    assert len(pdf_names(pdf_dir)) == expected_saved
-    if expected_saved:
-        assert st_messages.error == []
-        assert (pdf_dir / "01.pdf").read_bytes() == uploads[1].getvalue()
-    else:
-        # 飛ばしたファイルごとに、パスと長さを示すエラーが表示される。
-        # 飛ばしたファイルは保存されない (番号が埋まらない) ので、どちらも
-        # 00.pdf の保存パスとして通知される
-        assert len(st_messages.error) == len(uploads)
-        for message in st_messages.error:
-            assert "too long" in message
-            assert f"({path_length} characters)" in message
-            assert str(pdf_dir / "00.pdf") in message
+    assert saved == 2
+    assert len(str(pdf_dir / "00.pdf")) == path_length
+    assert pdf_names(pdf_dir) == ["00.pdf", "01.pdf"]
+    assert (pdf_dir / "00.pdf").read_bytes() == uploads[0].getvalue()
+    assert (pdf_dir / "01.pdf").read_bytes() == uploads[1].getvalue()
+    assert st_messages.error == []
 
 
-def test_save_pdfs_skips_a_file_over_the_limit_and_keeps_processing(
+def test_save_pdfs_keeps_saving_when_numbers_cross_the_old_limit(
     entry: Entry, pdf_root: Path, st_messages: StMessages
 ) -> None:
-    """上限を超えたファイルは飛ばされ、その前後の処理は続く (要件 9.3).
+    """番号が増えて保存パスが 250 文字を超えても、保存が続く (1.5).
 
     保存名は番号が増えるほど長くなる。``99.pdf`` までは 250 文字に収まり、
     ``100.pdf`` から 251 文字になる。既存の ``00.pdf``〜``98.pdf`` がある
-    状態で 3 件保存すると、1 件目は ``99.pdf`` として保存され、2 件目以降は
-    上限を超えて飛ばされる。飛ばした 2 件目で処理が中断されず、3 件目も
-    処理される (エラーが 1 件ずつ記録される)。
+    状態で 3 件保存すると、``99.pdf``・``100.pdf``・``101.pdf`` の 3 件が
+    すべて保存される (修正前は 2 件目以降がスキップされた)。
     """
-    base_dir = padded_base_dir(pdf_root, entry, "99.pdf", MAX_PATH_LENGTH)
+    base_dir = padded_base_dir(pdf_root, entry, "99.pdf", OLD_LIMIT)
     pdf_dir = entry.get_pdf_dir(base_dir)
     existing = make_pdfs(pdf_dir, [f"{i:02d}.pdf" for i in range(99)])
     uploads = make_uploads(3)
 
     saved = save_pdfs(uploads, entry, base_dir)
 
-    assert saved == 1
-    assert (pdf_dir / "99.pdf").read_bytes() == uploads[0].getvalue()
-    assert not (pdf_dir / "100.pdf").exists()
-    assert len(pdf_names(pdf_dir)) == len(existing) + 1
-    # 2 件目と 3 件目が、それぞれ上限超過として通知される
-    assert len(st_messages.error) == 2
+    assert saved == 3
+    assert len(str(pdf_dir / "100.pdf")) == OLD_LIMIT + 1
+    for name, upload in zip(["99.pdf", "100.pdf", "101.pdf"], uploads):
+        assert (pdf_dir / name).read_bytes() == upload.getvalue()
+    assert len(pdf_names(pdf_dir)) == len(existing) + 3
+    assert st_messages.error == []
+
+
+def failing_open_on_call(
+    failing_call: int, error: OSError
+) -> Callable[..., Any]:
+    """``failing_call`` 回目の呼び出しだけ ``error`` を送出する ``open`` を返す.
+
+    ほかの呼び出しは組み込みの ``open`` に渡す。``_common`` のモジュール
+    変数 ``open`` として差し替えて、``save_pdfs`` の書き込みの失敗を
+    再現する (権限に頼らないので、root でも同じ結果になる)。
+
+    Parameters
+    ----------
+    failing_call : int
+        失敗させる呼び出しの順番 (1 から数える)。
+    error : OSError
+        送出する例外。
+    """
+    calls = 0
+
+    def fake_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == failing_call:
+            raise error
+        return builtins.open(file, *args, **kwargs)
+
+    return fake_open
+
+
+def test_save_pdfs_reports_a_failed_write_and_processes_the_rest(
+    entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    path_space: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """書き込みに失敗したファイルを表示用のパスで通知し、残りを保存する (1.4).
+
+    2 件目の書き込みだけが失敗する。1 件目と 3 件目は保存され、失敗は
+    そのファイルのパス (prefix のない表示用のパス) と理由とともに通知
+    される。失敗したファイルの番号は、次のファイルが使う。
+    """
+    error = OSError(errno.EIO, "Input/output error")
+    monkeypatch.setattr(
+        _common, "open", failing_open_on_call(2, error), raising=False
+    )
+    uploads = make_uploads(3)
+
+    saved = save_pdfs(uploads, entry)
+
+    pdf_dir = entry.get_pdf_dir(pdf_root)
+    assert saved == 2
+    assert pdf_names(pdf_dir) == ["00.pdf", "01.pdf"]
+    assert (pdf_dir / "00.pdf").read_bytes() == uploads[0].getvalue()
+    assert (pdf_dir / "01.pdf").read_bytes() == uploads[2].getvalue()
+    assert len(st_messages.error) == 1
+    message = st_messages.error[0]
+    assert to_display_path(pdf_dir / "01.pdf") in message
+    assert "Input/output error" in message
+    if path_space:
+        # 変換後のパス (別名変換では ``//`` で始まる) は、画面に出さない
+        assert str(pdf_dir / "01.pdf") not in message
+
+
+def test_save_pdfs_reports_every_file_that_cannot_be_written(
+    entry: Entry, pdf_root: Path, st_messages: StMessages
+) -> None:
+    """フォルダが書き込み不可なら、ファイルごとに失敗を通知する (1.4).
+
+    1 件の失敗で処理を止めず、すべてのファイルを試す。何も保存されない。
+    """
+    pdf_dir = entry.get_pdf_dir(pdf_root)
+    pdf_dir.mkdir(parents=True)
+    uploads = make_uploads(3)
+
+    with read_only(pdf_dir):
+        saved = save_pdfs(uploads, entry)
+
+    assert saved == 0
+    assert pdf_names(pdf_dir) == []
+    assert len(st_messages.error) == len(uploads)
     for message in st_messages.error:
-        assert "too long" in message
-        assert f"({MAX_PATH_LENGTH + 1} characters)" in message
-        assert str(pdf_dir / "100.pdf") in message
+        assert to_display_path(pdf_dir / "00.pdf") in message
+        assert "Permission denied" in message
+
+
+def test_save_pdfs_reports_a_folder_that_cannot_be_created(
+    entry: Entry, pdf_root: Path, st_messages: StMessages
+) -> None:
+    """フォルダを作れないときは、フォルダのパスと理由を通知して 0 を返す (1.4)."""
+    pdf_root.mkdir(parents=True, exist_ok=True)
+    pdf_dir = entry.get_pdf_dir(pdf_root)
+
+    with read_only(pdf_root):
+        saved = save_pdfs(make_uploads(2), entry)
+
+    assert saved == 0
+    assert not pdf_dir.exists()
+    assert len(st_messages.error) == 1
+    assert to_display_path(pdf_dir) in st_messages.error[0]
+    assert "Permission denied" in st_messages.error[0]
+
+
+def test_save_pdfs_saves_in_the_converted_path_space(
+    entry: Entry, pdf_root: Path, st_messages: StMessages, path_space: bool
+) -> None:
+    """変換後のパスの空間でも、保存とフォルダの作成が成功する (1.1, 1.2)."""
+    uploads = make_uploads(2)
+
+    saved = save_pdfs(uploads, entry)
+
+    assert saved == 2
+    plain_dir = pdf_root / entry.pdf_dir_name
+    assert pdf_names(plain_dir) == ["00.pdf", "01.pdf"]
+    assert (plain_dir / "01.pdf").read_bytes() == uploads[1].getvalue()
+    assert st_messages.error == []
 
 
 # --- PDF の削除: delete_pdfs (要件 9.4, 9.5) -------------------------------
@@ -529,6 +687,634 @@ def test_delete_pdfs_with_nothing_to_delete_returns_zero(
     assert pdf_names(pdf_root) == [other_entry.pdf_dir_name]
     assert (other_dir / "00.pdf").read_bytes() == other["00.pdf"]
     assert st_messages.error == []
+
+
+def tree_of(root: Path) -> dict[str, Optional[bytes]]:
+    """``root`` の下のすべてのファイルとフォルダを、内容付きで返す.
+
+    Returns
+    -------
+    dict[str, Optional[bytes]]
+        ``root`` からの相対パス → ファイルの中身 (フォルダは ``None``)。
+    """
+    return {
+        str(path.relative_to(root)): (
+            path.read_bytes() if path.is_file() else None
+        )
+        for path in sorted(root.rglob("*"))
+    }
+
+
+def test_delete_pdfs_removes_the_folder_in_both_path_spaces(
+    entry: Entry,
+    other_entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    path_space: bool,
+) -> None:
+    """フォルダごとの削除は、変換後のパスの空間でも成功する (1.2).
+
+    PDF ルートは削除されず、別のエントリのフォルダは残る。
+    """
+    pdf_dir = pdf_root / entry.pdf_dir_name
+    make_pdfs(pdf_dir, ["00.pdf", "01.pdf"])
+    other_dir = pdf_root / other_entry.pdf_dir_name
+    other = make_pdfs(other_dir, ["00.pdf"])
+
+    deleted = delete_pdfs(entry)
+
+    assert deleted == 2
+    assert not pdf_dir.exists()
+    assert pdf_names(pdf_root) == [other_entry.pdf_dir_name]
+    assert (other_dir / "00.pdf").read_bytes() == other["00.pdf"]
+    assert st_messages.error == []
+
+
+def test_delete_pdfs_specific_files_in_both_path_spaces(
+    entry: Entry, pdf_root: Path, st_messages: StMessages, path_space: bool
+) -> None:
+    """指定したファイルの削除と空のフォルダの削除は、どの空間でも成功する (1.2).
+
+    指定するパスは、変換前のパスでも変換後のパスでもよい。最後のファイルを
+    消すとエントリのフォルダは消えるが、PDF ルートは消えない。
+    """
+    pdf_dir = pdf_root / entry.pdf_dir_name
+    make_pdfs(pdf_dir, ["00.pdf", "01.pdf"])
+    converted_dir = entry.get_pdf_dir(pdf_root)
+
+    first = delete_pdfs(entry, specific_files=[pdf_dir / "00.pdf"])
+    assert first == 1
+    assert pdf_names(pdf_dir) == ["01.pdf"]
+
+    second = delete_pdfs(entry, specific_files=[converted_dir / "01.pdf"])
+
+    assert second == 1
+    assert not pdf_dir.exists()
+    assert pdf_root.is_dir()
+    assert st_messages.error == []
+
+
+def test_delete_pdfs_removes_legacy_single_pdfs_with_the_folder(
+    entry: Entry,
+    other_entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    path_space: bool,
+) -> None:
+    """フォルダごとの削除は、移せなかった旧形式の単一 PDF も削除する (1.2).
+
+    旧形式の単一 PDF は、PDF ルート直下の ``pdf_filename`` と
+    ``<pdf_dir_name>.pdf``。削除した論文の PDF がルートに残り、孤立 PDF
+    として現れないようにする。件数にはどちらも数える。別のエントリの
+    ものは削除されない。
+    """
+    # 末尾が `.` のタイトルでは、2 つの旧形式の名前が異なる
+    dotted = Entry({**entry, "title": "Study of Things."})
+    assert dotted.pdf_filename != f"{dotted.pdf_dir_name}.pdf"
+    pdf_dir = pdf_root / dotted.pdf_dir_name
+    make_pdfs(pdf_dir, ["00.pdf", "01.pdf"])
+    left_behind = write_pdf(pdf_root / dotted.pdf_filename)
+    folder_named = write_pdf(pdf_root / f"{dotted.pdf_dir_name}.pdf")
+    other_dir = pdf_root / other_entry.pdf_dir_name
+    other = make_pdfs(other_dir, ["00.pdf"])
+    other_legacy_content = PDF_BYTES + b"%other legacy\n"
+    other_legacy = write_pdf(
+        pdf_root / f"{other_entry.pdf_dir_name}.pdf", other_legacy_content
+    )
+
+    deleted = delete_pdfs(dotted)
+
+    assert deleted == 4
+    assert not pdf_dir.exists()
+    assert not left_behind.exists()
+    assert not folder_named.exists()
+    assert pdf_names(pdf_root) == sorted(
+        [other_entry.pdf_dir_name, f"{other_entry.pdf_dir_name}.pdf"]
+    )
+    assert (other_dir / "00.pdf").read_bytes() == other["00.pdf"]
+    assert other_legacy.read_bytes() == other_legacy_content
+    assert st_messages.error == []
+
+
+def test_delete_pdfs_removes_a_legacy_single_pdf_in_both_path_spaces(
+    entry: Entry, pdf_root: Path, st_messages: StMessages, path_space: bool
+) -> None:
+    """フォルダがなく旧形式の単一 PDF だけでも、どの空間でも削除できる (1.2)."""
+    legacy = write_pdf(pdf_root / entry.pdf_filename)
+
+    deleted = delete_pdfs(entry)
+
+    assert deleted == 1
+    assert not legacy.exists()
+    assert pdf_root.is_dir()
+    assert st_messages.error == []
+
+
+def test_delete_pdfs_specific_files_reports_a_failure_and_continues(
+    entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    path_space: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """削除に失敗したファイルを表示用のパスで通知し、残りを削除する (1.4).
+
+    ``01.pdf`` の削除だけが失敗する。``00.pdf`` と ``02.pdf`` は削除され、
+    失敗したファイルとフォルダは残る。
+    """
+    pdf_dir = pdf_root / entry.pdf_dir_name
+    contents = make_pdfs(pdf_dir, ["00.pdf", "01.pdf", "02.pdf"])
+    real_unlink = Path.unlink
+
+    def fake_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+        if self.name == "01.pdf":
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fake_unlink)
+    converted_dir = entry.get_pdf_dir(pdf_root)
+
+    deleted = delete_pdfs(
+        entry,
+        specific_files=[pdf_dir / name for name in contents],
+    )
+
+    assert deleted == 2
+    assert pdf_names(pdf_dir) == ["01.pdf"]
+    assert len(st_messages.error) == 1
+    message = st_messages.error[0]
+    assert to_display_path(converted_dir / "01.pdf") in message
+    assert "Permission denied" in message
+    if path_space:
+        assert str(converted_dir / "01.pdf") not in message
+
+
+def test_delete_pdfs_reports_a_folder_that_cannot_be_deleted(
+    entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    path_space: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """フォルダを削除できなければ通知して 0 件を数え、旧形式の削除は続ける (1.4).
+
+    フォルダの削除に失敗しても、移せなかった旧形式の単一 PDF の削除は
+    行われる。失敗したフォルダの PDF は削除済みとして数えない。
+    """
+    pdf_dir = pdf_root / entry.pdf_dir_name
+    contents = make_pdfs(pdf_dir, ["00.pdf", "01.pdf"])
+    legacy = write_pdf(pdf_root / entry.pdf_filename)
+
+    def fake_rmtree(path: Any, *args: Any, **kwargs: Any) -> None:
+        raise OSError(errno.EBUSY, "Device or resource busy", str(path))
+
+    monkeypatch.setattr(shutil, "rmtree", fake_rmtree)
+    converted_dir = entry.get_pdf_dir(pdf_root)
+
+    deleted = delete_pdfs(entry)
+
+    assert deleted == 1
+    assert not legacy.exists()
+    assert pdf_names(pdf_dir) == sorted(contents)
+    assert len(st_messages.error) == 1
+    message = st_messages.error[0]
+    assert to_display_path(converted_dir) in message
+    assert "Device or resource busy" in message
+    if path_space:
+        assert str(converted_dir) not in message
+
+
+@pytest.mark.parametrize("mode", ["whole-folder", "specific-files"])
+@pytest.mark.parametrize(
+    "folder_name",
+    ["", ".", "..", "../outside", "ABSOLUTE"],
+    ids=["empty", "dot", "parent", "sibling-outside", "absolute"],
+)
+def test_delete_pdfs_never_deletes_the_pdf_root_or_anything_outside_it(
+    entry: Entry,
+    tmp_path: Path,
+    st_messages: StMessages,
+    path_space: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    folder_name: str,
+    mode: str,
+) -> None:
+    """フォルダ名の計算結果が何であっても、PDF ルートとその外は削除しない (1.2).
+
+    ``pdf_dir_name`` が PDF ルートそのもの (空、``.``)、その外
+    (``..``、``../outside``、絶対パス) を指すようになっても、削除の対象に
+    ならない。フォルダごとの削除では何も変わらず、通知される。指定した
+    ファイルの削除では、空になったフォルダを削除しない (指定したファイル
+    自体は、呼び出し元の指定どおり削除される)。
+    """
+    data_dir = tmp_path / "data"
+    base_dir = data_dir / "pdf"
+    base_dir.mkdir(parents=True)
+    write_pdf(data_dir / "list.json", b"{}")
+    write_pdf(data_dir / "outside" / "00.pdf")
+    write_pdf(data_dir / "outside.pdf")
+    if folder_name == "ABSOLUTE":
+        folder_name = str(tmp_path / "elsewhere")
+        write_pdf(tmp_path / "elsewhere" / "00.pdf")
+        write_pdf(tmp_path / "elsewhere.pdf")
+    if mode == "whole-folder":
+        make_pdfs(base_dir / "Other Paper", ["00.pdf"])
+    monkeypatch.setattr(
+        Entry, "pdf_dir_name", property(lambda self: folder_name)
+    )
+    # ``pdf_dir_name`` が指す先。指定したファイルを消すと空になりうる
+    target_dir = base_dir / folder_name
+    write_pdf(target_dir / "stray.pdf", PDF_BYTES + b"%stray\n")
+    before = tree_of(tmp_path)
+
+    if mode == "whole-folder":
+        deleted = delete_pdfs(entry, base_dir)
+        assert deleted == 0
+        assert tree_of(tmp_path) == before
+        assert len(st_messages.error) >= 1
+    else:
+        specified = sorted(target_dir.glob("*.pdf"))
+        deleted = delete_pdfs(entry, base_dir, specific_files=specified)
+        assert deleted == len(specified)
+        specified_keys = {
+            os.path.relpath(os.path.normpath(path), tmp_path)
+            for path in specified
+        }
+        # 指定したファイル以外は何も変わらない (空になったフォルダも残る)
+        assert tree_of(tmp_path) == {
+            k: v for k, v in before.items() if k not in specified_keys
+        }
+    assert base_dir.is_dir()
+
+
+def redirect_data_dir(
+    monkeypatch: pytest.MonkeyPatch, data_root: Path, redirected: Path
+) -> None:
+    """変換を、``data_root`` の下を ``redirected`` の下へ写すものに差し替える.
+
+    変換後のパスでファイルを操作する実装は ``redirected`` の下を使い、
+    変換前のパスを使う実装は ``data_root`` の下を使う。どちらを使ったかが
+    結果から分かる (別名変換の ``windows_like_paths`` は、変換前のパスでも
+    同じ場所を指すため、この違いを検出できない)。逆変換 (表示用) は逆に
+    写す。
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        差し替えに使う。テストの後に元へ戻る。
+    data_root : Path
+        データディレクトリ (変換前のパス)。
+    redirected : Path
+        写し先のディレクトリ。
+    """
+    real, target = str(data_root), str(redirected)
+
+    def convert(path: str) -> str:
+        full = os.path.abspath(path)
+        if full == real or full.startswith(real + os.sep):
+            return target + full[len(real) :]
+        return full
+
+    def unconvert(path: str) -> str:
+        if path == target or path.startswith(target + os.sep):
+            return real + path[len(target) :]
+        return path
+
+    monkeypatch.setattr(_path_adapter, "_convert", convert)
+    monkeypatch.setattr(_path_adapter, "_unconvert", unconvert)
+
+
+@pytest.fixture
+def redirected_pdf_root(
+    monkeypatch: pytest.MonkeyPatch, data_paths: DataPaths, tmp_path: Path
+) -> Path:
+    """変換が別のディレクトリへ写す状態にして、写し先の PDF ルートを返す.
+
+    変換前の PDF ルート (``data_paths.pdf``) は空のままにしておく。変換後の
+    PDF ルート (戻り値) は、``DIRPATH_PDF`` から作ったパスの変換先で、
+    変換後のパスでファイルを操作する実装だけがここを使う。
+    """
+    redirected = tmp_path / "converted"
+    redirect_data_dir(monkeypatch, data_paths.root, redirected)
+    return redirected / data_paths.pdf.relative_to(data_paths.root)
+
+
+def test_save_pdfs_writes_into_the_converted_pdf_root(
+    entry: Entry,
+    pdf_root: Path,
+    redirected_pdf_root: Path,
+    st_messages: StMessages,
+) -> None:
+    """保存は、変換後の PDF ルートの下に書く (1.1, 1.2)."""
+    uploads = make_uploads(2)
+
+    saved = save_pdfs(uploads, entry)
+
+    converted_dir = redirected_pdf_root / entry.pdf_dir_name
+    assert saved == 2
+    assert pdf_names(converted_dir) == ["00.pdf", "01.pdf"]
+    assert (converted_dir / "01.pdf").read_bytes() == uploads[1].getvalue()
+    assert list(pdf_root.glob("*")) == []  # 変換前のパスの下には書かない
+    assert st_messages.error == []
+
+
+def test_delete_pdfs_whole_folder_works_in_the_converted_pdf_root(
+    entry: Entry,
+    other_entry: Entry,
+    pdf_root: Path,
+    redirected_pdf_root: Path,
+    st_messages: StMessages,
+) -> None:
+    """フォルダごとの削除は、変換後のパスの下を対象にする (1.2).
+
+    旧形式の単一 PDF も、変換後の PDF ルート直下から削除する。変換前の
+    パスの下に置いた同名の PDF (おとり) は、削除されない。
+    """
+    converted_dir = redirected_pdf_root / entry.pdf_dir_name
+    make_pdfs(converted_dir, ["00.pdf", "01.pdf"])
+    legacy = write_pdf(redirected_pdf_root / entry.pdf_filename)
+    other = make_pdfs(
+        redirected_pdf_root / other_entry.pdf_dir_name, ["00.pdf"]
+    )
+    decoy_dir = pdf_root / entry.pdf_dir_name
+    decoys = make_pdfs(decoy_dir, ["00.pdf"])
+    decoy_legacy = write_pdf(pdf_root / entry.pdf_filename)
+
+    deleted = delete_pdfs(entry)
+
+    assert deleted == 3
+    assert not converted_dir.exists()
+    assert not legacy.exists()
+    other_file = redirected_pdf_root / other_entry.pdf_dir_name / "00.pdf"
+    assert other_file.read_bytes() == other["00.pdf"]
+    assert (decoy_dir / "00.pdf").read_bytes() == decoys["00.pdf"]
+    assert decoy_legacy.is_file()
+    assert redirected_pdf_root.is_dir()
+    assert st_messages.error == []
+
+
+def test_delete_pdfs_specific_files_work_in_the_converted_pdf_root(
+    entry: Entry,
+    pdf_root: Path,
+    redirected_pdf_root: Path,
+    st_messages: StMessages,
+) -> None:
+    """指定したファイルは変換後のパスで削除し、空のフォルダも消す (1.2).
+
+    呼び出し元は変換前のパスで指定する。変換前のパスの下に置いた同名の
+    PDF (おとり) は、削除されない。
+    """
+    converted_dir = redirected_pdf_root / entry.pdf_dir_name
+    make_pdfs(converted_dir, ["00.pdf", "01.pdf"])
+    decoy_dir = pdf_root / entry.pdf_dir_name
+    decoys = make_pdfs(decoy_dir, ["00.pdf", "01.pdf"])
+    logical = [decoy_dir / "00.pdf", decoy_dir / "01.pdf"]
+
+    deleted = delete_pdfs(entry, specific_files=logical)
+
+    assert deleted == 2
+    assert not converted_dir.exists()  # 空になったので削除される
+    assert redirected_pdf_root.is_dir()
+    for name, content in decoys.items():
+        assert (decoy_dir / name).read_bytes() == content
+    assert st_messages.error == []
+
+
+def test_delete_pdfs_ignores_a_legacy_name_too_long_to_exist(
+    make_entry: Callable[..., Entry],
+    pdf_root: Path,
+    st_messages: StMessages,
+    path_space: bool,
+) -> None:
+    """旧形式の名前が長すぎても、フォルダの削除に失敗したと通知しない (1.4).
+
+    ``pdf_filename`` が 255 文字を超えると、その名前のファイルは作れず、
+    存在の確認が ``ENAMETOOLONG`` になる。存在しないものとして扱い、
+    通知しない。``pdf_dir_name`` は 200 文字以内なので、フォルダは削除される。
+    """
+    long_entry = make_entry(title="T" * 300)
+    assert len(long_entry.pdf_filename) > 255
+    assert len(long_entry.pdf_dir_name) <= 200
+    pdf_dir = pdf_root / long_entry.pdf_dir_name
+    make_pdfs(pdf_dir, ["00.pdf"])
+
+    deleted = delete_pdfs(long_entry)
+
+    assert deleted == 1
+    assert not pdf_dir.exists()
+    assert pdf_root.is_dir()
+    assert st_messages.error == []
+
+
+def test_delete_pdfs_specific_files_ignore_a_name_too_long_to_exist(
+    make_entry: Callable[..., Entry],
+    pdf_root: Path,
+    st_messages: StMessages,
+    path_space: bool,
+) -> None:
+    """指定したファイルの名前が長すぎても、存在しないものとして扱う (1.4)."""
+    long_entry = make_entry(title="T" * 300)
+    pdf_dir = pdf_root / long_entry.pdf_dir_name
+    make_pdfs(pdf_dir, ["00.pdf"])
+    too_long = pdf_root / long_entry.pdf_filename
+
+    deleted = delete_pdfs(
+        long_entry, specific_files=[too_long, pdf_dir / "00.pdf"]
+    )
+
+    assert deleted == 1
+    assert not pdf_dir.exists()
+    assert st_messages.error == []
+
+
+@pytest.mark.parametrize(
+    ("method", "target", "action"),
+    [
+        pytest.param(
+            "is_file",
+            "legacy",
+            "Failed to delete legacy PDF file",
+            id="legacy-pdf-check",
+        ),
+        pytest.param(
+            "is_dir", "folder", "Failed to delete PDF directory", id="folder"
+        ),
+    ],
+)
+def test_delete_pdfs_reports_an_existence_check_that_fails_for_another_reason(
+    entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    path_space: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    target: str,
+    action: str,
+) -> None:
+    """存在の確認が ``ENAMETOOLONG`` 以外で失敗したら、失敗として通知する (1.4).
+
+    ``PermissionError`` などは、存在しないことを意味しない。通知して、
+    残りの処理 (フォルダまたは旧形式の PDF の削除) は続ける。
+    """
+    pdf_dir = pdf_root / entry.pdf_dir_name
+    make_pdfs(pdf_dir, ["00.pdf"])
+    legacy = write_pdf(pdf_root / entry.pdf_filename)
+    failing_path = pdf_dir if target == "folder" else legacy
+    real_check = getattr(Path, method)
+
+    def fake_check(self: Path) -> bool:
+        if self.name == failing_path.name:
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real_check(self)
+
+    monkeypatch.setattr(Path, method, fake_check)
+    converted = entry.get_pdf_dir(pdf_root)
+    converted_failing = (
+        converted if target == "folder" else converted.parent / legacy.name
+    )
+
+    deleted = delete_pdfs(entry)
+
+    # 失敗した方は残り、もう一方は削除される (どちらも PDF 1 件)
+    assert deleted == 1
+    assert pdf_dir.exists() == (target == "folder")
+    assert legacy.exists() == (target == "legacy")
+    assert len(st_messages.error) == 1
+    message = st_messages.error[0]
+    assert action in message
+    assert to_display_path(converted_failing) in message
+    assert "Permission denied" in message
+
+
+def test_delete_pdfs_resolves_the_default_pdf_root_once(
+    entry: Entry,
+    tmp_path: Path,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``base_dir`` を省略したとき、PDF ルートとフォルダを同じ値から作る.
+
+    ``_common.DIRPATH_PDF`` だけを別の場所にしても、その下のフォルダを
+    削除できる (PDF ルートの判定が、フォルダの親と食い違わない)。
+    """
+    elsewhere = tmp_path / "elsewhere"
+    monkeypatch.setattr(_common, "DIRPATH_PDF", elsewhere)
+    pdf_dir = elsewhere / entry.pdf_dir_name
+    make_pdfs(pdf_dir, ["00.pdf", "01.pdf"])
+
+    deleted = delete_pdfs(entry)
+
+    assert deleted == 2
+    assert not pdf_dir.exists()
+    assert st_messages.error == []
+
+
+def test_failure_reasons_never_show_the_converted_path(
+    entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    caplog: pytest.LogCaptureFixture,
+    path_space: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """理由のない ``OSError`` でも、変換後のパスを画面とログに出さない (1.4).
+
+    ``strerror`` のない ``OSError`` は、``str()`` にパス (変換後のパス) を
+    含むことがある。画面とログには、表示用のパスと、パスを含まない理由
+    だけを出す。
+    """
+    pdf_dir = pdf_root / entry.pdf_dir_name
+    make_pdfs(pdf_dir, ["00.pdf"])
+
+    def fake_rmtree(path: Any, *args: Any, **kwargs: Any) -> None:
+        error = OSError()
+        error.filename = path
+        raise error
+
+    monkeypatch.setattr(shutil, "rmtree", fake_rmtree)
+    converted = entry.get_pdf_dir(pdf_root)
+
+    with caplog.at_level("ERROR"):
+        deleted = delete_pdfs(entry)
+
+    assert deleted == 0
+    assert len(st_messages.error) == 1
+    message = st_messages.error[0]
+    assert to_display_path(converted) in message
+    assert "PosixPath" not in message
+    assert "None" not in message
+    assert to_display_path(converted) in caplog.text
+    if path_space:
+        assert str(converted) not in message
+        assert str(converted) not in caplog.text
+
+
+def test_delete_pdfs_reports_a_symlinked_folder_without_deleting_it(
+    entry: Entry,
+    pdf_root: Path,
+    tmp_path: Path,
+    st_messages: StMessages,
+    caplog: pytest.LogCaptureFixture,
+    path_space: bool,
+) -> None:
+    """PDF フォルダがシンボリックリンクなら、削除せずに失敗を通知する (1.4).
+
+    リンク先の PDF は残る。``rmtree`` がリンクを拒否したときの例外には
+    ``strerror`` がないが、画面とログに変換後のパスは出ない。
+    """
+    target = tmp_path / "linked"
+    kept = make_pdfs(target, ["00.pdf"])
+    pdf_root.mkdir(parents=True, exist_ok=True)
+    link = pdf_root / entry.pdf_dir_name
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"symbolic links are not available: {e}")
+    converted = entry.get_pdf_dir(pdf_root)
+
+    with caplog.at_level("ERROR"):
+        deleted = delete_pdfs(entry)
+
+    assert deleted == 0
+    assert (target / "00.pdf").read_bytes() == kept["00.pdf"]
+    assert link.is_symlink()
+    assert len(st_messages.error) == 1
+    message = st_messages.error[0]
+    assert to_display_path(converted) in message
+    assert "PosixPath" not in message
+    if path_space:
+        assert str(converted) not in message
+        assert str(converted) not in caplog.text
+
+
+def test_save_pdfs_failure_without_a_reason_never_shows_the_converted_path(
+    entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    caplog: pytest.LogCaptureFixture,
+    path_space: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """保存の失敗も、理由のない ``OSError`` で変換後のパスを出さない (1.4)."""
+    error = OSError()
+    monkeypatch.setattr(
+        _common, "open", failing_open_on_call(1, error), raising=False
+    )
+    converted = entry.get_pdf_dir(pdf_root)
+    error.filename = str(converted / "00.pdf")
+
+    with caplog.at_level("ERROR"):
+        saved = save_pdfs(make_uploads(1), entry)
+
+    assert saved == 0
+    assert len(st_messages.error) == 1
+    message = st_messages.error[0]
+    assert to_display_path(converted / "00.pdf") in message
+    assert "PosixPath" not in message
+    assert "None" not in message
+    if path_space:
+        assert str(converted / "00.pdf") not in message
+        assert str(converted / "00.pdf") not in caplog.text
 
 
 # --- 論文の登録・更新: 補助 -----------------------------------------------
