@@ -1,15 +1,17 @@
 """CLI (``paper_manager.__main__``) の引数処理と run / version のテスト.
 
-対象は次のとおり。
+対象は次のとおり (要件 10.x は test-suite spec、要件 11.x は
+known-bug-fixes spec の番号)。
 
 - バージョン表示オプション (``-v`` / ``--version``) がパッケージの
   バージョンを表示すること (要件 10.1)
 - ``run`` / ``version`` サブコマンドが、Streamlit のサーバーを起動せずに、
   未知の引数をそのまま Streamlit へ渡すこと。``run`` ではアプリの
   トップページ (``app/_list.py``) が起動対象になること (要件 10.2)
-- 実行時の引数に ``--client.showSidebarNavigation`` が含まれなければ
+- ``run`` の引数に ``--client.showSidebarNavigation`` が含まれなければ
   ``--client.showSidebarNavigation false`` が既定で付与され、明示的に
-  指定されていれば重複して付与されないこと (要件 10.3)
+  指定されていれば (空白区切り、``=`` 形式とも) 重複して付与されないこと
+  (要件 10.3、11.6、11.7)
 - ``run --debug`` でライブラリのルートロガーのレベルが DEBUG になること
   (要件 10.4)
 - ``backup`` が、出力先を指定すればそのパスに、省略すれば作業ディレクトリに
@@ -28,19 +30,15 @@ Streamlit の起動経路が使われると ``AttributeError`` で失敗し、�
 サーバーもプロセスも起動しない。外部ネットワークは ``tests/conftest.py`` が
 遮断している。
 
-既知バグ (strict な xfail):
+backup / restore / version は、コマンド全体の引数解析 (``main``) を経由しても
+動くこと (要件 11.1〜11.5)、サイドバーナビゲーション無効化の既定の指定が
+``run`` にだけ、``=`` 形式を含む明示指定がなければ付くこと (要件 11.6〜11.8)、
+backup / restore に未知の引数があれば終了コード 2 で本体を実行しないことを
+確かめる。``version`` に渡る引数は、与えた引数と完全に一致する。
 
-- KB8: ``--client.showSidebarNavigation=true`` のような ``=`` 形式の明示指定が
-  認識されず、``--client.showSidebarNavigation false`` が重複して付与される
-- KB9: ``version`` サブコマンドにもナビゲーション無効化が付与され、
-  ``streamlit version`` が受け付けずに終了コード 2 で失敗する (KB1 と同根)
-- KB1: ``main()`` が全サブコマンドにナビゲーション無効化を付与するため、
-  コマンド全体の引数解析を経由した ``backup`` / ``restore`` が終了コード 2 で
-  失敗する (``backup`` と ``restore`` の 2 件)
-
-backup / restore のテストは、コマンド全体の引数解析 (KB1) を避け、
-サブコマンドの関数 (``cli_main.backup`` / ``cli_main.restore``) に引数の
-リストを直接渡す。バックアップ zip の出力先は ``tmp_path`` で、``tmp_path`` は
+backup / restore のテストは、サブコマンドの関数 (``cli_main.backup`` /
+``cli_main.restore``) に引数のリストを直接渡すものと、``main`` を経由する
+ものがある。バックアップ zip の出力先は ``tmp_path`` で、``tmp_path`` は
 各テストの作業ディレクトリでもある。出力先を省略するテストも作業ディレクトリ
 は ``tmp_path`` のままで、リポジトリの作業ツリーには何も作られない。復元は
 データディレクトリ (隔離済み) に対してだけ行う。zip の中身の検証は
@@ -253,14 +251,25 @@ def test_run_forwards_unknown_arguments_unchanged(
 
 
 @pytest.mark.parametrize("given", _PASSTHROUGH_ARGS)
-def test_version_forwards_unknown_arguments_unchanged(
+def test_version_forwards_exactly_the_given_arguments(
     given: list[str], streamlit_calls: StreamlitCalls
 ) -> None:
-    """``version`` は未知の引数を、順序を保ってそのまま Streamlit へ渡す."""
+    """``version`` は、与えた引数だけを順序を保ってそのまま渡す (要件 11.8).
+
+    ナビゲーション無効化の指定など、何も足さない。
+    """
     cli_main.main(["version", *given], prog=_PROG)
 
-    forwarded = _version_forwarded(streamlit_calls)
-    assert forwarded[: len(given)] == given
+    assert _version_forwarded(streamlit_calls) == given
+
+
+def test_version_without_arguments_forwards_nothing(
+    streamlit_calls: StreamlitCalls,
+) -> None:
+    """引数なしの ``version`` は、空の引数で Streamlit を呼ぶ (要件 11.8)."""
+    cli_main.main(["version"], prog=_PROG)
+
+    assert _version_forwarded(streamlit_calls) == []
 
 
 def test_entrypoint_forwards_sys_argv_to_streamlit(
@@ -331,48 +340,125 @@ def test_explicit_navigation_flag_is_not_duplicated(
     assert forwarded.count(_NAV) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BUG: ナビゲーション無効化の既定の付与が"
-        " `--client.showSidebarNavigation=VALUE` の `=` 形式の明示指定を"
-        "認識せず (KB8)、`--client.showSidebarNavigation false` を重複して"
-        "付与する。後ろに付くため Streamlit (click) では `false` が勝ち、"
-        "ユーザーが明示した `true` が無視される。"
-        " Repro: `main(['run', '--client.showSidebarNavigation=true'])`"
-        " (`paper-manager run --client.showSidebarNavigation=true`)。"
-        "本来は 明示された指定が重複して付与されず、そのまま Streamlit へ"
-        "渡される (要件 10.3)"
-    ),
-)
 def test_explicit_navigation_flag_with_equals_is_not_duplicated(
     streamlit_calls: StreamlitCalls,
 ) -> None:
-    """``=`` 形式で明示された指定も、重複して付与されない (KB8)."""
+    """``=`` 形式で明示された指定も、重複して付与されない (要件 11.6)."""
     given = f"{_NAV}=true"
 
     cli_main.main(["run", given], prog=_PROG)
 
     forwarded = _run_forwarded(streamlit_calls)
     assert forwarded[1:] == [given]
+    assert forwarded.count(_NAV) == 0  # 空白区切りの既定の指定も付かない
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BUG: `version` サブコマンドにも"
-        " `--client.showSidebarNavigation false` が付与され、"
-        "`streamlit version` がこのオプションを受け付けずに"
-        " `No such option` で終了コード 2 になる (KB9。KB1 と同根で、"
-        "`backup` / `restore` に加えて `version` も常に失敗する)。"
-        " Repro: `main(['version'])` (`paper-manager version`)。"
-        "本来は Streamlit のバージョンが表示され、終了コード 0 で終了する"
-    ),
+@pytest.mark.parametrize("value", ["true", "false"])
+def test_explicit_navigation_flag_with_equals_keeps_the_other_arguments(
+    value: str, streamlit_calls: StreamlitCalls
+) -> None:
+    """``=`` 形式の明示指定は、ほかの引数とともに、そのまま渡される."""
+    given = ["--server.port", "8502", f"{_NAV}={value}", "extra"]
+
+    cli_main.main(["run", *given], prog=_PROG)
+
+    assert _run_forwarded(streamlit_calls)[1:] == given
+
+
+def test_navigation_default_is_a_pair_of_option_and_false() -> None:
+    """既定の指定は、``--client.showSidebarNavigation`` と ``false`` の組."""
+    assert cli_main.NAVIGATION_OPTION == _NAV
+    assert cli_main.with_navigation_default([]) == [_NAV, "false"]
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        pytest.param([], [_NAV, "false"], id="empty"),
+        pytest.param(
+            ["--server.port", "8502"],
+            ["--server.port", "8502", _NAV, "false"],
+            id="other-options",
+        ),
+        pytest.param(
+            ["extra", "--server.port=8502"],
+            ["extra", "--server.port=8502", _NAV, "false"],
+            id="positional-and-equals-option",
+        ),
+        pytest.param([_NAV, "true"], [_NAV, "true"], id="space-true"),
+        pytest.param([_NAV, "false"], [_NAV, "false"], id="space-false"),
+        pytest.param([f"{_NAV}=true"], [f"{_NAV}=true"], id="equals-true"),
+        pytest.param([f"{_NAV}=false"], [f"{_NAV}=false"], id="equals-false"),
+        pytest.param(
+            ["--server.port", "8502", f"{_NAV}=true", "extra"],
+            ["--server.port", "8502", f"{_NAV}=true", "extra"],
+            id="equals-among-others",
+        ),
+        pytest.param(
+            [f"{_NAV}X", "1", f"{_NAV}2=1"],
+            [f"{_NAV}X", "1", f"{_NAV}2=1", _NAV, "false"],
+            id="lookalike-names-are-not-explicit",
+        ),
+        pytest.param(
+            ["--", "app-arg"],
+            [_NAV, "false", "--", "app-arg"],
+            id="default-goes-before-the-app-arguments",
+        ),
+        pytest.param(
+            ["--server.port", "8502", "--", "app-arg", "--flag"],
+            [
+                "--server.port",
+                "8502",
+                _NAV,
+                "false",
+                "--",
+                "app-arg",
+                "--flag",
+            ],
+            id="options-then-app-arguments",
+        ),
+        pytest.param(
+            [_NAV, "true", "--", "app-arg"],
+            [_NAV, "true", "--", "app-arg"],
+            id="explicit-before-the-app-arguments",
+        ),
+        pytest.param(
+            ["--", _NAV, "true"],
+            [_NAV, "false", "--", _NAV, "true"],
+            id="app-arguments-are-not-streamlit-options",
+        ),
+    ],
 )
+def test_with_navigation_default(
+    given: list[str], expected: list[str]
+) -> None:
+    """既定の指定は、明示指定がなければ Streamlit の引数の末尾に付く.
+
+    明示指定は空白区切り・``=`` 形式のどちらも認める (要件 11.6、11.7)。
+    ``--`` 以降はアプリの引数なので、既定の指定はその前に付け、``--`` 以降の
+    指定は明示指定とみなさない。
+    """
+    assert cli_main.with_navigation_default(given) == expected
+
+
+def test_with_navigation_default_does_not_modify_its_input() -> None:
+    """引数のリストは変更せず、新しいリストを返す."""
+    given = ["--server.port", "8502"]
+
+    result = cli_main.with_navigation_default(given)
+
+    assert given == ["--server.port", "8502"]
+    assert result is not given
+    assert cli_main.with_navigation_default(tuple(given)) == result
+
+
 def test_version_subcommand_prints_streamlit_version(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """``version`` は ``streamlit version`` と同じく Streamlit のバージョンを出す.
+
+    ``version`` にはナビゲーション無効化の指定を付けないので、
+    ``streamlit version`` が受け付けずに失敗することはない (要件 11.5)。
 
     Streamlit の起動関数は差し替えない (``streamlit version`` はサーバーを
     起動しない)。``main_version`` は ``sys.argv[1]`` を書き換えるため、
@@ -1036,77 +1122,373 @@ def test_backup_then_restore_round_trips_through_the_commands(
     assert _snapshot_tree(data_paths.root) == tree_before
 
 
-# --- 既知バグ KB1: コマンド全体の引数解析を経由した backup / restore --------
+# --- コマンド全体の引数解析 (main) を経由した backup / restore ------------
 #
-# 次の 2 つの欠陥が重なっており、どちらも ``main()`` の実装に由来する。
-#
-# - ``main()`` が全サブコマンドに ``--client.showSidebarNavigation false`` を
-#   渡すため、``backup`` / ``restore`` 自身の引数解析 (argparse) が失敗して
-#   終了コード 2 になる (``version`` が失敗する KB9 と同根)。
-# - ``main()`` のサブパーサーが ``-o`` / ``backup_file`` / ``--force`` を
-#   消費し、``backup()`` / ``restore()`` には未知の引数だけを渡すため、
-#   前者を直しても指定した出力先やバックアップファイルが渡らない。
-#
-# 本来はコマンドラインから直接バックアップ・復元できる。前者だけを直した
-# 場合、この 2 件は strict な xfail のまま (別の理由で) 失敗し続ける。
+# ``main()`` のサブパーサーが ``-o`` / ``backup_file`` / ``--force`` を
+# 解析し、その値で backup / restore の本体が動く (要件 11.1〜11.4)。
+# ``backup`` / ``restore`` にはナビゲーション無効化の指定を付けず、
+# Streamlit も呼ばない (要件 11.8)。未知の引数が残れば、本体を実行せずに
+# 終了コード 2 で終了する。
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BUG: `main()` が全サブコマンドに"
-        " `--client.showSidebarNavigation false` を付与するため、"
-        "`backup` が `unrecognized arguments` として拒否し終了コード 2 で"
-        "失敗する (KB1。`version` が同じ理由で失敗する KB9 と同根)。"
-        "さらに `main()` のサブパーサーが `-o` を消費して `backup()` に渡さ"
-        "ないため、付与を止めても出力先が無視される。"
-        " Repro: `main(['backup', '-o', PATH])`"
-        " (`paper-manager backup -o PATH`)。"
-        "本来は PATH にバックアップ zip が作られ、終了コード 0 で終了する"
-        " (要件 13.1)"
-    ),
-)
+def _assert_streamlit_untouched(calls: StreamlitCalls) -> None:
+    """Streamlit の起動関数が一度も呼ばれていないことを確かめる."""
+    assert calls.run == [], f"main_run calls: {calls.run}"
+    assert calls.version == [], f"main_version calls: {calls.version}"
+
+
+@pytest.mark.parametrize("flag", ["-o", "--output"])
 @pytest.mark.usefixtures("no_new_repository_zip")
 def test_backup_command_creates_the_zip_at_the_output_path(
+    flag: str,
     tmp_path: Path,
     sample_data: SampleData,
+    data_paths: DataPaths,
+    streamlit_calls: StreamlitCalls,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``main(["backup", "-o", PATH])`` で PATH にバックアップが作られる (KB1)."""
+    """``main(["backup", "-o", PATH])`` で PATH にバックアップが作られる."""
     output = tmp_path / "out" / "backup.zip"
     output.parent.mkdir()
+    list_bytes = data_paths.list_file.read_bytes()
+    tree_before = _snapshot_tree(data_paths.root)
 
-    code = _main_exit_code(["backup", "-o", str(output)])
+    code = _main_exit_code(["backup", flag, str(output)])
 
     assert code in (0, None), f"exit code {code}: {capsys.readouterr().err}"
-    assert zipfile.is_zipfile(output)
+    with zipfile.ZipFile(output) as zf:
+        assert zf.read("list.json") == list_bytes
+    # 指定先以外には何も作られず、データも変わらない。
+    assert [path.name for path in tmp_path.iterdir()] == ["out"]
+    assert [path.name for path in output.parent.iterdir()] == [output.name]
+    assert _snapshot_tree(data_paths.root) == tree_before
+    _assert_streamlit_untouched(streamlit_calls)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BUG: `main()` が全サブコマンドに"
-        " `--client.showSidebarNavigation false` を付与するため、"
-        "`restore` が `unrecognized arguments` として拒否し終了コード 2 で"
-        "失敗する (KB1。`version` が同じ理由で失敗する KB9 と同根)。"
-        "さらに `main()` のサブパーサーが `backup_file` と `--force` を消費"
-        "して `restore()` に渡さないため、付与を止めても必須の"
-        " `backup_file` が足りずに失敗する。"
-        " Repro: `main(['restore', PATH, '--force'])`"
-        " (`paper-manager restore PATH --force`)。"
-        "本来は PATH のバックアップからデータが復元され、終了コード 0 で"
-        "終了する (要件 13.1)"
-    ),
-)
-def test_restore_command_restores_the_data(
-    backed_up: BackedUp,
-    data_paths: DataPaths,
+@pytest.mark.usefixtures("no_new_repository_zip")
+def test_backup_command_without_output_creates_a_timestamped_zip_in_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sample_data: SampleData,
+    streamlit_calls: StreamlitCalls,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``main(["restore", PATH, "--force"])`` でデータが復元される (KB1)."""
-    _empty_dir(data_paths.root)
+    """``main(["backup"])`` は、作業ディレクトリに日時入りの名前で作る."""
 
-    code = _main_exit_code(["restore", str(backed_up.zip_path), "--force"])
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2024, 1, 2, 3, 4, 5)
+
+    monkeypatch.setattr(cli_main, "datetime", FixedDatetime)
+
+    code = _main_exit_code(["backup"])
+
+    assert code in (0, None), f"exit code {code}: {capsys.readouterr().err}"
+    assert [path.name for path in tmp_path.iterdir()] == [
+        "paper-manager-backup_20240102_030405.zip"
+    ]
+    _assert_streamlit_untouched(streamlit_calls)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param(lambda zip_path: [zip_path, "--force"], id="path-first"),
+        pytest.param(lambda zip_path: ["--force", zip_path], id="force-first"),
+    ],
+)
+def test_restore_command_restores_the_data(
+    arguments: Callable[[str], list[str]],
+    backed_up: BackedUp,
+    data_paths: DataPaths,
+    streamlit_calls: StreamlitCalls,
+    fake_input: Callable[[Optional[str]], list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``main(["restore", PATH, "--force"])`` は確認なしにデータを復元する."""
+    _empty_dir(data_paths.root)
+    fake_input(None)  # 呼ばれると失敗する
+
+    code = _main_exit_code(["restore", *arguments(str(backed_up.zip_path))])
 
     assert code in (0, None), f"exit code {code}: {capsys.readouterr().err}"
     assert _snapshot_tree(data_paths.root) == backed_up.tree
+    _assert_streamlit_untouched(streamlit_calls)
+
+
+@pytest.mark.parametrize("answer", ["yes", "y"])
+def test_restore_command_without_force_restores_after_confirmation(
+    answer: str,
+    backed_up: BackedUp,
+    data_paths: DataPaths,
+    streamlit_calls: StreamlitCalls,
+    fake_input: Callable[[Optional[str]], list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--force`` なしの ``main`` は、確認を 1 回求め、yes なら復元する."""
+    _empty_dir(data_paths.root)
+    prompts = fake_input(answer)
+
+    code = _main_exit_code(["restore", str(backed_up.zip_path)])
+
+    assert code in (0, None), f"exit code {code}: {capsys.readouterr().err}"
+    assert len(prompts) == 1
+    assert _snapshot_tree(data_paths.root) == backed_up.tree
+    _assert_streamlit_untouched(streamlit_calls)
+
+
+@pytest.mark.parametrize("answer", ["no", "", "ok"])
+def test_restore_command_without_force_does_not_restore_without_yes(
+    answer: str,
+    backed_up: BackedUp,
+    data_paths: DataPaths,
+    streamlit_calls: StreamlitCalls,
+    fake_input: Callable[[Optional[str]], list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--force`` なしの ``main`` は、yes 以外では復元せず、確認を求める."""
+    data_paths.list_file.write_bytes(_CHANGED_LIST)
+    tree_before = _snapshot_tree(data_paths.root)
+    prompts = fake_input(answer)
+
+    code = _main_exit_code(["restore", str(backed_up.zip_path)])
+
+    assert code == 0
+    assert len(prompts) == 1
+    assert _snapshot_tree(data_paths.root) == tree_before
+    assert "復元をキャンセルしました" in capsys.readouterr().out
+    _assert_streamlit_untouched(streamlit_calls)
+
+
+# --- backup / restore: 未知の引数は終了コード 2 で、本体を実行しない ---------
+
+_UNRECOGNIZED = [
+    pytest.param(["--unknown"], id="unknown-option"),
+    pytest.param(["--unknown", "value"], id="unknown-option-with-value"),
+    pytest.param(["--unknown=value"], id="unknown-option-with-equals"),
+    pytest.param([_NAV, "false"], id="navigation-default"),
+    pytest.param([f"{_NAV}=false"], id="navigation-default-with-equals"),
+    pytest.param(["stray-positional"], id="stray-positional"),
+]
+
+
+@pytest.fixture
+def backup_not_expected(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """``create_backup_zip`` が呼ばれた時点でテストを失敗させ、記録を返す."""
+    calls: list[object] = []
+
+    def _create_backup_zip(*args: object, **kwargs: object) -> None:
+        calls.append((args, kwargs))
+        pytest.fail("create_backup_zip() was called unexpectedly")
+
+    monkeypatch.setattr(cli_main, "create_backup_zip", _create_backup_zip)
+    return calls
+
+
+@pytest.mark.parametrize("extra", _UNRECOGNIZED)
+@pytest.mark.parametrize("with_output", [True, False], ids=["output", "bare"])
+def test_backup_command_rejects_unrecognized_arguments(
+    extra: list[str],
+    with_output: bool,
+    tmp_path: Path,
+    sample_data: SampleData,
+    backup_not_expected: list[object],
+    streamlit_calls: StreamlitCalls,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """未知の引数が残れば、終了コード 2 で終了し、何も作らない."""
+    output = ["-o", str(tmp_path / "must-not-exist.zip")]
+
+    code = _main_exit_code(
+        ["backup", *(output if with_output else []), *extra]
+    )
+
+    assert code == 2
+    assert backup_not_expected == []
+    assert list(tmp_path.iterdir()) == []
+    assert "unrecognized arguments" in capsys.readouterr().err
+    _assert_streamlit_untouched(streamlit_calls)
+
+
+@pytest.mark.parametrize("extra", _UNRECOGNIZED)
+@pytest.mark.parametrize("force", [True, False], ids=["force", "confirm"])
+def test_restore_command_rejects_unrecognized_arguments(
+    extra: list[str],
+    force: bool,
+    backed_up: BackedUp,
+    data_paths: DataPaths,
+    fake_input: Callable[[Optional[str]], list[str]],
+    fake_restore: Callable[[RestoreOutcome], list[tuple[object, object]]],
+    streamlit_calls: StreamlitCalls,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """未知の引数が残れば、確認も復元もせず、終了コード 2 で終了する."""
+    data_paths.list_file.write_bytes(_CHANGED_LIST)
+    tree_before = _snapshot_tree(data_paths.root)
+    fake_input(None)  # 呼ばれると失敗する
+    fake_restore(None)  # 呼ばれると失敗する
+    force_flag = ["--force"] if force else []
+
+    code = _main_exit_code(
+        ["restore", str(backed_up.zip_path), *force_flag, *extra]
+    )
+
+    assert code == 2
+    assert _snapshot_tree(data_paths.root) == tree_before
+    assert "unrecognized arguments" in capsys.readouterr().err
+    _assert_streamlit_untouched(streamlit_calls)
+
+
+def test_restore_command_without_a_backup_file_exits_with_2(
+    data_paths: DataPaths,
+    sample_data: SampleData,
+    fake_input: Callable[[Optional[str]], list[str]],
+    fake_restore: Callable[[RestoreOutcome], list[tuple[object, object]]],
+) -> None:
+    """バックアップのファイルを指定しなければ、終了コード 2 で終了する."""
+    fake_input(None)
+    fake_restore(None)
+    tree_before = _snapshot_tree(data_paths.root)
+
+    assert _main_exit_code(["restore", "--force"]) == 2
+    assert _snapshot_tree(data_paths.root) == tree_before
+
+
+@pytest.mark.parametrize("extra", _UNRECOGNIZED)
+def test_backup_function_rejects_unrecognized_arguments(
+    extra: list[str],
+    tmp_path: Path,
+    sample_data: SampleData,
+    backup_not_expected: list[object],
+) -> None:
+    """引数のリストを受け取る ``backup`` も、未知の引数を終了コード 2 で拒否する."""
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main.backup(["-o", str(tmp_path / "must-not-exist.zip"), *extra])
+
+    assert excinfo.value.code == 2
+    assert backup_not_expected == []
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("extra", _UNRECOGNIZED)
+def test_restore_function_rejects_unrecognized_arguments(
+    extra: list[str],
+    backed_up: BackedUp,
+    data_paths: DataPaths,
+    fake_input: Callable[[Optional[str]], list[str]],
+    fake_restore: Callable[[RestoreOutcome], list[tuple[object, object]]],
+) -> None:
+    """引数のリストを受け取る ``restore`` も、未知の引数を拒否する."""
+    data_paths.list_file.write_bytes(_CHANGED_LIST)
+    tree_before = _snapshot_tree(data_paths.root)
+    fake_input(None)
+    fake_restore(None)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main.restore([str(backed_up.zip_path), "--force", *extra])
+
+    assert excinfo.value.code == 2
+    assert _snapshot_tree(data_paths.root) == tree_before
+
+
+# --- restore: 不正なメンバー名を含む zip (要件 9.3) ------------------------
+#
+# 復元の検証は helper の ``restore_from_zip`` が行い (``tests/test_app_backup.py``
+# が網羅する)、CLI はその失敗を 0 以外の終了コードにする。ここでは、CLI から
+# 不正なメンバー名を含む zip を渡しても、データディレクトリが変わらず、
+# 外にも書き込まれないことを確かめる。書き込まれうる場所は、セッション専用の
+# 一時ディレクトリ (データディレクトリの親) と ``tmp_path`` に限る。
+
+_ESCAPED_NAME = "cli-escaped.pdf"
+_ABSOLUTE_NAME = "cli-absolute.pdf"
+
+
+@pytest.fixture
+def escape_targets(data_paths: DataPaths, tmp_path: Path) -> Iterator[Path]:
+    """不正なメンバー名の到達先を返し、テストの後に必ず削除する.
+
+    ``../<名前>`` はデータディレクトリの親 (セッション専用の一時
+    ディレクトリ) に、絶対パスの名前は ``tmp_path`` に到達する。どちらも
+    実データの保存先やリポジトリの外で、まだ存在しないことを確かめる。
+
+    Yields
+    ------
+    Path
+        ``../<名前>`` の到達先 (``data_paths.root.parent`` の下)。絶対
+        パスの名前の到達先は ``tmp_path / "cli-absolute.pdf"``。
+    """
+    escaped = data_paths.root.parent / _ESCAPED_NAME
+    absolute = tmp_path / _ABSOLUTE_NAME
+    check_isolation(escaped.parent, _TEMP_ROOT, _FORBIDDEN_PATHS)
+    check_isolation(absolute.parent, tmp_path, _FORBIDDEN_PATHS)
+    for target in (escaped, absolute):
+        if target.exists() or target.is_symlink():
+            pytest.fail(f"unsafe repro target already exists: {target}")
+    try:
+        yield escaped
+    finally:
+        escaped.unlink(missing_ok=True)
+        absolute.unlink(missing_ok=True)
+
+
+def _write_unsafe_zip(path: Path, member: str) -> Path:
+    """正しい ``list.json`` の後に、不正な名前のメンバーを置いた zip を作る.
+
+    先頭から順に検証して書く実装が、不正なメンバーの前の ``list.json`` を
+    書いてしまうことを検出できるよう、不正なメンバーは最後に置く。
+    ``list.json`` の中身は、復元されれば検出できるよう現在と異なる値にする。
+    """
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("list.json", _CHANGED_LIST)
+        zf.writestr(member, b"%PDF-1.4 unsafe")
+    with zipfile.ZipFile(path) as zf:
+        # 書いた名前が変わっていなければ、再現になる
+        assert zf.namelist()[-1] == member
+    return path
+
+
+@pytest.mark.parametrize("confirm", [False, True], ids=["force", "confirm"])
+@pytest.mark.parametrize("via", ["command", "function"])
+@pytest.mark.parametrize("kind", ["traversal", "absolute"])
+def test_restore_of_a_zip_with_an_unsafe_member_exits_with_1_and_keeps_data(
+    kind: str,
+    via: str,
+    confirm: bool,
+    tmp_path: Path,
+    sample_data: SampleData,
+    data_paths: DataPaths,
+    escape_targets: Path,
+    fake_input: Callable[[Optional[str]], list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """不正なメンバー名を含む zip は、データを変えず、終了コード 1 になる.
+
+    ``--force`` あり・なし (確認入力が yes) の両方で、``main`` を経由する
+    場合と、引数のリストを受け取る ``restore`` を直接呼ぶ場合を確かめる。
+    メッセージには不正な名前が載る。
+    """
+    member = (
+        f"../{_ESCAPED_NAME}"
+        if kind == "traversal"
+        else str(tmp_path / _ABSOLUTE_NAME)
+    )
+    unsafe_zip = _write_unsafe_zip(tmp_path / "unsafe.zip", member)
+    fake_input("y" if confirm else None)
+    arguments = [str(unsafe_zip), *([] if confirm else ["--force"])]
+    tree_before = _snapshot_tree(data_paths.root)
+    assert tree_before  # サンプルデータがあり、変更があれば検出できる
+    assert data_paths.list_file.read_bytes() != _CHANGED_LIST
+
+    if via == "command":
+        code = _main_exit_code(["restore", *arguments])
+    else:
+        with pytest.raises(SystemExit) as excinfo:
+            cli_main.restore(arguments)
+        code = excinfo.value.code
+
+    assert code == 1
+    assert _snapshot_tree(data_paths.root) == tree_before
+    assert not escape_targets.exists()
+    assert not (tmp_path / _ABSOLUTE_NAME).exists()
+    assert member in capsys.readouterr().out
