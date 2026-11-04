@@ -31,6 +31,11 @@ known-bug-fixes spec の要件に対応するテストは、末尾の節にま�
 - Windows のパスの扱いを模した環境 (``windows_like_paths``) で、走査・比較・
   削除が変換後のパスの空間で行われ、混在で誤判定しないこと。PDF ルート自体
   が削除されないこと (要件 1.2)
+- 論文リストページの孤立 PDF の削除ボタン (``AppTest``) が、削除に失敗した
+  パス (表示用) と理由、削除できた件数を画面に出し、失敗があったときは
+  再描画せずにエラーを残すこと。PDF の削除に失敗したときと、PDF は削除でき
+  たが空になったフォルダを削除できなかったときで、文言が異なること
+  (要件 1.4)
 
 削除は ``data_paths.pdf`` (隔離された一時ディレクトリの配下) の中だけで
 行い、実データには触れない。
@@ -52,7 +57,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from conftest import PDF_BYTES, DataPaths, SampleData, write_pdf
+from conftest import (
+    PDF_BYTES,
+    DataPaths,
+    SampleData,
+    run_page,
+    write_pdf,
+)
+from streamlit.testing.v1 import AppTest
 
 from paper_manager.app.helper import _orphan_pdf
 from paper_manager.app.helper._orphan_pdf import (
@@ -1095,3 +1107,196 @@ def test_closest_entry_of_a_legacy_pdf_in_the_pdf_root_when_converted(
     closest, similarity = result
     assert closest is alice
     assert similarity == 1.0
+
+
+# --- known-bug-fixes: 論文リストページの孤立 PDF の削除 (要件 1.4) ------------
+#
+# 孤立 PDF の削除ボタン (``key="delete_orphaned"``) を ``AppTest`` で押す。
+# 削除に成功したときは、件数を出して再描画する (孤立 PDF の警告と削除ボタンが
+# 消える)。失敗があったときは、再描画するとエラーが消えるので、再描画せずに
+# 画面に残す (削除ボタンも残る)。失敗の文言は、PDF の削除に失敗したときと、
+# PDF は削除できたが空になったフォルダを削除できなかったときで分ける。
+
+DELETE_BUTTON_KEY = "delete_orphaned"
+# ``fail_unlink_of`` / ``fail_rmdir_of`` が送出する例外の理由
+UNLINK_REASON = "permission denied (simulated)"
+RMDIR_REASON = "rmdir denied (simulated)"
+# PDF の削除に失敗したときの文言の一部 (空のフォルダの失敗とは異なる)
+PDF_FAILURE_PHRASE = "個の孤立PDFファイルを削除できませんでした"
+# PDF は削除できたが、空になったフォルダを削除できなかったときの文言の一部
+FOLDER_FAILURE_PHRASE = "空になったフォルダ"
+
+
+def orphan_pdf_in(data_paths: DataPaths, label: str) -> Path:
+    """``data_paths.pdf`` の下に、論文に紐づかないフォルダの PDF を作る."""
+    return write_pdf(
+        data_paths.pdf / f"2001 - Orphan {label} - Paper" / "00.pdf"
+    )
+
+
+def push_delete_button(at: AppTest) -> AppTest:
+    """孤立 PDF の削除ボタンを押して、画面を再実行する."""
+    at.button(key=DELETE_BUTTON_KEY).click()
+    return at.run()
+
+
+def error_messages(at: AppTest) -> list[str]:
+    """画面のエラーの本文を、表示された順に返す."""
+    return [e.value for e in at.error]
+
+
+def has_delete_button(at: AppTest) -> bool:
+    """孤立 PDF の削除ボタンが画面にあるか."""
+    return any(b.key == DELETE_BUTTON_KEY for b in at.button)
+
+
+def test_page_deletes_every_orphan_and_redraws_without_errors(
+    sample_data: SampleData, data_paths: DataPaths
+) -> None:
+    """失敗がなければ、孤立 PDF をすべて削除して再描画する.
+
+    再描画された画面には、孤立 PDF の警告も削除ボタンも残らない。
+    紐づく PDF は残る (要件 1.4 の修正で、成功時の挙動を変えない)。
+    """
+    second = orphan_pdf_in(data_paths, "A")
+    linked = sample_data.paper_list[sample_data.with_pdf_key].get_pdf_files()
+    at = run_page(None)
+    assert not at.exception
+    assert has_delete_button(at)  # 前提
+
+    at = push_delete_button(at)
+
+    assert not at.exception
+    assert error_messages(at) == []
+    assert not sample_data.orphan_pdf.exists()
+    assert not second.exists()
+    assert all(path.is_file() for path in linked)
+    assert not has_delete_button(at)
+
+
+def test_page_reports_the_path_reason_and_counts_of_failed_orphans(
+    sample_data: SampleData,
+    data_paths: DataPaths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """削除できなかった孤立 PDF のパスと理由、件数を出し、再描画しない.
+
+    2 件が失敗し、1 件は削除できる。失敗したファイルは残り、エラーは
+    再描画で消えずに残る (削除ボタンも残る)。
+    """
+    failing = [sample_data.orphan_pdf, orphan_pdf_in(data_paths, "A")]
+    deleted = orphan_pdf_in(data_paths, "B")
+    for path in failing:
+        fail_unlink_of(monkeypatch, path)
+    at = run_page(None)
+    assert not at.exception
+
+    at = push_delete_button(at)
+
+    assert not at.exception
+    (message,) = error_messages(at)
+    for path in failing:
+        assert to_display_path(path) in message
+        assert path.read_bytes().startswith(PDF_BYTES)
+    assert message.count(UNLINK_REASON) == 2
+    assert f"2{PDF_FAILURE_PHRASE}" in message
+    assert "1個は削除しました" in message  # 削除できた件数
+    assert FOLDER_FAILURE_PHRASE not in message
+    assert not deleted.exists()
+    assert has_delete_button(at)  # 再描画されていない
+
+
+def test_page_tells_a_leftover_folder_apart_from_a_failed_pdf(
+    sample_data: SampleData,
+    data_paths: DataPaths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PDF の削除の失敗と、空になったフォルダの削除の失敗は、文言が異なる.
+
+    ``failures`` には、PDF の削除に失敗した PDF のパスと、PDF は削除できた
+    が空になった親フォルダを削除できなかったときのフォルダのパスの、どちらも
+    入る。後者を「PDF の削除に失敗」と表示しない。どちらも理由と表示用の
+    パスを出し、再描画しない。
+    """
+    failing_pdf = sample_data.orphan_pdf
+    leftover_pdf = orphan_pdf_in(data_paths, "A")
+    leftover_folder = leftover_pdf.parent
+    fail_unlink_of(monkeypatch, failing_pdf)
+    fail_rmdir_of(monkeypatch, leftover_folder)
+    at = run_page(None)
+    assert not at.exception
+
+    at = push_delete_button(at)
+
+    assert not at.exception
+    messages = error_messages(at)
+    assert len(messages) == 2
+    (pdf_message,) = [m for m in messages if PDF_FAILURE_PHRASE in m]
+    (folder_message,) = [m for m in messages if FOLDER_FAILURE_PHRASE in m]
+    assert to_display_path(failing_pdf) in pdf_message
+    assert UNLINK_REASON in pdf_message
+    assert to_display_path(leftover_folder) in folder_message
+    assert RMDIR_REASON in folder_message
+    # フォルダの失敗は PDF の失敗として数えない。PDF は削除されている
+    assert to_display_path(leftover_folder) not in pdf_message
+    assert PDF_FAILURE_PHRASE not in folder_message
+    assert "1個は削除しました" in pdf_message
+    assert not leftover_pdf.exists()
+    assert leftover_folder.is_dir()
+    assert failing_pdf.is_file()
+    assert has_delete_button(at)
+
+
+def test_page_reports_only_the_folder_when_every_pdf_was_deleted(
+    sample_data: SampleData, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PDF はすべて削除できて、フォルダだけ残ったときは、PDF の失敗を出さない."""
+    folder = sample_data.orphan_pdf.parent
+    fail_rmdir_of(monkeypatch, folder)
+    at = run_page(None)
+    assert not at.exception
+
+    at = push_delete_button(at)
+
+    assert not at.exception
+    (message,) = error_messages(at)
+    assert FOLDER_FAILURE_PHRASE in message
+    assert PDF_FAILURE_PHRASE not in message
+    assert to_display_path(folder) in message
+    assert RMDIR_REASON in message
+    assert "1個" in message  # 削除した PDF の件数
+    assert not sample_data.orphan_pdf.exists()
+
+
+@pytest.mark.usefixtures("windows_like_paths")
+def test_page_shows_display_paths_for_orphans_in_the_converted_space(
+    sample_data: SampleData,
+    data_paths: DataPaths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """変換後のパスの孤立 PDF でも、画面に変換後の prefix を出さない.
+
+    ``windows_like_paths`` では、変換後のパスが ``//`` で始まる。失敗の
+    エラーには ``to_display_path`` で戻したパスだけを出し、詳細の一覧の
+    相対パス (``relative_to``) も変換後のパスで計算できる。
+    """
+    assert to_fs_path(data_paths.pdf) != data_paths.pdf  # 前提: 別名が効く
+    failing = to_fs_path(sample_data.orphan_pdf)
+    legacy = write_pdf(data_paths.pdf / ORPHAN_LEGACY_NAME)
+    fail_unlink_of(monkeypatch, failing)
+    at = run_page(None)
+    assert not at.exception
+
+    texts = [m.value for m in at.markdown] + [t.value for t in at.text]
+    listed = [t for t in texts if "Carol Orphan" in t or legacy.name in t]
+    assert len(listed) == 2  # 前提: 孤立 PDF が詳細の一覧に出ている
+    assert not any(str(to_fs_path(data_paths.pdf)) in t for t in listed)
+
+    at = push_delete_button(at)
+
+    assert not at.exception
+    (message,) = error_messages(at)
+    assert to_display_path(failing) in message
+    assert str(failing) not in message
+    assert UNLINK_REASON in message
+    assert not legacy.exists()

@@ -37,10 +37,11 @@ from pathlib import Path
 from typing import Any, Union
 
 import pytest
+from bibtexparser.bibdatabase import BibDatabase
+from bibtexparser.bwriter import BibTexWriter
 from pybtex.database import Person
 from pybtex.database.input import bibtex
 
-from paper_manager.app._list import _render_citation
 from paper_manager.bib import format_person, load_bib
 from paper_manager.entry import Entry
 
@@ -689,7 +690,9 @@ def test_name_parts_survive_the_export_reparse(
 ) -> None:
     # エクスポート (詳細の引用情報) は、論文の BibTeX を書き出してから
     # pybtex で解析し直す。読み込んだ人名の部分 (特に姓と名、接尾辞) が
-    # 再解析で入れ替わらない。
+    # 再解析で入れ替わらない。この経路 (BibTexWriter → pybtex) は、ドメイン層
+    # のテストの中で組む (論文リストページの関数には依存しない。ページの
+    # 実際の経路は tests/test_pages_smoke.py で AppTest により確かめる)。
     other = "Alice Jones"
     names = [name, other] if position == "first-author" else [other, name]
     bib = (
@@ -701,7 +704,9 @@ def test_name_parts_survive_the_export_reparse(
     # 固定の値にする。
     entry["ID"] = "k"
 
-    _, bibdata = _render_citation(entry)
+    database = BibDatabase()
+    database.entries = [entry]
+    bibdata = bibtex.Parser().parse_string(BibTexWriter().write(database))
 
     persons = bibdata.entries["k"].persons["author"]
     assert [name_parts(person) for person in persons] == [
