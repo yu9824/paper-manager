@@ -343,6 +343,45 @@ def _isolate_each_test(
         yield
 
 
+@pytest.fixture
+def caplog(
+    caplog: pytest.LogCaptureFixture,
+) -> Iterator[pytest.LogCaptureFixture]:
+    """ライブラリのログも確実に記録する ``caplog``.
+
+    ライブラリのルートロガー (``paper_manager``) は ``propagate = False``
+    なので、pytest の標準の ``caplog`` はルートロガーにだけハンドラを付ける
+    版 (pytest 8.4 など。Python 3.9 の CI で入る版) では、ライブラリのログを
+    記録できない。pytest 9 以降は ``propagate = False`` のロガーにもハン
+    ドラを付けるため、手元では記録できて版によって結果が変わる。
+
+    このフィクスチャは、記録に使うハンドラ (``caplog.handler``) をライブラリの
+    ルートロガーにも付けて、どの版でも ``caplog.records`` と ``caplog.text`` に
+    ライブラリのログが入るようにする。すでに付いているとき (pytest 9 以降)
+    や、ログがルートロガーへ伝播するときは、何もしない (同じ記録が重複しない)。
+    テストの後に、付けたハンドラを外す。
+
+    Parameters
+    ----------
+    caplog : pytest.LogCaptureFixture
+        pytest 標準の ``caplog``。
+
+    Yields
+    ------
+    pytest.LogCaptureFixture
+        ライブラリのログも記録する ``caplog``。
+    """
+    logger = get_library_root_logger()
+    attach = not logger.propagate and caplog.handler not in logger.handlers
+    if attach:
+        logger.addHandler(caplog.handler)
+    try:
+        yield caplog
+    finally:
+        if attach:
+            logger.removeHandler(caplog.handler)
+
+
 # --- TestDataFactory ------------------------------------------------------
 # エントリ・PDF・サンプルデータを、隔離されたデータディレクトリに作る。
 
