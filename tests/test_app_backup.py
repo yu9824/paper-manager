@@ -25,6 +25,18 @@
   こと。変換がデータディレクトリを別のディレクトリへ写す状態での読み書き
   先と、Windows のパスの扱いを模した環境 (``windows_like_paths``) での
   zip のメンバー名 (prefix が入らない) と復元 (known-bug-fixes の要件 1.2)
+- 画面からの復元 (``pages/_restore.py``) が、共通の復元処理を通ること
+  (known-bug-fixes の要件 9.3, 9.1, 9.2, 1.2): 不正なメンバー名を含む zip は
+  エラーを表示して中止し、データディレクトリの中身もその外も変わらない。
+  正当なバックアップ (独立に作った zip と ``create_backup_zip`` の zip) は
+  復元され、セッションの論文リストも更新される。無効な zip はプレビューの
+  段階でエラーになる。復元先は変換後のパスである
+- バックアップのページ (``pages/_backup.py``) の PDF の件数が、変換後の
+  パス (``to_fs_path(DIRPATH_PDF)``) から数えられること (known-bug-fixes の
+  要件 1.2)
+
+画面のテストは、本物のページのコードを ``conftest.run_page`` で実行する
+(ファイルアップロード欄だけを ``fake_file_uploader`` で差し替える)。
 
 往復の検証 (要件 6.4) の期待値 (サンプルのバイト列と相対パス) は、バック
 アップを作る前にディスクから別に記録し、復元結果同士の比較にはしない。
@@ -39,21 +51,27 @@ import os
 import re
 import shutil
 import zipfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import NamedTuple, Optional, Union
 
 import pytest
+import streamlit as st
 from conftest import (
     _FORBIDDEN_PATHS,
     _TEMP_ROOT,
     PDF_BYTES,
     DataPaths,
+    FakeUpload,
     SampleData,
+    Uploads,
     check_isolation,
+    run_page,
+    write_pdf,
 )
+from streamlit.testing.v1 import AppTest
 
 import paper_manager.helper._path as _path_adapter
 from paper_manager import __version__
@@ -65,6 +83,7 @@ from paper_manager.app.helper._backup import (
     restore_from_zip,
 )
 from paper_manager.entry import PaperList
+from paper_manager.entry._entry import KEY_PAPER_LIST
 from paper_manager.helper import to_fs_path
 
 VERSION_NAME = "version.json"
@@ -1326,3 +1345,428 @@ def test_restore_aborts_on_unsafe_member_under_windows_like_paths(
     assert success is False
     assert not escaped_target.exists()
     assert snapshot_tree(data_paths.root.parent) == tree_before
+
+
+# --- 要件 9.3, 9.1, 9.2, 1.2: 画面からの復元 (RestorePage) -----------------
+# 本物の復元ページのコードを ``run_page`` で実行する. ファイルアップロード欄
+# だけを ``fake_file_uploader`` が、選んだバックアップを返す処理に差し替える
+# (Streamlit 1.50 の AppTest は、アップロード欄を直接操作できない).
+# 復元が成功するとページは ``st.rerun()`` するが、AppTest は再実行で画面を
+# 作り直すため、成功のメッセージが残らない. そのため ``st.rerun`` は、呼ばれた
+# 回数を記録するだけの処理に差し替える (中止のときに再描画すると、エラーが
+# 画面から消えるので、中止のテストでは呼ばれないことを確かめる).
+
+RESTORE_PAGE = "pages/_restore.py"
+BACKUP_PAGE = "pages/_backup.py"
+# ``st.file_uploader`` のラベルの接頭辞 (``fake_file_uploader`` の照合に使う)
+RESTORE_UPLOADER_LABEL = "バックアップファイル"
+RESTORE_BUTTON_LABEL = "復元を実行"
+PDF_COUNT_LABEL = "PDFファイル数"
+
+# 独立に作る正当なバックアップの中身. 論文リストは ``PaperList`` を通さずに
+# JSON として直接書く
+BACKUP_VERSION_INFO = {
+    "version": "0.0.0-test",
+    "backup_date": "2020-01-02T03:04:05",
+}
+RESTORED_KEY = "Doe2019_1"
+RESTORED_LIST = json.dumps(
+    {
+        RESTORED_KEY: {
+            "ENTRYTYPE": "article",
+            "ID": RESTORED_KEY,
+            "author": "Jane Doe",
+            "title": "画面から復元された論文",
+            "journal": "Journal of Restoring",
+            "year": "2019",
+        }
+    },
+    ensure_ascii=False,
+    indent=4,
+).encode("utf-8")
+RESTORED_CONFIG = b'{"proxy": {"http": "http://restored.example.com:8080"}}\n'
+RESTORED_PDF_NAME = "pdf/2019 - Jane Doe - 画面から復元された論文/00.pdf"
+RESTORED_PDF = PDF_BYTES + b"%restored from the screen\n"
+
+# 画面から復元しようとして中止される、不正なメンバー名. ``<sentinel>`` は、
+# データディレクトリの外の PDF の絶対パスに置き換える
+SCREEN_UNSAFE_MEMBERS = [
+    pytest.param("../outside.pdf", id="dotdot-leading"),
+    pytest.param("pdf/../../outside.pdf", id="dotdot-from-pdf"),
+    pytest.param("pdf\\..\\..\\outside.pdf", id="backslash-dotdot"),
+    pytest.param("<sentinel>", id="absolute-to-sentinel"),
+    pytest.param("C:/outside.pdf", id="drive-slash"),
+    pytest.param("pdf/C:x.pdf", id="drive-in-component"),
+]
+
+UploaderInstaller = Callable[[Mapping[str, Uploads]], None]
+
+
+class UploadedBackup(FakeUpload):
+    """アップロードされたバックアップ. ``UploadedFile`` と同じく ``size`` を持つ."""
+
+    @property
+    def size(self) -> int:
+        """中身のバイト数."""
+        return len(self.getvalue())
+
+
+@pytest.fixture
+def rerun_calls(monkeypatch: pytest.MonkeyPatch) -> list[None]:
+    """``st.rerun`` が呼ばれた回数を記録する (実際には再実行しない)."""
+    calls: list[None] = []
+    monkeypatch.setattr(st, "rerun", lambda *a, **k: calls.append(None))
+    return calls
+
+
+@pytest.fixture
+def outside_cleanup(data_paths: DataPaths) -> Iterator[None]:
+    """データディレクトリの外 (親) に増えたものを、テストの後に消す.
+
+    正しく中止すれば何も増えない. 万一外へ書き込む実装でも、後のテストには
+    残さない (消す対象は、セッション専用の一時ディレクトリの直下だけ).
+    """
+    outside = data_paths.root.parent
+    check_isolation(outside, _TEMP_ROOT, _FORBIDDEN_PATHS)
+    before = set(outside.iterdir())
+    yield
+    for path in set(outside.iterdir()) - before:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+
+def open_restore_page(
+    fake_file_uploader: UploaderInstaller, backup: bytes
+) -> AppTest:
+    """``backup`` を選んだ状態の復元ページを開く (ボタンはまだ押さない).
+
+    Parameters
+    ----------
+    fake_file_uploader : UploaderInstaller
+        ``fake_file_uploader`` fixture.
+    backup : bytes
+        アップロードされたファイルの中身.
+
+    Returns
+    -------
+    AppTest
+        1 回実行済みの AppTest. ページは例外なく実行されている.
+    """
+    upload = UploadedBackup("paper-manager-backup_test.zip", backup)
+    fake_file_uploader({RESTORE_UPLOADER_LABEL: upload})
+    at = run_page(RESTORE_PAGE)
+    assert not at.exception, [e.value for e in at.exception]
+    return at
+
+
+def click_restore(at: AppTest) -> AppTest:
+    """「復元を実行」を押して、ページを再実行する.
+
+    Returns
+    -------
+    AppTest
+        再実行後の AppTest. ページは例外なく実行されている.
+    """
+    [button] = [b for b in at.button if b.label == RESTORE_BUTTON_LABEL]
+    at = button.click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    return at
+
+
+def restore_on_page(
+    fake_file_uploader: UploaderInstaller, backup: bytes
+) -> AppTest:
+    """``backup`` を選んで「復元を実行」を押した後の復元ページを返す."""
+    return click_restore(open_restore_page(fake_file_uploader, backup))
+
+
+@pytest.mark.parametrize("member", SCREEN_UNSAFE_MEMBERS)
+def test_restore_page_aborts_on_unsafe_member_and_changes_nothing(
+    member: str,
+    tmp_path: Path,
+    fake_file_uploader: UploaderInstaller,
+    rerun_calls: list[None],
+    outside_cleanup: None,
+    sample_data: SampleData,
+    data_paths: DataPaths,
+    sentinel: Path,
+) -> None:
+    """不正なメンバーを含む zip は、画面からでも何も書かずに中止する.
+
+    エラーが不正な名前を挙げて表示され、成功は表示されない. 論文リスト・
+    設定・PDF を含むデータディレクトリ (退避ファイルも増えない) も、その外
+    (親ディレクトリ) も変わらない (要件 9.1, 9.2, 9.3).
+
+    不正なメンバーは最後に置く (先頭から順に書く実装は、その前の
+    ``list.json`` などを書いてしまうため).
+    """
+    name = member.replace("<sentinel>", str(sentinel))
+    reached = Path(os.path.normpath(data_paths.root / name))
+    assert reached.is_relative_to(_TEMP_ROOT), (
+        f"unsafe repro: {name} reaches {reached}"
+    )
+    backup = write_zip(
+        tmp_path / "unsafe.zip", {**VALID_BACKUP_MEMBERS, name: PDF_BYTES}
+    ).read_bytes()
+    outside = data_paths.root.parent
+    tree_before = snapshot_tree(outside)
+    assert data_paths.list_file.is_file()  # 書き換えられれば検出できる
+
+    at = restore_on_page(fake_file_uploader, backup)
+
+    assert snapshot_tree(outside) == tree_before
+    assert sentinel.read_bytes() == SENTINEL_BYTES
+    assert not data_paths.list_file.with_suffix(".json.backup").exists()
+    assert not data_paths.config_file.with_suffix(".json.backup").exists()
+    [error] = at.error
+    assert name in error.value
+    assert error.value != BAD_ZIP_MESSAGE
+    assert not at.success
+    assert rerun_calls == []
+
+
+@pytest.mark.usefixtures("rerun_calls")
+def test_restore_page_restores_an_independently_built_backup(
+    tmp_path: Path,
+    fake_file_uploader: UploaderInstaller,
+    sample_data: SampleData,
+    snapshot: Snapshot,
+    data_paths: DataPaths,
+) -> None:
+    """独立に作った正当なバックアップが復元され、論文リストが更新される.
+
+    論文リスト・設定・PDF が書かれ、既存の論文リストと設定は
+    ``.json.backup`` へ退避され、既存の PDF は残る. 成功が表示され、
+    セッションの論文リストは復元したものに置き換わる (要件 9.3).
+    """
+    backup = write_zip(
+        tmp_path / "independent.zip",
+        {
+            VERSION_NAME: json.dumps(BACKUP_VERSION_INFO).encode("utf-8"),
+            LIST_NAME: RESTORED_LIST,
+            CONFIG_NAME: RESTORED_CONFIG,
+            RESTORED_PDF_NAME: RESTORED_PDF,
+        },
+    ).read_bytes()
+    at = open_restore_page(fake_file_uploader, backup)
+    # 復元の前は、サンプルの論文リストがセッションにある
+    assert set(at.session_state[KEY_PAPER_LIST]) == set(
+        sample_data.paper_list.keys()
+    )
+
+    at = click_restore(at)
+
+    assert not at.error
+    [success] = at.success
+    assert re.search(r"PDF\D*1(?!\d)", success.value), success.value
+    assert data_paths.list_file.read_bytes() == RESTORED_LIST
+    assert data_paths.config_file.read_bytes() == RESTORED_CONFIG
+    assert read_pdfs(data_paths.root) == {
+        **snapshot.pdfs,
+        RESTORED_PDF_NAME: RESTORED_PDF,
+    }
+    backups = data_paths.root
+    assert (backups / "list.json.backup").read_bytes() == snapshot.list_json
+    assert (backups / "config.json.backup").read_bytes() == (
+        snapshot.config_json
+    )
+    assert set(at.session_state[KEY_PAPER_LIST]) == {RESTORED_KEY}
+
+
+@pytest.mark.usefixtures("rerun_calls")
+def test_restore_page_restores_a_backup_made_by_create_backup_zip(
+    fake_file_uploader: UploaderInstaller,
+    sample_data: SampleData,
+    snapshot: Snapshot,
+    data_paths: DataPaths,
+) -> None:
+    """``create_backup_zip`` で作ったバックアップが、画面から元に戻る.
+
+    バックアップの後でデータを別の内容に変えておき、復元すると、論文リスト・
+    設定・PDF がバックアップ時の中身に戻り、変えた内容は ``.json.backup``
+    に残る. セッションの論文リストも、バックアップ時のものになる
+    (要件 9.3).
+    """
+    backup = create_backup_zip().getvalue()
+    shutil.rmtree(data_paths.pdf)
+    data_paths.list_file.write_bytes(RESTORED_LIST)
+    data_paths.config_file.write_bytes(OLD_CONFIG)
+    at = open_restore_page(fake_file_uploader, backup)
+    assert set(at.session_state[KEY_PAPER_LIST]) == {RESTORED_KEY}
+
+    at = click_restore(at)
+
+    assert not at.error
+    [success] = at.success
+    assert re.search(r"PDF\D*3(?!\d)", success.value), success.value
+    assert data_paths.list_file.read_bytes() == snapshot.list_json
+    assert data_paths.config_file.read_bytes() == snapshot.config_json
+    assert len(snapshot.pdfs) == 3
+    assert read_pdfs(data_paths.root) == snapshot.pdfs
+    assert (data_paths.root / "list.json.backup").read_bytes() == (
+        RESTORED_LIST
+    )
+    assert (data_paths.root / "config.json.backup").read_bytes() == (
+        OLD_CONFIG
+    )
+    assert set(at.session_state[KEY_PAPER_LIST]) == set(
+        sample_data.paper_list.keys()
+    )
+
+
+def test_restore_page_previews_the_members_and_the_version_info(
+    tmp_path: Path,
+    fake_file_uploader: UploaderInstaller,
+    sample_data: SampleData,
+    data_paths: DataPaths,
+) -> None:
+    """選んだだけでは復元せず、zip の内容と ``version.json`` を表示する."""
+    members = {
+        VERSION_NAME: json.dumps(BACKUP_VERSION_INFO).encode("utf-8"),
+        LIST_NAME: RESTORED_LIST,
+        RESTORED_PDF_NAME: RESTORED_PDF,
+    }
+    backup = write_zip(tmp_path / "preview.zip", members).read_bytes()
+    tree_before = snapshot_tree(data_paths.root)
+
+    at = open_restore_page(fake_file_uploader, backup)
+
+    [listing] = at.code
+    assert set(listing.value.splitlines()) == set(members)
+    [version] = at.json
+    assert json.loads(version.value) == BACKUP_VERSION_INFO
+    assert [b.label for b in at.button] == [RESTORE_BUTTON_LABEL]
+    assert not at.error
+    assert snapshot_tree(data_paths.root) == tree_before
+
+
+@pytest.mark.parametrize("kind", ["garbage", "empty", "truncated"])
+def test_restore_page_reports_an_invalid_zip_at_the_preview(
+    kind: str,
+    fake_file_uploader: UploaderInstaller,
+    rerun_calls: list[None],
+    sample_data: SampleData,
+    data_paths: DataPaths,
+) -> None:
+    """zip として不正なファイルは、プレビューの段階でエラーになる.
+
+    復元ボタンは出ず、データは変わらない (要件 6.7)."""
+    valid = create_backup_zip().getvalue()
+    content = {
+        "garbage": b"this is not a zip file at all",
+        "empty": b"",
+        "truncated": valid[: len(valid) // 2],
+    }[kind]
+    tree_before = snapshot_tree(data_paths.root)
+
+    at = open_restore_page(fake_file_uploader, content)
+
+    assert [e.value for e in at.error] == [BAD_ZIP_MESSAGE]
+    assert not at.button
+    assert not at.success
+    assert rerun_calls == []
+    assert snapshot_tree(data_paths.root) == tree_before
+
+
+@pytest.mark.usefixtures("rerun_calls")
+def test_restore_page_writes_into_the_converted_data_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_file_uploader: UploaderInstaller,
+    sample_data: SampleData,
+    snapshot: Snapshot,
+    data_paths: DataPaths,
+) -> None:
+    """画面からの復元は、変換後のパスの下に書き、既存の JSON を退避する.
+
+    変換前のパスの下には何も書かれない (要件 1.2, 9.3).
+    """
+    backup = create_backup_zip().getvalue()
+    empty_dir(data_paths.root)
+    redirected = tmp_path / "converted"
+    redirected.mkdir()
+    (redirected / LIST_NAME).write_bytes(OLD_LIST)
+    (redirected / CONFIG_NAME).write_bytes(OLD_CONFIG)
+    redirect_data_dir(monkeypatch, data_paths.root, redirected)
+
+    at = restore_on_page(fake_file_uploader, backup)
+
+    assert not at.error
+    assert len(at.success) == 1
+    assert (redirected / LIST_NAME).read_bytes() == snapshot.list_json
+    assert (redirected / CONFIG_NAME).read_bytes() == snapshot.config_json
+    assert (redirected / "list.json.backup").read_bytes() == OLD_LIST
+    assert (redirected / "config.json.backup").read_bytes() == OLD_CONFIG
+    assert read_pdfs(redirected) == snapshot.pdfs
+    # 変換前のパスの下には、ファイルが 1 つも書かれない (``PaperList`` は
+    # 作るたびに空の PDF ルートを作るので、ディレクトリは数えない)
+    assert [p for p in data_paths.root.rglob("*") if p.is_file()] == []
+
+
+# --- 要件 1.2: バックアップのページの PDF の件数 (BackupPage) ---------------
+
+
+def shown_pdf_count(at: AppTest) -> str:
+    """バックアップのページに表示された PDF の件数を返す."""
+    assert not at.exception, [e.value for e in at.exception]
+    [metric] = [m for m in at.metric if m.label == PDF_COUNT_LABEL]
+    return metric.value
+
+
+def test_backup_page_shows_the_number_of_pdfs(
+    sample_data: SampleData, snapshot: Snapshot
+) -> None:
+    """バックアップのページは、データディレクトリの PDF の件数を表示する."""
+    assert len(snapshot.pdfs) == 3
+
+    at = run_page(BACKUP_PAGE)
+
+    assert shown_pdf_count(at) == "3"
+
+
+def test_backup_page_shows_zero_without_a_pdf_dir(
+    data_paths: DataPaths,
+) -> None:
+    """PDF のディレクトリがなければ、PDF の件数は 0 と表示する."""
+    assert not data_paths.pdf.exists()
+
+    at = run_page(BACKUP_PAGE)
+
+    assert shown_pdf_count(at) == "0"
+
+
+def test_backup_page_counts_pdfs_under_windows_like_paths(
+    windows_like_paths: None, sample_data: SampleData, snapshot: Snapshot
+) -> None:
+    """Windows のパスの扱いを模しても、PDF の件数は同じ (要件 1.2)."""
+    at = run_page(BACKUP_PAGE)
+
+    assert shown_pdf_count(at) == str(len(snapshot.pdfs))
+
+
+def test_backup_page_counts_pdfs_in_the_converted_pdf_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, data_paths: DataPaths
+) -> None:
+    """PDF の件数は、変換後のパスの下の PDF から数える (要件 1.2).
+
+    変換前の PDF ルートは PDF のない空のディレクトリで、変換後のパスの下
+    にだけ PDF がある. PDF 以外のファイルは数えない.
+    """
+    redirected = tmp_path / "converted"
+    names = [
+        "pdf/2020 - A - One/00.pdf",
+        "pdf/2020 - A - One/01.pdf",
+        "pdf/2021 - B - Two/00.pdf",
+    ]
+    for name in names:
+        write_pdf(redirected / name)
+    (redirected / "pdf/2020 - A - One/notes.txt").write_text("not a pdf")
+    data_paths.pdf.mkdir(exist_ok=True)
+    assert list(data_paths.pdf.rglob("*")) == []
+    redirect_data_dir(monkeypatch, data_paths.root, redirected)
+
+    at = run_page(BACKUP_PAGE)
+
+    assert shown_pdf_count(at) == str(len(names))

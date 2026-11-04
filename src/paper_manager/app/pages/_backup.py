@@ -13,6 +13,7 @@ from paper_manager.app.helper import config_page
 from paper_manager.app.helper._backup import (
     create_backup_zip as _create_backup_zip,
 )
+from paper_manager.helper import to_fs_path
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
@@ -76,8 +77,10 @@ def main() -> None:
             st.metric("config.json", "存在しません")
 
     with col3:
-        if DIRPATH_PDF.is_dir():
-            pdf_count = len(list(DIRPATH_PDF.rglob("*.pdf")))
+        # ファイル操作は変換後のパス (Windows では拡張長のパス) を起点にする
+        pdf_root = to_fs_path(DIRPATH_PDF)
+        if pdf_root.is_dir():
+            pdf_count = len(list(pdf_root.rglob("*.pdf")))
             st.metric("PDFファイル数", pdf_count)
         else:
             st.metric("PDFファイル数", 0)
