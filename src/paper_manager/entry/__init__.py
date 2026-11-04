@@ -11,6 +11,10 @@
         ファイルなし・壊れている) とともに返す (PaperListLoad)
     backup_broken_paper_list: 壊れたファイルを日時入りの別名へ複製する
 
+PDF の警告の記録:
+    KEY_SHOWN_PDF_WARNINGS: 画面に出した PDF の移行・アクセスの警告を記録する
+        session state のキー (``config_page`` が描画の冒頭で消す)
+
 引用キー:
     sanitize_citation_key: BibTeX の引用キーとして読めない文字 (空白・``,``・
         ``{``・``}``) を除く
@@ -32,6 +36,7 @@
 """
 
 from ._entry import (
+    KEY_SHOWN_PDF_WARNINGS,
     Entry,
     PaperList,
     PaperListLoad,
@@ -43,6 +48,7 @@ from ._entry import (
 )
 
 __all__ = (
+    "KEY_SHOWN_PDF_WARNINGS",
     "Entry",
     "PaperList",
     "PaperListLoad",

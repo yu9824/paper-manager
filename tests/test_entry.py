@@ -45,7 +45,8 @@
 - 旧形式の単一 PDF が、PDF フォルダが既にあっても空いている番号へ上書き
   せずに移り、移せなかったときは一覧に含まれて警告が出ること (同 8.3, 1.4)。
   同じ対象の警告は、一覧の件数・統計・孤立 PDF の判定から何度呼ばれても、
-  1 回の描画で 1 回だけ出ること
+  1 回の描画で 1 回だけ出ること。再描画の後も解消していない警告は、
+  (セッションで 1 回だけに抑えず) 描画のたびに 1 回ずつ出ること
 - PDF フォルダと旧形式の単一 PDF のパスが変換後の PDF ルートから作られ
   (Windows を模した ``windows_like_paths`` で ``//`` 付きになる)、一覧と
   移行が変換後の空間で成功すること。警告とログには表示用のパスだけを出し、
@@ -2608,6 +2609,32 @@ def test_warning_about_the_same_target_is_shown_only_once(
         assert len(logged(entry_log, logging.WARNING, legacy_dir)) == 1
 
 
+def seed_conflicting_kb7_folders(
+    kb7_entry: Entry, data_paths: DataPaths
+) -> tuple[Path, Path]:
+    """修正前の名前のフォルダの移す先が既にある状態を、保存して作る.
+
+    論文リストを ``list.json`` に保存し、修正前の名前のフォルダと現在の名前の
+    フォルダの両方に PDF を置く。どちらも上書きしないので、移行は行われず、
+    移せなかったことの警告が出続ける。
+
+    Returns
+    -------
+    tuple[Path, Path]
+        修正前の名前のフォルダと、現在の名前のフォルダ。
+    """
+    paper_list = PaperList({})
+    key = kb7_entry.get_key(paper_list.keys())
+    kb7_entry["ID"] = key
+    paper_list[key] = kb7_entry
+    paper_list.to_file(data_paths.list_file)
+    legacy_dir = data_paths.pdf / KB7_LEGACY_DIR_NAME
+    current_dir = data_paths.pdf / KB7_DIR_NAME
+    write_pdf(legacy_dir / "00.pdf", pdf_content("legacy"))
+    write_pdf(current_dir / "00.pdf", pdf_content("current"))
+    return legacy_dir, current_dir
+
+
 @pytest.mark.filterwarnings(
     "ignore:(pdf_filename|_migrate_legacy_pdf_filenames) is deprecated"
     ":DeprecationWarning"
@@ -2620,15 +2647,9 @@ def test_list_page_shows_the_warning_about_a_target_once(
     ページは一覧の件数・統計・孤立 PDF の判定のそれぞれで PDF の一覧を
     取得する。修正前の名前のフォルダの移す先が既にある状態で描画する。
     """
-    paper_list = PaperList({})
-    key = kb7_entry.get_key(paper_list.keys())
-    kb7_entry["ID"] = key
-    paper_list[key] = kb7_entry
-    paper_list.to_file(data_paths.list_file)
-    legacy_dir = data_paths.pdf / KB7_LEGACY_DIR_NAME
-    current_dir = data_paths.pdf / KB7_DIR_NAME
-    write_pdf(legacy_dir / "00.pdf", pdf_content("legacy"))
-    write_pdf(current_dir / "00.pdf", pdf_content("current"))
+    legacy_dir, current_dir = seed_conflicting_kb7_folders(
+        kb7_entry, data_paths
+    )
     before = snapshot(data_paths.pdf)
 
     at = run_page(None)
@@ -2636,6 +2657,37 @@ def test_list_page_shows_the_warning_about_a_target_once(
     assert not at.exception, [e.value for e in at.exception]
     warnings = [w.value for w in at.warning]
     assert len(mentioning(warnings, legacy_dir, current_dir)) == 1, warnings
+    assert snapshot(data_paths.pdf) == before
+
+
+@pytest.mark.filterwarnings(
+    "ignore:(pdf_filename|_migrate_legacy_pdf_filenames) is deprecated"
+    ":DeprecationWarning"
+)
+def test_list_page_shows_an_unresolved_warning_again_after_a_rerender(
+    kb7_entry: Entry, data_paths: DataPaths
+) -> None:
+    """再描画の後も解消していない警告は、描画のたびに 1 回ずつ出る.
+
+    警告の抑止は、1 回の描画の中だけで効く。移せないままの対象は、利用者が
+    解消するまで、再描画してもセッションの 2 回目以降に黙らず、毎回 1 回
+    ずつ表示される (同じ描画の中では繰り返さない)。
+    """
+    legacy_dir, current_dir = seed_conflicting_kb7_folders(
+        kb7_entry, data_paths
+    )
+    before = snapshot(data_paths.pdf)
+
+    at = run_page(None)
+    for render in range(3):
+        assert not at.exception, [e.value for e in at.exception]
+        warnings = [w.value for w in at.warning]
+        assert len(mentioning(warnings, legacy_dir, current_dir)) == 1, (
+            render,
+            warnings,
+        )
+        at = at.run()
+
     assert snapshot(data_paths.pdf) == before
 
 

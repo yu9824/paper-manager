@@ -13,6 +13,10 @@
   改名 (known-bug-fixes 要件 3.1〜3.4)。比較キーによる判定はどのファイル
   システムでも同じ結果になる。大文字小文字を区別するファイルシステムでしか
   起きない状況のテストは、区別しない環境 (macOS・Windows) では skip する
+- 論文リストの保存: ``save_paper_list`` が、書き込みの前にファイルの状態を
+  確かめ、壊れていれば退避してから書くこと。退避先を画面と通知
+  (``KEY_NOTICES``) に残すこと。退避できなければ書かずにエラーを出し、登録・
+  更新・削除が成功として扱われないこと (known-bug-fixes 要件 10.3)
 - 手動入力フォーム: ``custom_entry`` (要件 9.11)。``AppTest`` で実行する。
   このセクションだけで使う補助は、セクションの冒頭にある
 - 手動入力フォームの著者・タグ・年: 著者は `` and ``、タグは ``, `` で
@@ -68,19 +72,22 @@ from conftest import (
     Uploads,
     write_pdf,
 )
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 import paper_manager
 import paper_manager.helper._path as _path_adapter
+from paper_manager.app._list import _delete_entry
 from paper_manager.app.components import _common
 from paper_manager.app.components._common import (
     delete_pdfs,
     pdf_upload_form,
     register_entry_to_list,
+    save_paper_list,
     save_pdfs,
     update_entry_in_list,
 )
-from paper_manager.app.helper import MAP_REQUIRED_FIELDS
+from paper_manager.app.helper import KEY_NOTICES, MAP_REQUIRED_FIELDS
 from paper_manager.app.helper._orphan_pdf import find_orphaned_pdfs
 from paper_manager.entry import Entry, PaperList
 from paper_manager.helper import (
@@ -2760,6 +2767,381 @@ def test_update_renames_inside_the_converted_pdf_root(
         assert (new_dir / name).read_bytes() == content
     assert not any(data_paths.pdf.iterdir())
     assert st_messages.error == []
+
+
+# --- 論文リストの保存: save_paper_list (known-bug-fixes 要件 10.3) ---------
+# 保存の直前に、ファイルの状態を確かめる。壊れていれば別名へ退避してから書き、
+# 退避先を画面 (st.warning) と通知 (session state の KEY_NOTICES) に残す。
+# 退避できなければ書かずにエラーを出し、False を返す (壊れたファイルを退避
+# できないまま上書きすると、内容が失われるため)。ファイルがない、または正常
+# (BOM 付きを含む) なら、これまでどおり書く。
+
+# UTF-8 の BOM (古いメモ帳や PowerShell 5 が付ける)
+UTF8_BOM = "\ufeff".encode("utf-8")
+
+# 壊れた論文リストのファイルの内容. 解析できない・UTF-8 として読めない・
+# 論文の一覧の形をしていない・BOM の後が壊れている、のそれぞれ.
+BROKEN_LIST_BYTES = [
+    pytest.param(b'{"AliceSmith2020_0": {"title": "A St', id="truncated-json"),
+    pytest.param(b"", id="empty-file"),
+    pytest.param(
+        '{"a": {"title": "深層学習"}}'.encode("shift_jis"), id="shift-jis"
+    ),
+    pytest.param(b"[]", id="top-array"),
+    pytest.param(b"null", id="top-null"),
+    pytest.param(b'{"a": "str"}', id="entry-string"),
+    pytest.param(b'{"a": {"title": 1}}', id="field-number"),
+    pytest.param(UTF8_BOM + b'{"a": {"title": ', id="broken-after-bom"),
+]
+# 退避できない状態を作るために壊しておく内容 (どの壊れ方でもよい)
+UNBACKABLE_BROKEN = b'{"AliceSmith2020_0": {"title": "A St'
+
+
+def broken_backups(data_paths: DataPaths) -> list[Path]:
+    """壊れた論文リストの退避先 (``list.json.broken-*``) を、名前順に返す."""
+    return sorted(data_paths.root.glob("list.json.broken-*"))
+
+
+def stored_fields(data_paths: DataPaths) -> dict[str, EntryFields]:
+    """``list.json`` を読み直して、キー → エントリのフィールドで返す."""
+    return as_fields(PaperList.from_file(data_paths.list_file))
+
+
+def shown_with(messages: list[str], path: Path) -> list[str]:
+    """``messages`` のうち、``path`` の表示用のパスを含むものを返す."""
+    return [m for m in messages if to_display_path(path) in m]
+
+
+def fail_to_copy(*args: object, **kwargs: object) -> None:
+    """退避の複製に失敗させる (ディスクの空きがない)."""
+    raise OSError(errno.ENOSPC, "No space left on device")
+
+
+@pytest.fixture(params=["copy-fails", "read-only-directory"])
+def unbackable_list(
+    request: pytest.FixtureRequest,
+    data_paths: DataPaths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[bytes]:
+    """壊れた ``list.json`` を置き、退避できない状態にする.
+
+    - ``copy-fails``: 複製 (``shutil.copy2``) が ``OSError`` で失敗する
+    - ``read-only-directory``: 退避先のディレクトリが書き込み不可で、退避先の
+      ファイルを作れない (権限が効かない環境では skip)
+
+    ほかの fixture で保存済みの論文リストを作る場合は、それより後に指定する
+    (この fixture が ``list.json`` を壊れた内容で置き換える).
+
+    Returns
+    -------
+    bytes
+        置いた ``list.json`` の内容。
+    """
+    data_paths.list_file.write_bytes(UNBACKABLE_BROKEN)
+    if request.param == "copy-fails":
+        monkeypatch.setattr(shutil, "copy2", fail_to_copy)
+        yield UNBACKABLE_BROKEN
+    else:
+        # 論文リストの生成は PDF ディレクトリを作るので、先に作っておく
+        data_paths.pdf.mkdir(exist_ok=True)
+        with read_only(data_paths.root):
+            yield UNBACKABLE_BROKEN
+
+
+def assert_nothing_saved(
+    data_paths: DataPaths, broken: bytes, st_messages: StMessages
+) -> None:
+    """退避できずに保存を中止したときの状態を確かめる.
+
+    ``list.json`` は壊れた内容のバイト列のまま。退避先の一部も残らない。
+    エラーが 1 つだけ画面に出て、そこに ``list.json`` の表示用のパスと理由が
+    ある。退避したことの警告も通知も出ない。
+    """
+    assert data_paths.list_file.read_bytes() == broken
+    assert broken_backups(data_paths) == []
+    assert len(st_messages.error) == 1, st_messages.error
+    assert str(data_paths.list_file) in st_messages.error[0]
+    assert st_messages.warning == []
+    assert KEY_NOTICES not in st.session_state
+
+
+@pytest.mark.parametrize("broken", BROKEN_LIST_BYTES)
+def test_save_backs_up_a_broken_paper_list_and_shows_where(
+    data_paths: DataPaths,
+    entry: Entry,
+    st_messages: StMessages,
+    broken: bytes,
+) -> None:
+    """壊れた ``list.json`` は、退避してから新しい内容で書き、退避先を出す (10.3).
+
+    退避先には壊れた内容がそのまま残り、``list.json`` は新しい論文リストに
+    なり、session state も同じ内容になる。退避先は画面の警告 1 つと、
+    通知 (``KEY_NOTICES``) に残る。
+    """
+    data_paths.list_file.write_bytes(broken)
+    paper_list = PaperList({"AliceSmith2020_0": entry})
+
+    saved = save_paper_list(paper_list)
+
+    assert saved is True
+    (backup,) = broken_backups(data_paths)
+    assert backup.read_bytes() == broken
+    expected = as_fields(paper_list)
+    assert stored_fields(data_paths) == expected
+    assert as_fields(PaperList.from_session_state()) == expected
+    assert st_messages.error == []
+    shown = shown_with(st_messages.warning, backup)
+    assert st_messages.warning == shown
+    assert len(shown) == 1
+    assert st.session_state[KEY_NOTICES] == shown
+
+
+def write_not_broken_list(
+    state: str, data_paths: DataPaths, other_entry: Entry
+) -> None:
+    """壊れていない状態の ``list.json`` を置く (``missing`` は何も置かない)."""
+    previous = PaperList({"BobJones2019_0": other_entry})
+    if state == "saved-by-the-app":
+        previous.to_file(data_paths.list_file)
+    elif state == "hand-written":
+        text = json.dumps(
+            {k: dict(v) for k, v in previous.items()}, separators=(",", ":")
+        )
+        data_paths.list_file.write_text(text, encoding="utf-8")
+    elif state == "with-bom":
+        previous.to_file(data_paths.list_file)
+        data_paths.list_file.write_bytes(
+            UTF8_BOM + data_paths.list_file.read_bytes()
+        )
+    else:
+        assert state == "missing"
+
+
+@pytest.mark.parametrize(
+    "state", ["missing", "saved-by-the-app", "hand-written", "with-bom"]
+)
+def test_save_does_not_back_up_a_paper_list_that_is_not_broken(
+    data_paths: DataPaths,
+    entry: Entry,
+    other_entry: Entry,
+    st_messages: StMessages,
+    state: str,
+) -> None:
+    """ファイルがない・正常 (BOM 付きを含む) なら、退避せずに書く (10.3, 10.4).
+
+    退避先も、警告も、通知も出ない。BOM 付きだったファイルは、BOM なしの
+    UTF-8 で書き直される。
+    """
+    write_not_broken_list(state, data_paths, other_entry)
+    paper_list = PaperList({"AliceSmith2020_0": entry})
+
+    saved = save_paper_list(paper_list)
+
+    assert saved is True
+    assert broken_backups(data_paths) == []
+    assert sorted(p.name for p in data_paths.root.iterdir()) == [
+        "list.json",
+        "pdf",
+    ]
+    assert not data_paths.list_file.read_bytes().startswith(UTF8_BOM)
+    assert stored_fields(data_paths) == as_fields(paper_list)
+    assert as_fields(PaperList.from_session_state()) == as_fields(paper_list)
+    assert st_messages.warning == []
+    assert st_messages.error == []
+    assert KEY_NOTICES not in st.session_state
+
+
+def test_each_backup_is_noticed_separately(
+    data_paths: DataPaths, entry: Entry, st_messages: StMessages
+) -> None:
+    """続けて 2 回壊れていたら、退避先も通知も 2 つになる (10.3).
+
+    1 回目の通知は、次の描画まで消えずに残り、2 回目の通知が後ろに加わる。
+    """
+    paper_list = PaperList({"AliceSmith2020_0": entry})
+    for _ in range(2):
+        data_paths.list_file.write_bytes(b"[]")
+        assert save_paper_list(paper_list) is True
+
+    first, second = broken_backups(data_paths)
+    notices = st.session_state[KEY_NOTICES]
+    assert len(notices) == 2
+    assert to_display_path(first) in notices[0]
+    assert to_display_path(second) in notices[1]
+    assert st_messages.warning == notices
+
+
+def test_save_stops_when_the_broken_file_cannot_be_backed_up(
+    data_paths: DataPaths,
+    entry: Entry,
+    other_entry: Entry,
+    st_messages: StMessages,
+    unbackable_list: bytes,
+) -> None:
+    """壊れたファイルを退避できなければ、書かずにエラーを出して False を返す (10.3).
+
+    壊れたファイルを退避できないまま上書きすると内容が失われるので、
+    ``list.json`` は壊れた内容のバイト列のまま。session state の論文リストも
+    変えない (ファイルに保存できていない内容を、保存済みのように見せない)。
+    """
+    previous = PaperList({"BobJones2019_0": other_entry})
+    previous.to_session_state()
+    paper_list = PaperList({"AliceSmith2020_0": entry})
+
+    saved = save_paper_list(paper_list)
+
+    assert saved is False
+    assert_nothing_saved(data_paths, unbackable_list, st_messages)
+    assert as_fields(PaperList.from_session_state()) == as_fields(previous)
+
+
+def test_save_reports_the_reason_when_the_backup_fails(
+    data_paths: DataPaths,
+    entry: Entry,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """退避に失敗した理由は、画面のエラーに出る (パスは表示用のもの)."""
+    data_paths.list_file.write_bytes(UNBACKABLE_BROKEN)
+    monkeypatch.setattr(shutil, "copy2", fail_to_copy)
+
+    assert save_paper_list(PaperList({"AliceSmith2020_0": entry})) is False
+
+    assert_nothing_saved(data_paths, UNBACKABLE_BROKEN, st_messages)
+    assert "No space left on device" in st_messages.error[0]
+
+
+def test_register_is_not_a_success_when_the_backup_fails(
+    data_paths: DataPaths,
+    entry: Entry,
+    st_messages: StMessages,
+    unbackable_list: bytes,
+) -> None:
+    """退避できずに保存できなかった登録は、失敗として扱われる (10.3).
+
+    False を返し、成功の通知を出さない。受け取った論文リストにも、
+    session state にも、登録しようとした論文を残さない。
+    """
+    paper_list = PaperList({})
+
+    registered = register_entry_to_list(paper_list, entry)
+
+    assert registered is False
+    assert st_messages.success == []
+    assert_nothing_saved(data_paths, unbackable_list, st_messages)
+    assert list(paper_list) == []
+    assert list(PaperList.from_session_state()) == []
+
+
+def test_update_is_not_a_success_when_the_backup_fails(
+    data_paths: DataPaths,
+    entry: Entry,
+    stored: Stored,
+    st_messages: StMessages,
+    unbackable_list: bytes,
+) -> None:
+    """退避できずに保存できなかった更新は、失敗として扱われる (10.3).
+
+    False を返し、受け取った論文リストを元のままにする。
+    """
+    before = as_fields(stored.paper_list)
+    updated = edited(entry, journal="A Different Journal")
+
+    result = update_entry_in_list(stored.paper_list, stored.key, updated)
+
+    assert result is False
+    assert_nothing_saved(data_paths, unbackable_list, st_messages)
+    assert as_fields(stored.paper_list) == before
+    assert as_fields(PaperList.from_session_state()) == before
+
+
+def test_register_with_a_broken_list_backs_it_up_and_succeeds(
+    data_paths: DataPaths, entry: Entry, st_messages: StMessages
+) -> None:
+    """壊れた ``list.json`` があっても、登録は成功し、退避先が出る (10.3)."""
+    data_paths.list_file.write_bytes(b'{"a": {"title": 1}}')
+    paper_list = PaperList({})
+
+    registered = register_entry_to_list(paper_list, entry)
+
+    assert registered is True
+    (backup,) = broken_backups(data_paths)
+    assert backup.read_bytes() == b'{"a": {"title": 1}}'
+    assert list(stored_fields(data_paths)) == ["AliceSmith2020_0"]
+    assert len(st_messages.success) == 1
+    assert st_messages.error == []
+    assert len(shown_with(st_messages.warning, backup)) == 1
+    assert st.session_state[KEY_NOTICES] == st_messages.warning
+
+
+def test_update_with_a_broken_list_backs_it_up_and_succeeds(
+    data_paths: DataPaths,
+    entry: Entry,
+    stored: Stored,
+    st_messages: StMessages,
+) -> None:
+    """``list.json`` が壊れていても、更新は成功し、退避先が出る (10.3)."""
+    data_paths.list_file.write_bytes(b"[]")
+    updated = edited(entry, journal="A Different Journal")
+
+    result = update_entry_in_list(stored.paper_list, stored.key, updated)
+
+    assert result is True
+    (backup,) = broken_backups(data_paths)
+    assert backup.read_bytes() == b"[]"
+    assert (
+        stored_fields(data_paths)[stored.key]["journal"]
+        == "A Different Journal"
+    )
+    assert st_messages.error == []
+    assert len(shown_with(st_messages.warning, backup)) == 1
+
+
+@pytest.fixture
+def rerun_calls(monkeypatch: pytest.MonkeyPatch) -> list[None]:
+    """``st.rerun`` が呼ばれた回数を記録する (実際には再実行しない)."""
+    calls: list[None] = []
+    monkeypatch.setattr(st, "rerun", lambda *a, **k: calls.append(None))
+    return calls
+
+
+def test_delete_with_a_broken_list_backs_it_up_and_reruns(
+    data_paths: DataPaths,
+    stored: Stored,
+    st_messages: StMessages,
+    rerun_calls: list[None],
+) -> None:
+    """``list.json`` が壊れていても、削除は保存され、再描画する (10.3).
+
+    退避先は、再描画で消えないよう通知に残る。
+    """
+    data_paths.list_file.write_bytes(b"[]")
+
+    _delete_entry(stored.paper_list, [stored.key], False)
+
+    (backup,) = broken_backups(data_paths)
+    assert backup.read_bytes() == b"[]"
+    assert list(stored_fields(data_paths)) == [stored.other_key]
+    assert rerun_calls == [None]
+    assert len(shown_with(st_messages.warning, backup)) == 1
+    assert len(st.session_state[KEY_NOTICES]) == 1
+
+
+def test_delete_does_not_rerun_when_the_backup_fails(
+    data_paths: DataPaths,
+    stored: Stored,
+    st_messages: StMessages,
+    rerun_calls: list[None],
+    unbackable_list: bytes,
+) -> None:
+    """退避できずに保存できなかった削除は、再描画しない (10.3).
+
+    再描画するとエラーが消えて、保存できなかったことが分からなくなる。
+    """
+    _delete_entry(stored.paper_list, [stored.key], False)
+
+    assert rerun_calls == []
+    assert_nothing_saved(data_paths, unbackable_list, st_messages)
 
 
 # --- 手動入力フォーム: 補助 ------------------------------------------------

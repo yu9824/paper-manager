@@ -374,8 +374,9 @@ def _delete_entry(
             delete_pdfs(entry)
         del paper_list[key]
 
-    save_paper_list(paper_list)
-    st.rerun()
+    # 退避できずに保存しなかった場合は、再描画しない (エラーを画面に残す)
+    if save_paper_list(paper_list):
+        st.rerun()
 
 
 @config_page

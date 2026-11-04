@@ -17,10 +17,15 @@ from paper_manager._constants import (
     COLNAME_TAGS,
     COLNAME_YEAR,
     DIRPATH_PDF,
+    FILEPATH_LIST,
     TAG_SEPARATOR,
 )
-from paper_manager.app.helper import MAP_FIELDS, MAP_REQUIRED_FIELDS
-from paper_manager.entry import Entry, PaperList
+from paper_manager.app.helper import (
+    KEY_NOTICES,
+    MAP_FIELDS,
+    MAP_REQUIRED_FIELDS,
+)
+from paper_manager.entry import Entry, PaperList, backup_broken_paper_list
 from paper_manager.helper import folder_name_key, to_display_path, to_fs_path
 from paper_manager.logging import get_child_logger
 
@@ -647,17 +652,57 @@ def delete_pdfs(
     return deleted_count
 
 
-def save_paper_list(paper_list: PaperList) -> None:
+def save_paper_list(paper_list: PaperList) -> bool:
     """PaperListをセッションステートとファイルに保存する。
+
+    書き込みの前に、論文リストのファイルの状態を確かめる (保存の直前に
+    実ファイルを判定するので、画面を開いた後にファイルが壊れた場合も
+    見逃さない)。壊れていれば、別名のファイル (``list.json.broken-<日時>``)
+    へ退避してから書く。退避先 (表示用のパス) は、ログと画面 (``st.warning``)
+    に出す。画面の再描画で消えないよう、同じ文言を session state の通知
+    (``KEY_NOTICES``) にも残す。通知は、次の描画で ``config_page`` が
+    表示してから消す。ファイルがない、または壊れていなければ、退避せずに
+    書く。
+
+    壊れたファイルを退避できなかった (またはファイルを読めず、状態を確かめ
+    られなかった) ときは、壊れたファイルの内容を失わないよう、何も書かずに
+    エラーをログと画面に出して ``False`` を返す。session state も変えない。
 
     Parameters
     ----------
     paper_list : PaperList
         保存する論文リスト
+
+    Returns
+    -------
+    bool
+        保存した場合True。退避できずに保存しなかった場合False。
     """
+    try:
+        backup = backup_broken_paper_list()
+    except OSError as e:
+        message = (
+            "論文リストのファイルを確認または退避できなかったため、"
+            f"保存しませんでした: `{to_display_path(FILEPATH_LIST)}`"
+        )
+        reason = _failure_reason(e)
+        _logger.error(f"{message}: {reason}")
+        st.error(f"{message}\nError: {reason}")
+        return False
+
+    if backup is not None:
+        message = (
+            "論文リストのファイルが壊れていたため、元のファイルを "
+            f"`{to_display_path(backup)}` に退避してから保存しました。"
+        )
+        _logger.warning(message)
+        st.warning(message)
+        st.session_state.setdefault(KEY_NOTICES, []).append(message)
+
     paper_list.to_session_state()
     paper_list.to_file()
     _logger.debug("PaperList saved")
+    return True
 
 
 # 大文字小文字だけの改名で、PDF フォルダを一時的に移す名前の接頭辞
@@ -1018,7 +1063,8 @@ def register_entry_to_list(
     Returns
     -------
     bool
-        登録成功した場合True
+        登録成功した場合True。重複、または壊れた論文リストのファイルを退避
+        できずに保存しなかった場合は、論文リストを変えずにFalse
     """
     _logger.debug(f"Registering entry: {entry}")
 
@@ -1038,8 +1084,10 @@ def register_entry_to_list(
     if uploaded_files:
         save_pdfs(uploaded_files, entry)
 
-    # PaperListを保存
-    save_paper_list(paper_list)
+    # PaperListを保存 (退避できずに保存しなかった場合は、登録しなかったことにする)
+    if not save_paper_list(paper_list):
+        del paper_list[entry["ID"]]
+        return False
 
     st.success("SUCCESS: Registered")
     return True
@@ -1083,11 +1131,14 @@ def update_entry_in_list(
     Returns
     -------
     bool
-        更新成功した場合True
+        更新成功した場合True。重複、改名の失敗、または壊れた論文リストの
+        ファイルを退避できずに保存しなかった場合は、論文リストを変えずに
+        False
     """
     _logger.debug(f"Updating entry: {key_original}")
 
     original_entry = paper_list[key_original]
+    original_entries = dict(paper_list)
 
     # PDFディレクトリ名が変わらない場合は単純に更新
     if original_entry.pdf_dir_name == entry_updated.pdf_dir_name:
@@ -1124,8 +1175,11 @@ def update_entry_in_list(
     if uploaded_files:
         save_pdfs(uploaded_files, entry_updated)
 
-    # PaperListを保存
-    save_paper_list(paper_list)
+    # PaperListを保存 (退避できずに保存しなかった場合は、更新しなかったことにする)
+    if not save_paper_list(paper_list):
+        paper_list.clear()
+        paper_list.update(original_entries)
+        return False
 
     _logger.debug(f"Entry updated: {paper_list=}")
     return True

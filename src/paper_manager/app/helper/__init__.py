@@ -20,10 +20,17 @@
 """
 
 from ._config import (
+    KEY_NOTICES,
     MAP_FIELDS,
     MAP_REQUIRED_FIELDS,
     config_page,
     entrytype4doi,
 )
 
-__all__ = ("MAP_FIELDS", "MAP_REQUIRED_FIELDS", "config_page", "entrytype4doi")
+__all__ = (
+    "KEY_NOTICES",
+    "MAP_FIELDS",
+    "MAP_REQUIRED_FIELDS",
+    "config_page",
+    "entrytype4doi",
+)

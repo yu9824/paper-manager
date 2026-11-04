@@ -35,6 +35,15 @@
 内容が同じでもバイト列が変わる)、JSON として壊れた状態 (途中で切れた
 ファイル、空のファイル) のそれぞれで、5 ページすべてを実行する。
 
+壊れた論文リスト (known-bug-fixes 要件 10.1〜10.3)
+-----------------------------------------------------
+JSON として解析できない、UTF-8 として読めない、論文の一覧の形をしていない
+``list.json`` を置いて 5 ページを描画すると、例外なく描画され、壊れている旨の
+警告が出る。ファイルは書き換えず、退避もしない (退避は保存の直前に行う)。
+壊れた状態で登録ページから論文を登録すると、壊れた内容が退避先に残り、
+退避先が画面に出る。退避先は通知 (session state の ``KEY_NOTICES``) にも残り、
+次の描画で表示されてから消える。
+
 論文リストページは PDF の本数を数えるとき、旧形式の PDF を新形式へ移行する
 非推奨の内部処理 (``pdf_filename`` / ``_migrate_legacy_pdf_filenames``)
 を通るため、``DeprecationWarning`` が出る。警告の確認が目的ではないので、
@@ -48,6 +57,8 @@ from typing import Any, NamedTuple, Optional
 import pytest
 from conftest import PAGES, DataPaths, run_page
 from streamlit.testing.v1 import AppTest
+
+from paper_manager.app.helper import KEY_NOTICES
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore:(pdf_filename|_migrate_legacy_pdf_filenames) is deprecated"
@@ -277,3 +288,169 @@ def test_page_render_does_not_write_list_file(
     assert snapshot_file(data_paths.list_file) == before, (
         f"rendering page {page!r} wrote list.json (state {list_file_state!r})"
     )
+
+
+# --- 壊れた論文リスト (known-bug-fixes 要件 10.1, 10.2, 10.3) -----------------
+
+# 壊れた論文リストを読み込んだときの警告 (修正前からの文言)
+BROKEN_WARNING = "Broken paper list (json)"
+
+# 壊れた ``list.json`` の内容. 解析できない・UTF-8 として読めない・論文の一覧の
+# 形をしていない (トップレベルが辞書でない、値が辞書でない、値が文字列でない).
+BROKEN_LIST_FILES = [
+    pytest.param(b'{"AliceSmith2020_0": {"title": "A St', id="truncated-json"),
+    pytest.param(b"", id="empty-file"),
+    pytest.param(
+        '{"a": {"title": "深層学習"}}'.encode("shift_jis"), id="shift-jis"
+    ),
+    pytest.param(b"[]", id="top-array"),
+    pytest.param(b"null", id="top-null"),
+    pytest.param(b'{"a": "str"}', id="entry-string"),
+    pytest.param(b'{"a": {"title": 1}}', id="field-number"),
+]
+
+# 登録ページの BibTeX フォームの ID (st.form の第 1 引数)
+FORM_BIB = "bib_form"
+BIB_ARTICLE = """\
+@article{Doe2020,
+  author = {Doe, Jane},
+  title = {A Study of Registering Papers},
+  journal = {Journal of Registration},
+  year = {2020},
+}
+"""
+REGISTERED_KEY = "JaneDoe2020_0"
+
+
+def assert_page_rendered(at: AppTest, page: Optional[str]) -> None:
+    """ページが例外なく、そのページ自身の見出し付きで描画されたことを確かめる."""
+    assert not at.exception, describe_exceptions(at)
+    expected_header = PAGE_IDENTITY[page][1]
+    headers = [h.value for h in at.header]
+    assert any(expected_header in header for header in headers), (
+        f"page {page!r} did not render its own header "
+        f"(expected one containing {expected_header!r}, got {headers})"
+    )
+
+
+def backups_of(data_paths: DataPaths) -> list[Path]:
+    """壊れた論文リストの退避先 (``list.json.broken-*``) を名前順に返す."""
+    return sorted(data_paths.root.glob("list.json.broken-*"))
+
+
+def warnings_mentioning(at: AppTest, path: Path) -> list[str]:
+    """画面の警告のうち、``path`` を含むものを返す."""
+    return [w.value for w in at.warning if str(path) in w.value]
+
+
+def widget_in_form(widgets: Any, form_id: str) -> Any:
+    """``widgets`` のうち、フォーム ``form_id`` に属する 1 つを返す."""
+    found = [w for w in widgets if w.proto.form_id == form_id]
+    assert len(found) == 1, f"expected one widget in {form_id!r}: {found}"
+    return found[0]
+
+
+@pytest.mark.parametrize("broken", BROKEN_LIST_FILES)
+@pytest.mark.parametrize(
+    "page", list(PAGES), ids=[PAGE_IDENTITY[page][0] for page in PAGES]
+)
+def test_page_with_a_broken_list_warns_and_leaves_the_file_alone(
+    page: Optional[str], broken: bytes, data_paths: DataPaths
+) -> None:
+    """壊れた論文リストでも、各ページは警告を出して落ちず、ファイルを変えない.
+
+    バイト列と更新時刻が変わらず、退避先も作られない (退避は、保存の直前に
+    行う。描画では書かない)。
+    """
+    data_paths.list_file.write_bytes(broken)
+    before = snapshot_file(data_paths.list_file)
+
+    at = run_page(page)
+
+    assert_page_rendered(at, page)
+    assert BROKEN_WARNING in [w.value for w in at.warning]
+    assert snapshot_file(data_paths.list_file) == before
+    assert backups_of(data_paths) == []
+
+
+def test_registering_with_a_broken_list_backs_it_up_and_notices_it_once(
+    data_paths: DataPaths,
+) -> None:
+    """壊れた状態で論文を登録すると、退避ファイルができて退避先が出る.
+
+    - 退避先に、壊れた内容がそのまま残る
+    - ``list.json`` は、登録した論文だけの新しい内容になる
+    - 登録した描画で、退避先が警告として出る
+    - 退避先は通知に残り、次の描画で表示されてから消える
+    """
+    broken = b'{"a": {"title": 1}}'
+    data_paths.list_file.write_bytes(broken)
+    at = run_page("pages/_register.py")
+    assert_page_rendered(at, "pages/_register.py")
+    widget_in_form(at.text_area, FORM_BIB).set_value(BIB_ARTICLE)
+
+    widget_in_form(at.button, FORM_BIB).click()
+    at = at.run()
+
+    assert not at.exception, describe_exceptions(at)
+    assert [e.value for e in at.error] == []
+    assert len(at.success) == 1
+    (backup,) = backups_of(data_paths)
+    assert backup.read_bytes() == broken
+    assert list(stored_papers(data_paths.list_file)) == [REGISTERED_KEY]
+    assert len(warnings_mentioning(at, backup)) == 1
+
+    # 次の描画で、通知として表示される
+    at = at.run()
+    assert not at.exception, describe_exceptions(at)
+    assert len(warnings_mentioning(at, backup)) == 1
+    assert KEY_NOTICES not in at.session_state
+
+    # 表示したら消えている
+    at = at.run()
+    assert not at.exception, describe_exceptions(at)
+    assert warnings_mentioning(at, backup) == []
+    assert backups_of(data_paths) == [backup]
+
+
+@pytest.mark.parametrize(
+    "page", list(PAGES), ids=[PAGE_IDENTITY[page][0] for page in PAGES]
+)
+def test_pending_notices_are_shown_before_the_page_and_then_cleared(
+    page: Optional[str],
+) -> None:
+    """保留中の通知は、次の描画の冒頭で表示され、表示したら消える.
+
+    通知がなければ、通知の警告は出ない (ページ自身の警告だけがある)。
+    通知はページの見出しより前に出る。
+    """
+    at = run_page(page)
+    assert_page_rendered(at, page)
+    own_warnings = [w.value for w in at.warning]
+    assert "NOTICE-FIRST" not in own_warnings
+
+    at.session_state[KEY_NOTICES] = ["NOTICE-FIRST", "NOTICE-SECOND"]
+    at = at.run()
+
+    assert_page_rendered(at, page)
+    assert [w.value for w in at.warning] == [
+        "NOTICE-FIRST",
+        "NOTICE-SECOND",
+        *own_warnings,
+    ]
+    assert KEY_NOTICES not in at.session_state
+    order = [
+        (index, element)
+        for index, element in sorted(at.main.children.items())
+        if element.type in ("warning", "header")
+    ]
+    assert [element.type for _, element in order][:3] == [
+        "warning",
+        "warning",
+        "header",
+    ]
+
+    at = at.run()
+
+    assert_page_rendered(at, page)
+    assert [w.value for w in at.warning] == own_warnings

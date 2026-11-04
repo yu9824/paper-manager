@@ -41,7 +41,8 @@ from paper_manager.logging import get_child_logger
 _logger = get_child_logger(__name__)
 
 KEY_PAPER_LIST = "paper_list"
-# 画面に出した PDF の移行・アクセスの警告 (同じ警告を繰り返さないための記録)
+# 画面に出した PDF の移行・アクセスの警告 (同じ警告を 1 回の描画の中で繰り返さ
+# ないための記録)。``config_page`` が、ページ全体の描画の冒頭で消す
 KEY_SHOWN_PDF_WARNINGS = "shown_pdf_warnings"
 
 MAX_DIRNAME_LENGTH = 200  # フォルダ名の最大長
@@ -136,11 +137,14 @@ def unique_citation_keys(keys: Sequence[str]) -> list[str]:
 def _warn_pdf_problem(message: str, level: int) -> None:
     """Log a PDF migration or access problem and show it on the screen.
 
-    同じ警告 (同じ対象と理由) は、セッションの中で 1 回だけログと画面
+    同じ警告 (同じ対象と理由) は、1 回の描画の中で 1 回だけログと画面
     (``st.warning``) に出す。PDF の一覧は、1 回の描画の中で一覧の件数・
     統計・孤立 PDF の判定のそれぞれから呼ばれるため、そのたびに同じ警告を
-    出さないようにする。出した警告は session state に記録する
-    (``streamlit run`` の外の bare mode でも、session state は使える)。
+    出さないようにする。出した警告は session state (``KEY_SHOWN_PDF_WARNINGS``)
+    に記録する (``streamlit run`` の外の bare mode でも、session state は
+    使える)。記録は ``config_page`` がページ全体の描画の冒頭で消すので、
+    再描画の後も解消していない警告は、描画のたびに 1 回ずつ出る
+    (fragment の再実行では消えない)。
 
     Parameters
     ----------
@@ -678,7 +682,7 @@ class Entry(MutableMapping):
 
             移行に失敗したとき、または移す先が既にあるため移さなかった
             ときは、ログと画面の警告 (表示用のパス) の両方に出します
-            (同じ警告はセッションの中で 1 回だけ)。
+            (同じ警告は 1 回の描画の中で 1 回だけ)。
 
         Parameters
         ----------

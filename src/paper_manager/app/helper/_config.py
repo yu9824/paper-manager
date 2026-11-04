@@ -6,10 +6,16 @@ from typing import Literal
 import streamlit as st
 
 from paper_manager._constants import DIRPATH_APP, ENCODING, FILEPATH_FIELDS
-from paper_manager.entry import PaperList
+from paper_manager.entry import KEY_SHOWN_PDF_WARNINGS, PaperList
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
+
+# 保留中の通知 (list[str]) を入れる session state のキー。画面の再描画で
+# 消えるメッセージ (論文リストの退避先など) を、次の描画まで残すために使う。
+# 書くのは app/components (``save_paper_list``)、表示して消すのは
+# ``config_page``。依存の向きを守るため、ここ (helper) に定義する
+KEY_NOTICES = "notices"
 
 _MAP_ENTRYTYPE4DOI = MappingProxyType(
     {
@@ -25,9 +31,10 @@ class config_page:
     A decorator-like class for configuring a Streamlit page.
 
     This class sets up the page configuration, initializes a sidebar with
-    navigation links, and loads the `PaperList` from the file into the session
-    state before the page runs. It never writes the paper list file: every
-    change to the paper list is persisted by `save_paper_list`.
+    navigation links, shows the pending notices, and loads the `PaperList`
+    from the file into the session state before the page runs. It never
+    writes the paper list file: every change to the paper list is persisted
+    by `save_paper_list`.
 
     Parameters
     ----------
@@ -52,7 +59,12 @@ class config_page:
 
         This method:
         - Sets the page title to "PAPER MANAGER".
+        - Forgets the PDF warnings shown so far (`KEY_SHOWN_PDF_WARNINGS`),
+          so that a warning which is still unresolved is shown once again
+          in this render. Only a render of the whole page gets here; a rerun
+          of a fragment does not.
         - Adds navigation links to the sidebar.
+        - Shows the pending notices (`KEY_NOTICES`), then clears them.
         - Loads `PaperList` from the file into the session state if the
           session state has no papers yet.
         - Calls the stored function (`_callable`).
@@ -76,6 +88,10 @@ class config_page:
         """
         _logger.debug("config_page Start")
         st.set_page_config(page_title="PAPER MANAGER")
+
+        # 警告の抑止は 1 回の描画の中だけ。再描画の後も解消していない
+        # PDF の警告は、もう一度出す
+        st.session_state.pop(KEY_SHOWN_PDF_WARNINGS, None)
 
         with st.sidebar:
             st.page_link(
@@ -106,6 +122,8 @@ class config_page:
 
         st.title("PAPER MANAGER")
 
+        _show_pending_notices()
+
         if not PaperList.from_session_state():
             PaperList.from_file().to_session_state()
 
@@ -113,6 +131,20 @@ class config_page:
 
         _logger.debug("config_page End")
         return _return
+
+
+def _show_pending_notices() -> None:
+    """Show the notices left by the previous render, then clear them.
+
+    The messages shown at the moment of an action (for example the backup
+    path of a broken paper list, shown by `save_paper_list`) disappear when
+    the page is rerun. They are also kept in the session state
+    (`KEY_NOTICES`), and are shown here, at the start of the next render.
+    Nothing is shown when no notice is pending.
+    """
+    notices = st.session_state.pop(KEY_NOTICES, [])
+    for notice in notices:
+        st.warning(notice)
 
 
 def _load_fields() -> dict[str, dict[str, dict[Literal["required"], bool]]]:
