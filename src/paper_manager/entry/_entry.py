@@ -294,7 +294,9 @@ def sanitize_filename(filename: str) -> str:
 def _dir_name_before_kb7_fix(year: str, first_author: str, title: str) -> str:
     """Build a PDF directory name with the rule used before the KB7 fix.
 
-    後方互換のための修正前の規則。KB7 の範囲の移行と孤立判定だけで使う。
+    後方互換のための修正前の規則。``Entry.pdf_dir_name`` が最初に使う処理で、
+    KB7 の範囲の移行と孤立判定は、この規則が返す 200 文字を超える旧名
+    (``Entry.legacy_pdf_dir_name``) を使う。
     known-bug-fixes spec の修正前の ``Entry.pdf_dir_name`` の処理
     (フィールドを取り出した後の部分) を変えずに残したもの。接頭辞
     ``<year> - <first_author> - `` が 198・199 文字のとき、または年が
