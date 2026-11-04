@@ -70,13 +70,13 @@ from conftest import (
     FakeUpload,
     StMessages,
     Uploads,
+    redirect_data_dir,
     write_pdf,
 )
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 import paper_manager
-import paper_manager.helper._path as _path_adapter
 from paper_manager.app._list import _delete_entry
 from paper_manager.app.components import _common
 from paper_manager.app.components._common import (
@@ -969,43 +969,6 @@ def test_delete_pdfs_never_deletes_the_pdf_root_or_anything_outside_it(
             k: v for k, v in before.items() if k not in specified_keys
         }
     assert base_dir.is_dir()
-
-
-def redirect_data_dir(
-    monkeypatch: pytest.MonkeyPatch, data_root: Path, redirected: Path
-) -> None:
-    """変換を、``data_root`` の下を ``redirected`` の下へ写すものに差し替える.
-
-    変換後のパスでファイルを操作する実装は ``redirected`` の下を使い、
-    変換前のパスを使う実装は ``data_root`` の下を使う。どちらを使ったかが
-    結果から分かる (別名変換の ``windows_like_paths`` は、変換前のパスでも
-    同じ場所を指すため、この違いを検出できない)。逆変換 (表示用) は逆に
-    写す。
-
-    Parameters
-    ----------
-    monkeypatch : pytest.MonkeyPatch
-        差し替えに使う。テストの後に元へ戻る。
-    data_root : Path
-        データディレクトリ (変換前のパス)。
-    redirected : Path
-        写し先のディレクトリ。
-    """
-    real, target = str(data_root), str(redirected)
-
-    def convert(path: str) -> str:
-        full = os.path.abspath(path)
-        if full == real or full.startswith(real + os.sep):
-            return target + full[len(real) :]
-        return full
-
-    def unconvert(path: str) -> str:
-        if path == target or path.startswith(target + os.sep):
-            return real + path[len(target) :]
-        return path
-
-    monkeypatch.setattr(_path_adapter, "_convert", convert)
-    monkeypatch.setattr(_path_adapter, "_unconvert", unconvert)
 
 
 @pytest.fixture
@@ -3095,14 +3058,6 @@ def test_update_with_a_broken_list_backs_it_up_and_succeeds(
     )
     assert st_messages.error == []
     assert len(shown_with(st_messages.warning, backup)) == 1
-
-
-@pytest.fixture
-def rerun_calls(monkeypatch: pytest.MonkeyPatch) -> list[None]:
-    """``st.rerun`` が呼ばれた回数を記録する (実際には再実行しない)."""
-    calls: list[None] = []
-    monkeypatch.setattr(st, "rerun", lambda *a, **k: calls.append(None))
-    return calls
 
 
 def test_delete_with_a_broken_list_backs_it_up_and_reruns(

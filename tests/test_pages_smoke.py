@@ -58,6 +58,10 @@ JSON として解析できない、UTF-8 として読めない、論文の一覧
   ときも、ダウンロードの名前を作れる
 - 複数選択の zip エクスポートで、読めない PDF は zip に入れずにエラーを出し、
   残りの PDF を zip に入れる
+- 変換後のパスが別の空間へ写る 2 通りの状態 (``converted_space``) で、PDF と
+  孤立 PDF の件数、ビューアとダウンロード、zip エクスポート (メンバー名に
+  prefix が入らない)、読めない PDF のエラー (変換前のパスで表示) が同じ結果に
+  なる
 - 引用キーに ``,`` や空白を含む既存の論文でも、詳細の BibTeX 表示と ``.bib``・
   ``.xml`` のエクスポートが整えた引用キーで出力され、``list.json`` の ID は
   変わらない。まとめてのエクスポートでは、整えた引用キーが大文字小文字を
@@ -92,6 +96,7 @@ from conftest import (
     APP_TIMEOUT_SECONDS,
     PAGES,
     PDF_BYTES,
+    ConvertedSpace,
     DataPaths,
     run_page,
     write_pdf,
@@ -102,7 +107,7 @@ from streamlit.testing.v1 import AppTest
 from paper_manager.app.helper import KEY_NOTICES
 from paper_manager.entry import Entry, PaperList
 from paper_manager.entry._entry import KEY_PAPER_LIST
-from paper_manager.helper import to_display_path
+from paper_manager.helper import to_display_path, to_fs_path
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore:(pdf_filename|_migrate_legacy_pdf_filenames) is deprecated"
@@ -884,6 +889,118 @@ def test_the_zip_export_works_with_converted_paths(
             f"{first.pdf_dir_name}/00.pdf",
             f"{second.pdf_dir_name}/00.pdf",
         ]
+
+
+# --- 変換後のパスの空間での、ビューア・ダウンロード・zip エクスポート ---
+# (要件 1.2, 12.3)
+# 論文リストページが PDF の件数・孤立 PDF の件数・ビューア・ダウンロード・
+# zip エクスポートに使うパスは、すべて変換後の空間にある。``converted_space``
+# の 2 通りの空間 (``windows-like`` は変換後のパスが別の形、``redirected`` は
+# 別のディレクトリを指す) で、同じ結果になることを確かめる。PDF は変換後の
+# 空間の実体 (``converted_space.pdf``) に置く。
+
+# 論文に紐づかない PDF のフォルダ名 (孤立 PDF の件数の確認用)
+UNLINKED_DIR_NAME = "2001 - Nobody - Unregistered Paper"
+
+
+def metric_value(at: AppTest, label_part: str) -> str:
+    """ラベルに ``label_part`` を含む指標 (``st.metric``) の値を返す."""
+    [metric] = [m for m in at.metric if label_part in m.label]
+    return metric.value
+
+
+def test_the_viewer_and_the_download_work_in_the_converted_space(
+    converted_space: ConvertedSpace,
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    select_rows: Callable[..., None],
+    downloads: list[Download],
+) -> None:
+    """ビューアとダウンロードと件数の表示が、変換後の空間の PDF で動く.
+
+    1 件だけの PDF はビューアで開き、``<フォルダ名>_00.pdf`` の名前で、PDF
+    の中身をダウンロードできる。PDF の件数は論文に紐づく 1 件、孤立 PDF の
+    件数は紐づかない 1 件で、エラーは出ない。
+    """
+    entry = make_entry()
+    store_papers(data_paths, entry)
+    content = PDF_BYTES + b"%linked in the converted space\n"
+    write_pdf(converted_space.pdf / entry.pdf_dir_name / "00.pdf", content)
+    write_pdf(converted_space.pdf / UNLINKED_DIR_NAME / "00.pdf")
+    select_rows(0)
+
+    at = run_page(None)
+
+    assert not at.exception, describe_exceptions(at)
+    assert error_messages(at) == []
+    assert metric_value(at, "PDFファイル数") == "1"
+    assert metric_value(at, "孤立PDF") == "1"
+    assert len(at.get("component_instance")) == 1
+    assert downloads[-1].file_name == f"{entry.pdf_dir_name}_00.pdf"
+    assert downloads[-1].data == content
+
+
+def test_the_viewer_error_shows_the_plain_path_in_the_converted_space(
+    converted_space: ConvertedSpace,
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    select_rows: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """読めない PDF のエラーは、変換後の空間でも変換前のパスを出す.
+
+    PDF は変換後の空間の実体にある。エラーと ERROR のログには、変換前の
+    パス (表示用のパス) だけを出し、変換後のパスは出さない。
+    """
+    unreadable = check_viewer_reports_unreadable_pdf(
+        data_paths, make_entry, select_rows, caplog
+    )
+
+    assert str(unreadable) != to_display_path(unreadable)  # 前提
+    fs_pdf = to_fs_path(data_paths.pdf)
+    assert unreadable.is_relative_to(fs_pdf)
+    # 変換後の空間の実体にある (変換前のパスの下ではない)
+    assert (converted_space.pdf / unreadable.relative_to(fs_pdf)).exists()
+    assert to_display_path(unreadable).startswith(str(data_paths.pdf))
+
+
+def test_the_zip_export_has_no_prefix_in_the_converted_space(
+    converted_space: ConvertedSpace,
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    select_rows: Callable[..., None],
+    downloads: list[Download],
+) -> None:
+    """複数選択の zip エクスポートは、PDF をすべて入れ、prefix を含まない.
+
+    メンバー名は ``<フォルダ名>/<PDF の名前>`` だけで、変換後のパスの形
+    (別名の ``//``、データディレクトリまでの絶対パス) を含まない。中身は
+    置いたとおりで、エラーは出ない。
+    """
+    first, second = two_entries(make_entry)
+    store_papers(data_paths, first, second)
+    contents = {
+        f"{first.pdf_dir_name}/00.pdf": PDF_BYTES + b"%first 00\n",
+        f"{first.pdf_dir_name}/01.pdf": PDF_BYTES + b"%first 01\n",
+        f"{second.pdf_dir_name}/00.pdf": PDF_BYTES + b"%second 00\n",
+    }
+    for name, content in contents.items():
+        write_pdf(converted_space.pdf / name, content)
+    select_rows(0, 1)
+
+    at = run_page(None)
+
+    assert not at.exception, describe_exceptions(at)
+    assert error_messages(at) == []
+    assert metric_value(at, "PDFファイル数") == "3"
+    (archive,) = [d for d in downloads if (d.file_name or "").endswith(".zip")]
+    with zipfile.ZipFile(io.BytesIO(archive.data)) as zip_file:
+        assert zip_file.testzip() is None
+        assert zip_file.namelist() == list(contents)
+        assert {n: zip_file.read(n) for n in zip_file.namelist()} == contents
+        for name in zip_file.namelist():
+            assert not name.startswith("/"), name
+            assert "//" not in name, name
 
 
 # --- 引用キー (要件 13.3, 13.4) ---

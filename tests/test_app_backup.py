@@ -34,6 +34,9 @@
 - バックアップのページ (``pages/_backup.py``) の PDF の件数が、変換後の
   パス (``to_fs_path(DIRPATH_PDF)``) から数えられること (known-bug-fixes の
   要件 1.2)
+- 画面の流れ (保存 → バックアップのページの件数 → 全削除 → 復元のページ →
+  件数と一覧) が、変換後のパスが別の空間へ写る 2 通りの状態
+  (``converted_space``) で成功すること (known-bug-fixes の要件 1.2, 12.3)
 
 画面のテストは、本物のページのコードを ``conftest.run_page`` で実行する
 (ファイルアップロード欄だけを ``fake_file_uploader`` で差し替える)。
@@ -58,23 +61,24 @@ from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import NamedTuple, Optional, Union
 
 import pytest
-import streamlit as st
 from conftest import (
     _FORBIDDEN_PATHS,
     _TEMP_ROOT,
     PDF_BYTES,
+    ConvertedSpace,
     DataPaths,
     FakeUpload,
     SampleData,
     Uploads,
     check_isolation,
+    redirect_data_dir,
     run_page,
     write_pdf,
 )
 from streamlit.testing.v1 import AppTest
 
-import paper_manager.helper._path as _path_adapter
 from paper_manager import __version__
+from paper_manager.app.components._common import delete_pdfs, save_pdfs
 from paper_manager.app.helper import _backup as backup_module
 from paper_manager.app.helper._backup import (
     create_backup_zip,
@@ -82,7 +86,7 @@ from paper_manager.app.helper._backup import (
     get_backup_info,
     restore_from_zip,
 )
-from paper_manager.entry import PaperList
+from paper_manager.entry import Entry, PaperList
 from paper_manager.entry._entry import KEY_PAPER_LIST
 from paper_manager.helper import to_fs_path
 
@@ -1200,42 +1204,8 @@ def test_restore_aborts_on_a_drive_in_a_component_when_the_join_reparses_it(
 # 別のルートとして扱わせる. 変換後のパスどうしで ``relative_to`` を使わないと
 # ``ValueError`` になり、メンバー名に prefix が入る.
 # 変換後のパスを起点にしているか (変換前のパスで読み書きしていないか) は、
-# 変換がデータディレクトリを別のディレクトリへ写す状態で確かめる.
-
-
-def redirect_data_dir(
-    monkeypatch: pytest.MonkeyPatch, data_root: Path, redirected: Path
-) -> None:
-    """変換を、``data_root`` の下を ``redirected`` の下へ写すものに差し替える.
-
-    変換後のパスでファイルを読み書きする実装は ``redirected`` の下を使い、
-    変換前のパスを使う実装は ``data_root`` の下を使う (どちらを使ったかが
-    結果から分かる)。逆変換 (表示用) は逆に写す。
-
-    Parameters
-    ----------
-    monkeypatch : pytest.MonkeyPatch
-        差し替えに使う。テストの後に元へ戻る。
-    data_root : Path
-        データディレクトリ。
-    redirected : Path
-        写し先のディレクトリ。
-    """
-    real, target = str(data_root), str(redirected)
-
-    def convert(path: str) -> str:
-        full = os.path.abspath(path)
-        if full == real or full.startswith(real + os.sep):
-            return target + full[len(real) :]
-        return full
-
-    def unconvert(path: str) -> str:
-        if path == target or path.startswith(target + os.sep):
-            return real + path[len(target) :]
-        return path
-
-    monkeypatch.setattr(_path_adapter, "_convert", convert)
-    monkeypatch.setattr(_path_adapter, "_unconvert", unconvert)
+# 変換がデータディレクトリを別のディレクトリへ写す状態
+# (``conftest.redirect_data_dir``) で確かめる.
 
 
 def test_backup_reads_from_the_converted_data_dir(
@@ -1402,23 +1372,6 @@ SCREEN_UNSAFE_MEMBERS = [
 UploaderInstaller = Callable[[Mapping[str, Uploads]], None]
 
 
-class UploadedBackup(FakeUpload):
-    """アップロードされたバックアップ. ``UploadedFile`` と同じく ``size`` を持つ."""
-
-    @property
-    def size(self) -> int:
-        """中身のバイト数."""
-        return len(self.getvalue())
-
-
-@pytest.fixture
-def rerun_calls(monkeypatch: pytest.MonkeyPatch) -> list[None]:
-    """``st.rerun`` が呼ばれた回数を記録する (実際には再実行しない)."""
-    calls: list[None] = []
-    monkeypatch.setattr(st, "rerun", lambda *a, **k: calls.append(None))
-    return calls
-
-
 @pytest.fixture
 def outside_cleanup(data_paths: DataPaths) -> Iterator[None]:
     """データディレクトリの外 (親) に増えたものを、テストの後に消す.
@@ -1454,7 +1407,7 @@ def open_restore_page(
     AppTest
         1 回実行済みの AppTest. ページは例外なく実行されている.
     """
-    upload = UploadedBackup("paper-manager-backup_test.zip", backup)
+    upload = FakeUpload("paper-manager-backup_test.zip", backup)
     fake_file_uploader({RESTORE_UPLOADER_LABEL: upload})
     at = run_page(RESTORE_PAGE)
     assert not at.exception, [e.value for e in at.exception]
@@ -1770,3 +1723,71 @@ def test_backup_page_counts_pdfs_in_the_converted_pdf_dir(
     at = run_page(BACKUP_PAGE)
 
     assert shown_pdf_count(at) == str(len(names))
+
+
+# --- 要件 1.2, 12.3: 画面の流れ (保存 → バックアップ → 全削除 → 復元) ----------
+# バックアップのページの PDF の件数と、復元のページの書き込み先を、変換後の
+# パスが別の空間へ写る 2 通りの状態 (``converted_space``) で通す. 保存と削除は
+# アプリの関数 (``save_pdfs`` / ``delete_pdfs``) で、変換後の空間に対して行う.
+
+
+@pytest.mark.filterwarnings(
+    "ignore:(pdf_filename|_migrate_legacy_pdf_filenames) is deprecated"
+    ":DeprecationWarning"
+)
+@pytest.mark.usefixtures("rerun_calls")
+def test_pages_save_backup_delete_and_restore_in_the_converted_space(
+    converted_space: ConvertedSpace,
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    fake_file_uploader: UploaderInstaller,
+) -> None:
+    """保存した PDF が、バックアップのページで数えられ、復元のページで戻る.
+
+    PDF を保存してバックアップを作り、PDF を全削除してから、復元のページで
+    バックアップを復元する. バックアップのページの PDF の件数は、保存後は 3、
+    全削除の後は 0、復元の後は 3 になる. 復元のページは、変換後のパスの下に、
+    元と同じ配置と中身で書く. 復元した PDF は、論文の PDF の一覧に変換後の
+    パスで出る.
+    """
+    first = make_entry()
+    second = make_entry(
+        author="Bob Jones", title="Quantum Widgets", year="2019"
+    )
+    expected: dict[str, bytes] = {}
+    for entry, count in ((first, 2), (second, 1)):
+        uploads = [
+            FakeUpload(
+                f"upload-{index}.pdf", PDF_BYTES + f"%{index}\n".encode()
+            )
+            for index in range(count)
+        ]
+        assert save_pdfs(uploads, entry) == count
+        for index, upload in enumerate(uploads):
+            name = f"pdf/{entry.pdf_dir_name}/{index:02d}.pdf"
+            expected[name] = upload.getvalue()
+    assert read_pdfs(converted_space.root) == expected  # 前提
+    assert shown_pdf_count(run_page(BACKUP_PAGE)) == "3"
+    backup = create_backup_zip().getvalue()
+
+    assert delete_pdfs(first) == 2
+    assert delete_pdfs(second) == 1
+    assert read_pdfs(converted_space.root) == {}
+    assert shown_pdf_count(run_page(BACKUP_PAGE)) == "0"
+
+    at = restore_on_page(fake_file_uploader, backup)
+
+    assert not at.error
+    [success] = at.success
+    assert re.search(r"PDF\D*3(?!\d)", success.value), success.value
+    assert read_pdfs(converted_space.root) == expected
+    assert shown_pdf_count(run_page(BACKUP_PAGE)) == "3"
+    fs_pdf = to_fs_path(data_paths.pdf)
+    assert first.get_pdf_files() == [
+        fs_pdf / first.pdf_dir_name / "00.pdf",
+        fs_pdf / first.pdf_dir_name / "01.pdf",
+    ]
+    assert second.get_pdf_files() == [fs_pdf / second.pdf_dir_name / "00.pdf"]
+    if converted_space.redirected:
+        # 変換前のパスの下には、ファイルが 1 つも書かれない
+        assert [p for p in data_paths.root.rglob("*") if p.is_file()] == []

@@ -35,7 +35,8 @@ known-bug-fixes spec の要件に対応するテストは、末尾の節にま�
   パス (表示用) と理由、削除できた件数を画面に出し、失敗があったときは
   再描画せずにエラーを残すこと。PDF の削除に失敗したときと、PDF は削除でき
   たが空になったフォルダを削除できなかったときで、文言が異なること
-  (要件 1.4)
+  (要件 1.4)。変換後のパスが別の空間へ写る状態 (``converted_space``) でも、
+  失敗のエラーに変換前のパスだけを出すこと (要件 1.2)
 
 削除は ``data_paths.pdf`` (隔離された一時ディレクトリの配下) の中だけで
 行い、実データには触れない。
@@ -59,6 +60,7 @@ from typing import Any
 import pytest
 from conftest import (
     PDF_BYTES,
+    ConvertedSpace,
     DataPaths,
     SampleData,
     run_page,
@@ -1300,3 +1302,36 @@ def test_page_shows_display_paths_for_orphans_in_the_converted_space(
     assert str(failing) not in message
     assert UNLINK_REASON in message
     assert not legacy.exists()
+
+
+def test_page_shows_plain_paths_of_failed_orphans_in_the_converted_space(
+    converted_space: ConvertedSpace,
+    data_paths: DataPaths,
+    alice: Entry,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """削除に失敗した孤立 PDF は、変換前のパスで画面に出る (要件 1.2, 1.4).
+
+    孤立 PDF は変換後の空間の実体に置き、論文リストページが検出する。
+    ``windows-like`` では変換後のパスが ``//`` 付きの別の形、``redirected``
+    では別のディレクトリになるが、どちらも画面のエラーには、変換前の
+    パスだけを出す。
+    """
+    make_paper_list(alice).to_file(data_paths.list_file)
+    write_pdf(converted_space.pdf / ORPHAN_DIR_NAME / "00.pdf")
+    converted = to_fs_path(data_paths.pdf) / ORPHAN_DIR_NAME / "00.pdf"
+    plain = data_paths.pdf / ORPHAN_DIR_NAME / "00.pdf"
+    assert str(converted) != str(plain)  # 前提: 変換後のパスが別の形
+    fail_unlink_of(monkeypatch, converted)
+    at = run_page(None)
+    assert not at.exception, [e.value for e in at.exception]
+    assert has_delete_button(at)  # 前提: 孤立 PDF が検出されている
+
+    at = push_delete_button(at)
+
+    assert not at.exception, [e.value for e in at.exception]
+    (message,) = error_messages(at)
+    assert str(plain) in message
+    assert str(converted) not in message
+    assert UNLINK_REASON in message
+    assert converted.is_file()

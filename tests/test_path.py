@@ -27,6 +27,13 @@
 - フォルダ名の比較キー (``folder_name_key``): 大文字小文字だけ、または
   Unicode 正規化だけが違う名前が同じキーになり、別の名前は別のキーになる
   こと。文字列だけから決まり、OS やファイルシステムに依存しない (要件 3.4)
+- PDF を扱う各機能の配線 (末尾の節。known-bug-fixes の要件 1.2, 12.3):
+  保存 → 一覧 → 孤立 PDF の検出 → バックアップ → 全削除 → 復元の一連の流れを、
+  変換後のパスが別の空間へ写る 2 通りの状態 (``converted_space``) で通す。
+  ``windows-like`` は変換後のパスと変換前のパスを混ぜた比較と
+  ``relative_to`` を壊し、``redirected`` は変換後のパスを使わない実装を、
+  何も見つけられないことで検出する。zip のメンバー名に prefix が入らない
+  こと、孤立 PDF の削除で PDF ルートが削除されないことも、両方の空間で確かめる
 
 ``_to_extended_length`` と ``_from_extended_length`` は純粋な文字列変換で、
 ``ntpath`` はどの OS でも動くため、Windows 以外でも検証できる。ドライブ相対
@@ -40,12 +47,32 @@ import os
 import shutil
 import unicodedata
 import zipfile
+from collections.abc import Callable
+from io import BytesIO
 from pathlib import Path
-from typing import Union
+from typing import NamedTuple, Union
 
 import pytest
+from conftest import (
+    PDF_BYTES,
+    ConvertedSpace,
+    DataPaths,
+    FakeUpload,
+    StMessages,
+    write_pdf,
+)
 
 import paper_manager.helper._path as _path
+from paper_manager.app.components._common import delete_pdfs, save_pdfs
+from paper_manager.app.helper._backup import (
+    create_backup_zip,
+    restore_from_zip,
+)
+from paper_manager.app.helper._orphan_pdf import (
+    delete_orphaned_pdfs,
+    find_orphaned_pdfs,
+)
+from paper_manager.entry import Entry, PaperList
 from paper_manager.helper import (
     folder_name_key,
     to_display_path,
@@ -537,3 +564,333 @@ def test_folder_name_key_is_nfd_casefolded_string() -> None:
     assert key == unicodedata.normalize("NFD", key)
     assert key == "caf" + _NFD_E_ACUTE + " strasse"
     assert folder_name_key(key) == key
+
+
+# --- PDF を扱う各機能の配線 (known-bug-fixes 要件 1.2, 12.3) ----------------
+# 保存した PDF が一覧に出て、孤立 PDF の検出に出ず、バックアップに入り、全削除
+# の後に復元で戻る。この流れを、変換後のパスが別の空間へ写る 2 通りの状態
+# (``converted_space``) で通す。
+#
+# - ``windows-like``: 変換後のパス (``//x``) は変換前のパス (``/x``) と別の
+#   ルートになる。変換前後のパスを混ぜた比較と ``relative_to`` が壊れる
+# - ``redirected``: 変換後のパスは別のディレクトリを指す。変換後のパスを
+#   使わずに変換前のパスで読み書きする実装は、何も見つけられない
+#
+# 期待値は、テストが作ったデータ (保存した中身と置いた場所) から導く。PDF の
+# 置き場所の確認と準備は ``converted_space`` の普通のパスで行い、アプリの
+# 関数が返すパスは、変換後のパス (``to_fs_path(DIRPATH_PDF)`` の下) と
+# 比べる。
+
+_ignore_legacy_deprecation = pytest.mark.filterwarnings(
+    "ignore:(pdf_filename|_migrate_legacy_pdf_filenames) is deprecated"
+    ":DeprecationWarning"
+)
+# 論文リストに無い (孤立した) PDF の置き場所
+ORPHAN_DIR = "2001 - Nobody - Unregistered Paper"
+ORPHAN_LEGACY = "Unregistered Legacy Paper.pdf"
+
+
+class SavedPdfs(NamedTuple):
+    """``saved_pdfs`` が保存した論文と PDF、置いたファイル."""
+
+    paper_list: PaperList
+    alice: Entry  # PDF が 2 件
+    bob: Entry  # PDF が 1 件
+    # 論文に紐づく PDF: データディレクトリからの相対パス (``/`` 区切り) -> 中身
+    linked: dict[str, bytes]
+    # 論文に紐づかない PDF (新形式のフォルダに 2 件、旧形式の単一 PDF が 1 件)
+    orphans: dict[str, bytes]
+    # list.json と config.json: ファイル名 -> 中身
+    meta: dict[str, bytes]
+
+
+def pdf_member(entry: Entry, index: int) -> str:
+    """``entry`` の ``index`` 番目の PDF の、データディレクトリからの相対パス."""
+    return f"pdf/{entry.pdf_dir_name}/{index:02d}.pdf"
+
+
+def pdfs_under(root: Path) -> dict[str, bytes]:
+    """``root`` の下の PDF を、相対パス (``/`` 区切り) -> 中身で返す."""
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*.pdf"))
+    }
+
+
+def read_members(source: BytesIO) -> dict[str, bytes]:
+    """zip のすべてのメンバーを、名前 -> 中身で返す."""
+    with zipfile.ZipFile(source) as zf:
+        return {name: zf.read(name) for name in zf.namelist()}
+
+
+def files_under(root: Path) -> list[Path]:
+    """``root`` の下のファイル (ディレクトリを除く) を返す."""
+    return sorted(path for path in root.rglob("*") if path.is_file())
+
+
+@pytest.fixture
+def saved_pdfs(
+    converted_space: ConvertedSpace,
+    make_entry: Callable[..., Entry],
+    st_messages: StMessages,
+) -> SavedPdfs:
+    """変換後の空間に、論文 2 件の PDF と孤立 PDF、list.json を用意する.
+
+    論文の PDF は、アプリの ``save_pdfs`` で保存する (alice に 2 件、bob に
+    1 件)。孤立 PDF と list.json、config.json は、``converted_space`` の
+    場所に直接置く。``converted_space`` を先に有効にしてから保存するので、
+    保存は変換後の空間で行われる。保存した件数とエラー通知がないことは、
+    この fixture の中で確かめる。
+    """
+    alice = make_entry()
+    bob = make_entry(author="Bob Jones", title="Quantum Widgets", year="2019")
+    paper_list = PaperList({})
+    for entry in (alice, bob):
+        entry["ID"] = entry.get_key(paper_list.keys())
+        paper_list[entry["ID"]] = entry
+
+    linked: dict[str, bytes] = {}
+    for entry, labels in ((alice, ("a0", "a1")), (bob, ("b0",))):
+        uploads = [
+            FakeUpload(
+                f"upload-{label}.pdf", PDF_BYTES + f"%{label}\n".encode()
+            )
+            for label in labels
+        ]
+        assert save_pdfs(uploads, entry) == len(uploads)
+        for index, upload in enumerate(uploads):
+            linked[pdf_member(entry, index)] = upload.getvalue()
+    assert st_messages.error == []
+
+    orphans = {
+        f"pdf/{ORPHAN_DIR}/00.pdf": PDF_BYTES + b"%orphan 00\n",
+        f"pdf/{ORPHAN_DIR}/01.pdf": PDF_BYTES + b"%orphan 01\n",
+        f"pdf/{ORPHAN_LEGACY}": PDF_BYTES + b"%orphan legacy\n",
+    }
+    for name, content in orphans.items():
+        write_pdf(converted_space.root / name, content)
+
+    list_file = converted_space.root / "list.json"
+    paper_list.to_file(list_file)
+    config = b'{"proxy": {"http": "http://proxy.example.com:8080"}}\n'
+    (converted_space.root / "config.json").write_bytes(config)
+    return SavedPdfs(
+        paper_list=paper_list,
+        alice=alice,
+        bob=bob,
+        linked=linked,
+        orphans=orphans,
+        meta={
+            "list.json": list_file.read_bytes(),
+            "config.json": config,
+        },
+    )
+
+
+def converted_orphans(data_paths: DataPaths) -> list[Path]:
+    """孤立 PDF の、変換後のパスでの期待 (名前順)."""
+    fs_pdf = to_fs_path(data_paths.pdf)
+    return [
+        fs_pdf / ORPHAN_DIR / "00.pdf",
+        fs_pdf / ORPHAN_DIR / "01.pdf",
+        fs_pdf / ORPHAN_LEGACY,
+    ]
+
+
+def test_the_converted_space_differs_from_the_plain_one(
+    converted_space: ConvertedSpace, data_paths: DataPaths
+) -> None:
+    """前提: 変換後の PDF ルートは、変換前のものと別のパスで、実体を指す.
+
+    ``windows-like`` では同じ場所を指す別の形 (``//`` 付き) で、
+    ``redirected`` では別のディレクトリ。どちらも、表示用の逆変換で
+    変換前のパスに戻る。
+    """
+    fs_pdf = to_fs_path(data_paths.pdf)
+
+    assert fs_pdf != data_paths.pdf
+    assert to_display_path(fs_pdf) == str(data_paths.pdf)
+    if converted_space.redirected:
+        assert fs_pdf == converted_space.pdf
+    else:
+        assert str(fs_pdf).startswith("//")
+        assert converted_space.pdf == data_paths.pdf
+
+
+@_ignore_legacy_deprecation
+def test_saved_pdfs_are_written_into_the_converted_space(
+    converted_space: ConvertedSpace,
+    saved_pdfs: SavedPdfs,
+    data_paths: DataPaths,
+) -> None:
+    """保存は、変換後のパスの下に書く (``redirected`` では変換前に書かない)."""
+    assert pdfs_under(converted_space.root) == {
+        **saved_pdfs.linked,
+        **saved_pdfs.orphans,
+    }
+    if converted_space.redirected:
+        assert files_under(data_paths.root) == []
+
+
+@_ignore_legacy_deprecation
+def test_listing_returns_converted_paths_that_display_as_plain_ones(
+    saved_pdfs: SavedPdfs, data_paths: DataPaths
+) -> None:
+    """一覧は変換後の PDF ルートの下のパスを返し、表示用には変換前に戻る.
+
+    保存した件数と中身が、一覧のパスから読める。
+    """
+    fs_pdf = to_fs_path(data_paths.pdf)
+    alice, bob = saved_pdfs.alice, saved_pdfs.bob
+
+    alice_files = alice.get_pdf_files()
+    bob_files = bob.get_pdf_files()
+
+    assert alice_files == [
+        fs_pdf / alice.pdf_dir_name / "00.pdf",
+        fs_pdf / alice.pdf_dir_name / "01.pdf",
+    ]
+    assert bob_files == [fs_pdf / bob.pdf_dir_name / "00.pdf"]
+    assert alice.get_pdf_count() + bob.get_pdf_count() == 3
+    for path in alice_files + bob_files:
+        member = path.relative_to(fs_pdf)  # 変換前のパスと混ざっていれば失敗
+        assert (
+            path.read_bytes() == saved_pdfs.linked[f"pdf/{member.as_posix()}"]
+        )
+        assert to_display_path(path) == str(data_paths.pdf / member)
+
+
+@_ignore_legacy_deprecation
+def test_orphans_are_found_in_the_converted_space(
+    saved_pdfs: SavedPdfs, data_paths: DataPaths
+) -> None:
+    """孤立 PDF だけが、変換後のパスで検出される.
+
+    保存した PDF は検出されない。検出したパスは、変換後の PDF ルートからの
+    相対パスを求められ、表示用には変換前のパスに戻る。
+    """
+    orphans = find_orphaned_pdfs(saved_pdfs.paper_list)
+
+    assert orphans == converted_orphans(data_paths)
+    fs_pdf = to_fs_path(data_paths.pdf)
+    assert [to_display_path(path) for path in orphans] == [
+        str(data_paths.pdf / path.relative_to(fs_pdf)) for path in orphans
+    ]
+
+
+@_ignore_legacy_deprecation
+def test_backup_has_every_file_and_no_prefix_in_member_names(
+    saved_pdfs: SavedPdfs,
+) -> None:
+    """バックアップは、変換後の空間のすべてのファイルを入れ、prefix が入らない.
+
+    メンバー名は、データディレクトリからの相対パス (``pdf/<フォルダ>/NN.pdf``)
+    だけで、別名の ``//`` も、データディレクトリまでの絶対パスも含まない。
+    """
+    members = read_members(create_backup_zip())
+
+    assert set(members) == {
+        "version.json",
+        *saved_pdfs.meta,
+        *saved_pdfs.linked,
+        *saved_pdfs.orphans,
+    }
+    for name in members:
+        assert not name.startswith("/"), name
+        assert "//" not in name, name
+        assert ".." not in name.split("/"), name
+    del members["version.json"]
+    assert members == {
+        **saved_pdfs.meta,
+        **saved_pdfs.linked,
+        **saved_pdfs.orphans,
+    }
+
+
+@_ignore_legacy_deprecation
+def test_backup_delete_everything_and_restore_bring_every_pdf_back(
+    converted_space: ConvertedSpace,
+    saved_pdfs: SavedPdfs,
+    data_paths: DataPaths,
+    st_messages: StMessages,
+) -> None:
+    """バックアップして全削除し、復元すると、一覧と孤立 PDF の検出が元に戻る.
+
+    削除は、論文の PDF (``delete_pdfs``) と孤立 PDF
+    (``delete_orphaned_pdfs``) のそれぞれで行う。全削除の後も PDF ルートは
+    残る。復元は、変換後のパスの下に書き、中身も配置も元と同じになる。
+    アプリは通知を出さない。
+    """
+    alice, bob = saved_pdfs.alice, saved_pdfs.bob
+    listed = [alice.get_pdf_files(), bob.get_pdf_files()]
+    orphans = find_orphaned_pdfs(saved_pdfs.paper_list)
+    assert len(orphans) == len(saved_pdfs.orphans)  # 前提
+    backup = create_backup_zip().getvalue()
+
+    failures: list[tuple[Path, str]] = []
+    assert delete_pdfs(alice) == 2
+    assert delete_pdfs(bob) == 1
+    assert delete_orphaned_pdfs(orphans, failures) == len(saved_pdfs.orphans)
+
+    assert failures == []
+    assert pdfs_under(converted_space.root) == {}
+    assert converted_space.pdf.is_dir()
+    assert list(converted_space.pdf.iterdir()) == []
+    assert alice.get_pdf_files() == []
+    assert bob.get_pdf_files() == []
+    assert find_orphaned_pdfs(saved_pdfs.paper_list) == []
+
+    success, message = restore_from_zip(BytesIO(backup))
+
+    assert success, message
+    restored = len(saved_pdfs.linked) + len(saved_pdfs.orphans)
+    assert f"復元したPDFファイル数: {restored}" in message
+    assert pdfs_under(converted_space.root) == {
+        **saved_pdfs.linked,
+        **saved_pdfs.orphans,
+    }
+    for name, content in saved_pdfs.meta.items():
+        assert (converted_space.root / name).read_bytes() == content
+    assert [alice.get_pdf_files(), bob.get_pdf_files()] == listed
+    assert find_orphaned_pdfs(saved_pdfs.paper_list) == orphans
+    assert st_messages.error == []
+    assert st_messages.warning == []
+    if converted_space.redirected:
+        assert files_under(data_paths.root) == []
+
+
+@_ignore_legacy_deprecation
+@pytest.mark.parametrize("requested", ["found", "plain-paths", "folders"])
+def test_deleting_every_orphan_keeps_the_pdf_root(
+    requested: str, converted_space: ConvertedSpace, data_paths: DataPaths
+) -> None:
+    """全 PDF が孤立していて、すべてを依頼しても、PDF ルートは削除されない.
+
+    論文が 1 件もないので、すべての PDF が孤立 PDF になる。依頼するパスは、
+    検出が返した変換後のパス (``found``)、表示用に戻した変換前のパス
+    (``plain-paths``)、フォルダと単一の PDF (``folders``)。どれでも、PDF の
+    削除で PDF ルートが空になったとき、PDF ルートかどうかは変換後の PDF
+    ルートと比べて判定され、PDF ルートは残る。
+    """
+    for name in (
+        f"pdf/{ORPHAN_DIR}/00.pdf",
+        f"pdf/{ORPHAN_DIR}/01.pdf",
+        f"pdf/{ORPHAN_LEGACY}",
+    ):
+        write_pdf(converted_space.root / name)
+    orphans = find_orphaned_pdfs(PaperList({}))
+    assert orphans == converted_orphans(data_paths)  # 前提: すべて孤立
+    fs_pdf = to_fs_path(data_paths.pdf)
+    targets = {
+        "found": orphans,
+        "plain-paths": [Path(to_display_path(path)) for path in orphans],
+        "folders": [fs_pdf / ORPHAN_DIR, fs_pdf / ORPHAN_LEGACY],
+    }[requested]
+    failures: list[tuple[Path, str]] = []
+
+    assert delete_orphaned_pdfs(targets, failures) == len(orphans)
+
+    assert failures == []
+    assert converted_space.pdf.is_dir()
+    assert list(converted_space.pdf.iterdir()) == []
+    assert find_orphaned_pdfs(PaperList({})) == []

@@ -49,9 +49,11 @@
   (セッションで 1 回だけに抑えず) 描画のたびに 1 回ずつ出ること
 - PDF フォルダと旧形式の単一 PDF のパスが変換後の PDF ルートから作られ
   (Windows を模した ``windows_like_paths`` で ``//`` 付きになる)、一覧と
-  移行が変換後の空間で成功すること。警告とログには表示用のパスだけを出し、
-  変換後のパスを出さないこと。長いパスでも警告のログを出さず、旧形式の
-  ファイル名が長すぎても一覧が落ちないこと (同 1.1, 1.2, 1.4)
+  移行が変換後の空間で成功すること。変換後のパスが別のディレクトリを指す
+  空間 (``converted_space`` の ``redirected``) でも同じ結果になること。
+  警告とログには表示用のパスだけを出し、変換後のパスを出さないこと。長い
+  パスでも警告のログを出さず、旧形式のファイル名が長すぎても一覧が落ちない
+  こと (同 1.1, 1.2, 1.4)
 
 OS の判定は ``paper_manager.entry._entry`` の ``platform.system()`` で行われる。
 ``set_os`` fixture でそのモジュールの ``platform`` を差し替えるため、実行 OS に
@@ -81,6 +83,7 @@ from typing import Any, Optional
 import pytest
 from conftest import (
     PDF_BYTES,
+    ConvertedSpace,
     DataPaths,
     SampleData,
     StMessages,
@@ -2726,33 +2729,36 @@ def test_get_pdf_dir_does_not_log_a_warning_for_a_long_path(
 
 
 @ignore_deprecation
-@pytest.mark.usefixtures("windows_like_paths")
 def test_listing_and_migrations_work_in_the_converted_space(
     make_entry: Callable[..., Entry],
     data_paths: DataPaths,
+    converted_space: ConvertedSpace,
     st_messages: StMessages,
 ) -> None:
     """変換後のパスの空間で、一覧と 3 種類の移行がどれも成功する.
 
     返るパスは変換後の PDF ルートの下にあり、そこからの相対パスを求め
-    られる (変換前のパスと混在しない)。
+    られる (変換前のパスと混在しない)。フォルダと PDF は変換後の空間の
+    実体に置き、移行もそこで行われる。``windows-like`` は変換後のパスが
+    別の形 (``//`` 付き) になる空間、``redirected`` は変換後のパスが別の
+    ディレクトリを指す空間で、変換前のパスで読み書きする実装は何も見つけ
+    られない。
     """
+    pdf_root = converted_space.pdf
     root = to_fs_path(data_paths.pdf)
-    assert root != data_paths.pdf  # 前提: 別名が効く
+    assert root != data_paths.pdf  # 前提: 変換後のパスが別の形になっている
     merged = make_entry()
-    write_pdf(data_paths.pdf / ENTRY_DIR_NAME / "00.pdf", pdf_content("00"))
-    write_pdf(data_paths.pdf / LEGACY_SINGLE_NAME, pdf_content("merged"))
+    write_pdf(pdf_root / ENTRY_DIR_NAME / "00.pdf", pdf_content("00"))
+    write_pdf(pdf_root / LEGACY_SINGLE_NAME, pdf_content("merged"))
     write_pdf(
-        data_paths.pdf / ENTRY_DIR_NAME / f"{ENTRY_DIR_NAME}_01.pdf",
+        pdf_root / ENTRY_DIR_NAME / f"{ENTRY_DIR_NAME}_01.pdf",
         pdf_content("renamed"),
     )
     single = make_entry(title="Another Study")
     single_name = "2020 - Alice Smith - Another Study"
-    write_pdf(data_paths.pdf / f"{single_name}.pdf", pdf_content("single"))
+    write_pdf(pdf_root / f"{single_name}.pdf", pdf_content("single"))
     moved = make_entry(**KB7_FIELDS)
-    write_pdf(
-        data_paths.pdf / KB7_LEGACY_DIR_NAME / "00.pdf", pdf_content("kb7")
-    )
+    write_pdf(pdf_root / KB7_LEGACY_DIR_NAME / "00.pdf", pdf_content("kb7"))
 
     listings = {
         ENTRY_DIR_NAME: merged.get_pdf_files(),
@@ -2770,7 +2776,7 @@ def test_listing_and_migrations_work_in_the_converted_space(
     for files in listings.values():
         for path in files:
             assert path.relative_to(root).parts[0] in listings
-    assert snapshot(data_paths.pdf) == {
+    assert snapshot(pdf_root) == {
         ENTRY_DIR_NAME: None,
         f"{ENTRY_DIR_NAME}/00.pdf": pdf_content("00"),
         f"{ENTRY_DIR_NAME}/01.pdf": pdf_content("merged"),
@@ -2780,6 +2786,9 @@ def test_listing_and_migrations_work_in_the_converted_space(
         KB7_DIR_NAME: None,
         f"{KB7_DIR_NAME}/00.pdf": pdf_content("kb7"),
     }
+    if converted_space.redirected:
+        # 変換前のパスの下には、何も置かれず、何も移されない
+        assert snapshot(data_paths.pdf) in (None, {})
     assert st_messages.warning == []
 
 

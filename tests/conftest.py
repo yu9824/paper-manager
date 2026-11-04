@@ -392,6 +392,10 @@ class FakeUpload(io.BytesIO):
     ``getvalue()`` などのバイト列の読み出しは ``io.BytesIO`` のものを使い、
     アップロードされたファイルと同じく ``name`` を持つ。
 
+    ``size`` (中身のバイト数) も ``UploadedFile`` と同じく持つ。画面が
+    ``uploaded_file.size`` を表示する (復元ページ) ので、画面テストで
+    差し替えるときに要る。
+
     Parameters
     ----------
     name : str
@@ -405,6 +409,11 @@ class FakeUpload(io.BytesIO):
     def __init__(self, name: str, content: bytes) -> None:
         super().__init__(content)
         self.name = name
+
+    @property
+    def size(self) -> int:
+        """中身のバイト数 (``UploadedFile.size`` と同じ)."""
+        return len(self.getvalue())
 
 
 class SampleData(NamedTuple):
@@ -687,6 +696,27 @@ def st_messages(monkeypatch: pytest.MonkeyPatch) -> StMessages:
     return messages
 
 
+@pytest.fixture
+def rerun_calls(monkeypatch: pytest.MonkeyPatch) -> list[None]:
+    """``st.rerun`` を、呼ばれた回数を記録するだけの処理に差し替える.
+
+    実際には再実行しない。操作が成功したときに画面を再描画するか (再描画
+    するとエラーなどの表示が消える) を、呼び出しの回数で確かめる。
+    ``AppTest`` で実画面を動かすテストも、関数を直接呼ぶテストも使える。
+    ``AppTest`` はスクリプトの再実行で画面を作り直すため、成功の表示を
+    確かめたいテストはこの fixture で再実行を止める。
+
+    Returns
+    -------
+    list[None]
+        ``st.rerun`` が呼ばれるたびに ``None`` が 1 つ加わる一覧。差し替えは
+        テストの後に元へ戻る。
+    """
+    calls: list[None] = []
+    monkeypatch.setattr(st, "rerun", lambda *a, **k: calls.append(None))
+    return calls
+
+
 # --- WindowsLikePaths -----------------------------------------------------
 # ファイル操作用のパスへの変換 (paper_manager.helper._path の差し替え口
 # ``_convert`` / ``_unconvert``) を、Windows を模した別名変換に差し替える。
@@ -790,6 +820,147 @@ def windows_like_paths(monkeypatch: pytest.MonkeyPatch) -> None:
         )
     monkeypatch.setattr(_path_adapter, "_convert", _to_windows_like_path)
     monkeypatch.setattr(_path_adapter, "_unconvert", _from_windows_like_path)
+
+
+# --- RedirectedDataDir ----------------------------------------------------
+# 別名変換 (``windows_like_paths``) は、変換前のパスでも同じ場所を指すので、
+# 変換後のパスを使わずに変換前のパスで読み書きする実装を見逃す。変換後の
+# パスが別のディレクトリを指す状態を作る関数と、その上で 2 つの空間を同じ
+# テストで通す fixture を用意する。
+
+
+def redirect_data_dir(
+    monkeypatch: pytest.MonkeyPatch, data_root: Path, redirected: Path
+) -> None:
+    """変換を、``data_root`` の下を ``redirected`` の下へ写すものに差し替える.
+
+    ``paper_manager.helper._path`` の ``_convert`` を、``data_root`` の下の
+    パスを同じ相対位置の ``redirected`` の下へ写すものに、``_unconvert`` を
+    その逆 (``redirected`` の下を ``data_root`` の下へ戻す) に差し替える。
+    ``data_root`` の外のパスは、``os.path.abspath`` で絶対パスにするだけで
+    写さない。
+
+    変換後のパスでファイルを読み書きする実装は ``redirected`` の下を使い、
+    変換前のパスで読み書きする実装は ``data_root`` の下を使う。どちらの
+    パスを使ったかが、ファイルの置き場所から分かる。別名変換の
+    ``windows_like_paths`` は、変換後のパスも変換前のパスも同じ場所を指す
+    ので、変換前のパスを使う旧実装でも成功してしまい、この違いを検出
+    できない。変換後のパスを起点にしているかの確認には、この関数を使う。
+
+    fixture ではなく関数にしているのは、差し替える時点をテストが選ぶため。
+    ``sample_data`` などの fixture は ``Entry.get_pdf_dir`` で PDF の置き場所
+    を決めるので、差し替えの後に作ると ``redirected`` の下に書かれる。
+    変換前の場所にデータを作ってから差し替える使い方もある。両方の空間を
+    同じテストで通す場合は ``converted_space`` を使う。
+
+    ``redirected`` は作らない (必要なテストが作る)。Windows でも、
+    ``os.path.abspath`` と ``os.sep`` だけで動く。
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        差し替えに使う。テストの後に元へ戻る。
+    data_root : Path
+        データディレクトリ (変換前のパス)。
+    redirected : Path
+        写し先のディレクトリ。``data_root`` の下にあってはならない。
+    """
+    real, target = str(data_root), str(redirected)
+
+    def convert(path: str) -> str:
+        full = os.path.abspath(path)
+        if full == real or full.startswith(real + os.sep):
+            return target + full[len(real) :]
+        return full
+
+    def unconvert(path: str) -> str:
+        if path == target or path.startswith(target + os.sep):
+            return real + path[len(target) :]
+        return path
+
+    monkeypatch.setattr(_path_adapter, "_convert", convert)
+    monkeypatch.setattr(_path_adapter, "_unconvert", unconvert)
+
+
+class ConvertedSpace(NamedTuple):
+    """変換後のパスが実際に指す場所 (``converted_space`` が返す).
+
+    ``root`` と ``pdf`` は、テストがファイルを置いたり中身を調べたりする
+    ための、普通の (変換していない) パス。アプリのコードが ``to_fs_path``
+    で得るパス (``to_fs_path(DIRPATH_PDF)`` など) とは別物で、
+    ``windows_like_paths`` では同じ場所を指す別の形、``redirected`` では
+    別のディレクトリになる。
+    """
+
+    name: str  # ``"windows-like"`` または ``"redirected"``
+    root: Path  # 変換後のデータディレクトリの実体
+
+    @property
+    def pdf(self) -> Path:
+        """変換後の PDF ルートの実体 (``root`` の下の ``pdf``)."""
+        return self.root / _constants.DIRPATH_PDF.relative_to(
+            _constants.DIRPATH_DATA
+        )
+
+    @property
+    def redirected(self) -> bool:
+        """変換後の場所が、変換前のデータディレクトリと別の場所か."""
+        return self.name == "redirected"
+
+
+@pytest.fixture(params=["windows-like", "redirected"])
+def converted_space(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    data_paths: DataPaths,
+) -> ConvertedSpace:
+    """変換後のパスの空間を 2 通りに切り替えて、同じテストを通す.
+
+    autouse ではない。この fixture を引数に取ったテストは、次の 2 つの空間
+    のそれぞれで 1 回ずつ実行される。
+
+    - ``windows-like``: ``windows_like_paths`` を有効にする。変換後の
+      パスは ``//`` で始まる別名で、変換前のパスと同じ場所を指す。変換後の
+      パスと変換前のパスを混ぜた比較と ``relative_to`` が壊れる (混在の
+      検出)。Windows ではスキップする
+    - ``redirected``: ``redirect_data_dir`` で、変換後のパスを
+      ``tmp_path / "converted"`` の下へ写す。変換前のパスのデータ
+      ディレクトリには何も置かれず、変換前のパスで読み書きする実装は
+      何も見つけられない (変換の取りこぼしの検出)
+
+    2 つの空間の両方で成功すれば、変換後のパスを起点にしていて、変換後と
+    変換前のパスを混ぜていないと言える。
+
+    この fixture は引数に取った時点で変換を差し替える。``sample_data`` の
+    ように PDF の置き場所を ``Entry.get_pdf_dir`` で決める fixture より
+    後に要求すること (先に差し替えると、そちらのデータも変換後の場所に
+    作られる)。この fixture を使うテストは、通常は ``sample_data`` を
+    使わずに、アプリの関数 (``save_pdfs`` など) でデータを作る。
+
+    Parameters
+    ----------
+    request : pytest.FixtureRequest
+        パラメータ (空間の名前) の取得と、``windows_like_paths`` の要求に
+        使う。
+    monkeypatch : pytest.MonkeyPatch
+        ``redirected`` で変換を差し替えるのに使う。
+    tmp_path : Path
+        ``redirected`` の写し先を作る場所。
+    data_paths : DataPaths
+        変換前のデータの保存先。
+
+    Returns
+    -------
+    ConvertedSpace
+        この空間で変換後のパスが指す場所。
+    """
+    if request.param == "windows-like":
+        request.getfixturevalue("windows_like_paths")
+        return ConvertedSpace(name="windows-like", root=data_paths.root)
+    redirected = tmp_path / "converted"
+    redirect_data_dir(monkeypatch, data_paths.root, redirected)
+    return ConvertedSpace(name="redirected", root=redirected)
 
 
 # --- PageRunner -----------------------------------------------------------
