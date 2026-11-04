@@ -63,6 +63,7 @@ from pathlib import Path
 from typing import Any, NamedTuple, Optional, Union
 
 import pytest
+from pybtex.database import parse_string
 from conftest import (
     APP_TIMEOUT_SECONDS,
     PDF_BYTES,
@@ -1980,6 +1981,87 @@ def record_renames(
 def is_temporary(path: Path) -> bool:
     """``path`` が、一時名を経由する改名の一時名かを返す."""
     return path.name.startswith(TEMPORARY_PREFIX)
+
+
+# --- 登録・更新で付く引用キー (要件 13.1) ---
+
+# (筆頭著者, 引用キーの ``<筆頭著者の部分>``). 空白・``,``・``{``・``}`` は除かれる.
+UNREADABLE_KEY_AUTHORS = [
+    pytest.param("Smith, Alice", "SmithAlice", id="comma"),
+    pytest.param("King, Jr., Martin", "KingJr.Martin", id="suffix"),
+    pytest.param("Alice {Smith}", "AliceSmith", id="braces-and-space"),
+    pytest.param(
+        "Smith, Alice and Bob Jones", "SmithAlice", id="several-authors"
+    ),
+]
+
+
+def assert_citation_key_is_readable(key: str) -> None:
+    """``key`` が空白・``,``・``{``・``}`` を含まず、pybtex で読めることを確かめる."""
+    assert key
+    assert not any(char.isspace() or char in ",{}" for char in key)
+    parsed = parse_string(f"@article{{{key}, title = {{x}}}}", "bibtex")
+    assert len(parsed.entries) == 1
+    assert key in parsed.entries
+
+
+@pytest.mark.parametrize(("author", "stem"), UNREADABLE_KEY_AUTHORS)
+def test_register_entry_gives_a_readable_citation_key(
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    st_messages: StMessages,
+    author: str,
+    stem: str,
+) -> None:
+    """読めない文字を含む著者の論文を登録しても、読める識別子が付く (13.1).
+
+    登録された識別子は ``list.json``・session state・エントリの ``ID`` で
+    一致し、空白・``,``・``{``・``}`` を含まない。
+    """
+    paper_list, _ = seed_paper_list(data_paths)
+    entry = make_entry(author=author)
+
+    assert register_entry_to_list(paper_list, entry) is True
+
+    state = read_state(paper_list, data_paths)
+    key = f"{stem}2020_0"
+    assert list(state.file) == [key]
+    assert list(state.session) == [key]
+    assert state.file[key]["ID"] == key
+    assert state.file[key]["author"] == author
+    assert_citation_key_is_readable(key)
+    assert st_messages.error == []
+
+
+@pytest.mark.parametrize(("author", "stem"), UNREADABLE_KEY_AUTHORS)
+def test_update_entry_gives_a_readable_citation_key(
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    st_messages: StMessages,
+    author: str,
+    stem: str,
+) -> None:
+    """著者を読めない文字を含む名前に更新しても、読める識別子が付く (13.1).
+
+    更新でフォルダ名が変わると、論文は新しい識別子で登録し直される。その
+    識別子は ``list.json``・session state・エントリの ``ID`` で一致し、空白・
+    ``,``・``{``・``}`` を含まない。
+    """
+    existing = make_entry(author="Zed Original")
+    paper_list, (key,) = seed_paper_list(data_paths, existing)
+    assert key == "ZedOriginal2020_0"  # 前提 (新しい識別子とは別)
+    updated = edited(paper_list[key], author=author)
+
+    assert update_entry_in_list(paper_list, key, updated) is True
+
+    state = read_state(paper_list, data_paths)
+    new_key = f"{stem}2020_0"
+    assert list(state.file) == [new_key]
+    assert list(state.session) == [new_key]
+    assert state.file[new_key]["ID"] == new_key
+    assert state.file[new_key]["author"] == author
+    assert_citation_key_is_readable(new_key)
+    assert st_messages.error == []
 
 
 # --- 登録 (要件 3.1, 3.4) ---

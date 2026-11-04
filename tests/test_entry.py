@@ -760,9 +760,7 @@ def test_unique_citation_keys_applies_sanitize_without_duplicates() -> None:
             ["Émile2020_0", "émile2020_0_1"],
             id="non-ascii-case-differs",
         ),
-        pytest.param(
-            ["İ", "i̇"], ["İ", "i̇_1"], id="dotted-capital-i"
-        ),
+        pytest.param(["İ", "i̇"], ["İ", "i̇_1"], id="dotted-capital-i"),
         pytest.param(["ß", "SS"], ["ß", "SS"], id="sharp-s-is-not-ss"),
     ],
 )

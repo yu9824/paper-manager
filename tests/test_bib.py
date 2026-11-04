@@ -433,9 +433,7 @@ def test_entry_from_bib_without_author_uses_unknown_folder_name() -> None:
 @pytest.mark.parametrize(
     ("raw_author", "expected"),
     [
-        pytest.param(
-            "John Smith and ,", "John Smith", id="empty-name-at-end"
-        ),
+        pytest.param("John Smith and ,", "John Smith", id="empty-name-at-end"),
         pytest.param(
             ", and John Smith", "John Smith", id="empty-name-at-start"
         ),
