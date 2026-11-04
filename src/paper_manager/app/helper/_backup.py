@@ -6,9 +6,11 @@
 主な機能:
     - バックアップzipファイルの作成
     - バックアップzipファイルからの復元（書き込み前に、メンバー名と、書き込みに
-      使う結合の結果の両方を検証する）
+      使う結合の結果の両方を検証し、すべてのメンバーを読み出せることも確かめる）
     - バックアップ情報の取得
     - 復元で不正なメンバー名（データディレクトリの外を指しうる名前）の検出
+    - 復元で読み出せないメンバー（CRCの不一致、破損した圧縮データ、暗号化など）
+      の検出
 
 ファイル操作は、``to_fs_path`` で変換したパス（Windowsでは拡張長のパス）を
 起点に行う。zipのメンバー名は、変換後のパスどうしの ``relative_to`` から作り、
@@ -55,8 +57,11 @@ _logger = get_child_logger(__name__)
 # zipのメンバー名の区切り。zipの規格は ``/`` だが、Windowsで作られた
 # zipには ``\`` も現れ、Windowsでは ``\`` も区切りとして解釈される
 _SEPARATORS = re.compile(r"[/\\]")
-# 中止のメッセージに載せる、不正なメンバー名の件数の上限
-_MAX_LISTED_UNSAFE_NAMES = 10
+# 中止のメッセージに載せる、メンバー名の件数の上限
+_MAX_LISTED_NAMES = 10
+# 読み出せるかの確認で、1回に読むバイト数（``ZipFile.testzip`` と同じ。大きな
+# メンバーでも、メモリの使用量を一定に保つ）
+_READ_CHUNK_SIZE = 2**20
 
 
 def _is_unsafe_member_name(name: str) -> bool:
@@ -198,6 +203,33 @@ def _printable(name: str) -> str:
     )
 
 
+def _abort_message(reason: str, names: list[str]) -> str:
+    """復元を中止したときのメッセージを作る。
+
+    Parameters
+    ----------
+    reason : str
+        中止した理由（バックアップに含まれていたもの）を表す句。
+        「バックアップに、<reason>が含まれているため」の形で使う。
+    names : list[str]
+        理由に当たるメンバー名（1件以上）。
+
+    Returns
+    -------
+    str
+        中止したこと、データを変更していないこと、メンバー名（上限まで）。
+    """
+    lines = [
+        f"バックアップに、{reason}が含まれているため、復元を中止しました。"
+        "データは変更していません。"
+    ]
+    lines.extend(f"- {_printable(name)}" for name in names[:_MAX_LISTED_NAMES])
+    rest = len(names) - _MAX_LISTED_NAMES
+    if rest > 0:
+        lines.append(f"- ほか {rest} 件")
+    return "\n".join(lines)
+
+
 def _unsafe_members_message(unsafe_names: list[str]) -> str:
     """不正なメンバー名で復元を中止したときのメッセージを作る。
 
@@ -211,18 +243,70 @@ def _unsafe_members_message(unsafe_names: list[str]) -> str:
     str
         中止したこと、データを変更していないこと、不正な名前（上限まで）。
     """
-    lines = [
-        "バックアップに、データディレクトリの外を指しうる不正なメンバー名が"
-        "含まれているため、復元を中止しました。データは変更していません。"
-    ]
-    lines.extend(
-        f"- {_printable(name)}"
-        for name in unsafe_names[:_MAX_LISTED_UNSAFE_NAMES]
+    return _abort_message(
+        "データディレクトリの外を指しうる不正なメンバー名", unsafe_names
     )
-    rest = len(unsafe_names) - _MAX_LISTED_UNSAFE_NAMES
-    if rest > 0:
-        lines.append(f"- ほか {rest} 件")
-    return "\n".join(lines)
+
+
+def _unreadable_members_message(unreadable_names: list[str]) -> str:
+    """読み出せないメンバーがあって復元を中止したときのメッセージを作る。
+
+    Parameters
+    ----------
+    unreadable_names : list[str]
+        読み出せないメンバーの名前（1件以上）。
+
+    Returns
+    -------
+    str
+        中止したこと、データを変更していないこと、読み出せない名前（上限
+        まで）。
+    """
+    return _abort_message(
+        "読み出せないメンバー（内容の破損、暗号化、未対応の圧縮方式など）",
+        unreadable_names,
+    )
+
+
+def _find_unreadable_members(zip_file: zipfile.ZipFile) -> list[str]:
+    """読み出せないメンバーの名前を返す。
+
+    すべてのメンバーを最後まで読み、CRCを検証する。``ZipFile.testzip`` と
+    同じ読み方（チャンク読み）だが、次の点が異なる。
+
+    - 読み出しが例外になる場合（破損した圧縮データの ``zlib.error``、暗号化の
+      ``RuntimeError``、未対応の圧縮方式の ``NotImplementedError`` など）も、
+      そのメンバーの名前を記録して続ける（``testzip`` は ``BadZipFile`` 以外を
+      名前なしで送出する）
+    - 読み出せないメンバーを、最初の1つで止めずにすべて集める
+    - 同じ名前のメンバーが複数あっても、すべてを確かめる（``testzip`` は名前で
+      開くため、最後の1つしか読まない）
+
+    Parameters
+    ----------
+    zip_file : zipfile.ZipFile
+        読み取りで開いたzip。
+
+    Returns
+    -------
+    list[str]
+        読み出せないメンバーの名前（zipの順序、重複なし）。すべて読み出せれば
+        空のリスト。
+    """
+    unreadable: list[str] = []
+    for info in zip_file.infolist():
+        try:
+            with zip_file.open(info) as member:
+                while member.read(_READ_CHUNK_SIZE):
+                    pass
+        except Exception as e:
+            _logger.error(
+                f"Unreadable member in backup: {info.filename!r} "
+                f"({type(e).__name__}: {e})"
+            )
+            if info.filename not in unreadable:
+                unreadable.append(info.filename)
+    return unreadable
 
 
 def create_backup_zip(output_path: Optional[Union[Path, str]] = None) -> Union[BytesIO, Path]:
@@ -313,8 +397,17 @@ def restore_from_zip(
     ことも ``_find_escaping_members`` で確かめる（Windows の Python 3.9〜3.11
     の pathlib は、成分の途中のドライブ指定を結合のときに再解析するため、
     名前の判定だけに頼らない）。1つでも不正な名前があれば、既存ファイルの
-    退避も含めて何も書かずに ``(False, メッセージ)`` を返す。書き込みは、
-    変換後のパス（``to_fs_path``）を起点に行う。
+    退避も含めて何も書かずに ``(False, メッセージ)`` を返す。
+
+    名前の検証の後、書き込みの前に、すべてのメンバーを最後まで読み出せる
+    ことも確かめる（``_find_unreadable_members``。CRCの不一致、破損した
+    圧縮データ、暗号化、未対応の圧縮方式）。読み出せないメンバーが1つでも
+    あれば、同じく何も書かずに（``.json.backup`` も作らずに）
+    ``(False, メッセージ)`` を返す。書き込みの途中で読み出しに失敗すると、
+    開いた直後の空の ``list.json`` が残り、続けて復元したときにそれが
+    ``.json.backup`` に退避されて元の内容を失うため。
+
+    書き込みは、変換後のパス（``to_fs_path``）を起点に行う。
 
     Parameters
     ----------
@@ -328,7 +421,9 @@ def restore_from_zip(
     tuple[bool, str]
         (成功フラグ, メッセージ)。zipとして不正なときは
         ``(False, "無効なzipファイルです。")``、不正なメンバー名があるときは
-        ``(False, 不正な名前を挙げたメッセージ)``（データは変更されない）。
+        ``(False, 不正な名前を挙げたメッセージ)``、読み出せないメンバーが
+        あるときは ``(False, 読み出せない名前を挙げたメッセージ)``（どちらも
+        データは変更されない）。
     """
     try:
         if isinstance(zip_path, (Path, str)):
@@ -350,6 +445,14 @@ def restore_from_zip(
             unsafe_names = [name for name in names if name in rejected]
             if unsafe_names:
                 message = _unsafe_members_message(unsafe_names)
+                _logger.error(f"Restore aborted without writing.\n{message}")
+                return False, message
+
+            # 書き込みの前に、すべてのメンバーを読み出せることを確かめる。
+            # 書き込み先を開いた後に読み出しに失敗すると、空のファイルが残る
+            unreadable_names = _find_unreadable_members(zip_file)
+            if unreadable_names:
+                message = _unreadable_members_message(unreadable_names)
                 _logger.error(f"Restore aborted without writing.\n{message}")
                 return False, message
 

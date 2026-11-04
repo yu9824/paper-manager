@@ -18,9 +18,12 @@ import json
 import os
 import shutil
 import socket
+import struct
 import sys
 import tempfile
 import warnings
+import zipfile
+import zlib
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import ExitStack
 from pathlib import Path
@@ -754,6 +757,242 @@ def rerun_calls(monkeypatch: pytest.MonkeyPatch) -> list[None]:
     calls: list[None] = []
     monkeypatch.setattr(st, "rerun", lambda *a, **k: calls.append(None))
     return calls
+
+
+# --- UnreadableZips -------------------------------------------------------
+# 読み出せないメンバーを含む zip を、バイト列を直接書き換えて独立に作る。
+# ``create_backup_zip`` と ``restore_from_zip`` には頼らない。``zipfile`` で
+# 正常な zip を作ってから、対象のメンバーの中身またはヘッダの 1 か所だけを
+# 書き換える (中央ディレクトリは壊さないので、zip 自体は開ける)。作った
+# zip は、対象のメンバーだけが期待どおりの例外で読み出せず、ほかのメンバー
+# は正常に読み出せることを、その場で確かめてから返す (再現になっていない
+# zip でテストが空振りしないため)。
+
+# 読み出せない原因の種類 -> 読み出したときの例外と、メッセージの一部.
+# ``NotImplementedError`` は ``RuntimeError`` の派生なので、暗号化との区別は
+# メッセージで行う
+UNREADABLE_KINDS: dict[str, tuple[type[Exception], str]] = {
+    # 保存方式 ZIP_STORED の中身を 1 バイト書き換える (CRC が合わない)
+    "crc": (zipfile.BadZipFile, "Bad CRC-32"),
+    # 圧縮なしのブロックの deflate (``compresslevel=0``) の中身を 1 バイト
+    # 書き換える。展開は成功し、CRC だけが合わない
+    "deflate-crc": (zipfile.BadZipFile, "Bad CRC-32"),
+    # 圧縮データの先頭のブロックの種類を、予約の値に書き換える。展開で
+    # ``zlib.error`` になる
+    "deflate-error": (zlib.error, "invalid block type"),
+    # 汎用目的ビットフラグの bit 0 (暗号化) を立てる。``zipfile`` は暗号化の
+    # 書き込みに未対応なので、バイト列を書き換えて作る
+    "encrypted": (RuntimeError, "is encrypted"),
+    # 圧縮方式を、``zipfile`` が扱えない値 (99) にする
+    "unsupported": (
+        NotImplementedError,
+        "compression method is not supported",
+    ),
+}
+# 破損させる対象 (役割) -> zip のメンバー名. ``pdf`` が最後のメンバー
+UNREADABLE_ROLES = {
+    "version": "version.json",
+    "list": "list.json",
+    "config": "config.json",
+    "pdf": "pdf/2021 - A - T/00.pdf",
+}
+# 破損させる前の、各メンバーの中身 (キーの順が zip のメンバーの順)。
+# サンプルデータとは異なる値で、書き込まれれば検出できる
+UNREADABLE_MEMBERS = {
+    "version.json": json.dumps(
+        {"version": "0.0.0-test", "backup_date": "2020-01-02T03:04:05"}
+    ).encode("utf-8"),
+    "list.json": b'{"from-unreadable-zip": "list"}\n',
+    "config.json": b'{"from-unreadable-zip": "config"}\n',
+    "pdf/2021 - A - T/00.pdf": PDF_BYTES + b"%from-unreadable-zip\n",
+}
+# ``version.json`` 以外のメンバーを 1 つずつ、種類ごとに破損させる組み合わせ
+UNREADABLE_CASES = [
+    pytest.param(kind, role, id=f"{kind}-{role}")
+    for kind in UNREADABLE_KINDS
+    for role in ("list", "config", "pdf")
+]
+
+_ENCRYPTED_FLAG = 0x1
+_UNSUPPORTED_METHOD = 99
+
+
+class UnreadableZip(NamedTuple):
+    """``make_unreadable_zip`` が作った zip."""
+
+    data: bytes
+    unreadable: tuple[str, ...]  # 読み出せないメンバー名
+    readable: tuple[str, ...]  # 読み出せるメンバー名
+
+
+def _central_headers(data: bytes) -> dict[str, tuple[int, int]]:
+    """zip の各メンバーのヘッダの位置を、バイト列から直接読み取る.
+
+    ``zipfile`` を使わず、末尾の終端レコードから中央ディレクトリをたどる
+    (``zipfile`` は書き込みにだけ使う)。
+
+    Parameters
+    ----------
+    data : bytes
+        コメントも zip64 も持たない zip。
+
+    Returns
+    -------
+    dict[str, tuple[int, int]]
+        メンバー名 -> (ローカルヘッダの位置, 中央ディレクトリのヘッダの位置)。
+    """
+    end = data.rindex(b"PK\x05\x06")
+    (count,) = struct.unpack_from("<H", data, end + 10)
+    (position,) = struct.unpack_from("<I", data, end + 16)
+    headers = {}
+    for _ in range(count):
+        assert data[position : position + 4] == b"PK\x01\x02"
+        name_length, extra_length, comment_length = struct.unpack_from(
+            "<HHH", data, position + 28
+        )
+        (local,) = struct.unpack_from("<I", data, position + 42)
+        name = data[position + 46 : position + 46 + name_length]
+        headers[name.decode("utf-8")] = (local, position)
+        position += 46 + name_length + extra_length + comment_length
+    return headers
+
+
+def corrupt_zip_member(data: bytes, name: str, kind: str) -> bytes:
+    """zip のメンバー ``name`` を、``kind`` の原因で読み出せなくする.
+
+    ``kind`` に合う方式で作った zip を渡すこと: ``crc`` は ``ZIP_STORED``、
+    ``deflate-crc`` は ``compresslevel=0`` の ``ZIP_DEFLATED``、それ以外は
+    ``ZIP_DEFLATED``。書き換えるのは 1 か所 (1 バイト、またはヘッダの
+    2 バイト) だけ。
+
+    Parameters
+    ----------
+    data : bytes
+        正常な zip のバイト列。
+    name : str
+        読み出せなくするメンバーの名前。中身は空であってはならない。
+    kind : str
+        ``UNREADABLE_KINDS`` のキー。
+
+    Returns
+    -------
+    bytes
+        書き換えた zip のバイト列 (``data`` は変えない)。
+    """
+    local, central = _central_headers(data)[name]
+    name_length, extra_length = struct.unpack_from("<HH", data, local + 26)
+    start = local + 30 + name_length + extra_length
+    out = bytearray(data)
+    if kind == "crc":
+        out[start] ^= 0xFF
+    elif kind == "deflate-crc":
+        # 圧縮なしのブロックは、1 バイトのヘッダと LEN・NLEN (各 2 バイト)
+        # の後に中身が続く
+        out[start + 5] ^= 0xFF
+    elif kind == "deflate-error":
+        out[start] = 0x07  # BFINAL=1、BTYPE=3 (予約)
+    elif kind == "encrypted":
+        for offset in (local + 6, central + 8):
+            (flags,) = struct.unpack_from("<H", out, offset)
+            struct.pack_into("<H", out, offset, flags | _ENCRYPTED_FLAG)
+    elif kind == "unsupported":
+        for offset in (local + 8, central + 10):
+            struct.pack_into("<H", out, offset, _UNSUPPORTED_METHOD)
+    else:
+        raise ValueError(f"unknown kind of unreadable member: {kind!r}")
+    return bytes(out)
+
+
+def make_unreadable_zip(corruptions: Mapping[str, str]) -> UnreadableZip:
+    """読み出せないメンバーを含む、バックアップ形式の zip を作る.
+
+    メンバーは ``UNREADABLE_MEMBERS`` (``version.json``・``list.json``・
+    ``config.json``・PDF の順)。``corruptions`` で挙げた役割のメンバーだけが
+    読み出せない。
+
+    Parameters
+    ----------
+    corruptions : Mapping[str, str]
+        役割 (``UNREADABLE_ROLES`` のキー) -> 原因の種類
+        (``UNREADABLE_KINDS`` のキー)。
+
+    Returns
+    -------
+    UnreadableZip
+        zip のバイト列と、読み出せるメンバー・読み出せないメンバーの名前。
+    """
+    names = {
+        UNREADABLE_ROLES[role]: kind for role, kind in corruptions.items()
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        for name, content in UNREADABLE_MEMBERS.items():
+            kind = names.get(name)
+            zf.writestr(
+                name,
+                content,
+                compress_type=(
+                    zipfile.ZIP_STORED
+                    if kind == "crc"
+                    else zipfile.ZIP_DEFLATED
+                ),
+                compresslevel=0 if kind == "deflate-crc" else None,
+            )
+    data = buffer.getvalue()
+    for name, kind in names.items():
+        data = corrupt_zip_member(data, name, kind)
+
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        for name, content in UNREADABLE_MEMBERS.items():
+            if name in names:
+                exception, message = UNREADABLE_KINDS[names[name]]
+                with pytest.raises(exception, match=message):
+                    zf.read(name)
+            else:
+                assert zf.read(name) == content
+    return UnreadableZip(
+        data=data,
+        unreadable=tuple(names),
+        readable=tuple(n for n in UNREADABLE_MEMBERS if n not in names),
+    )
+
+
+TreeState = dict[str, tuple[str, Optional[bytes], int]]
+
+
+def tree_state(root: Path) -> TreeState:
+    """``root`` 配下のすべてのファイル・ディレクトリの状態を返す.
+
+    変更の有無を厳密に比べるための記録。中身のバイト列だけでなく、一覧
+    (増減)、種類、更新時刻 (ナノ秒) も含む。同じ中身で書き直されたファイルも
+    更新時刻で検出できる。
+
+    Parameters
+    ----------
+    root : Path
+        調べるディレクトリ。
+
+    Returns
+    -------
+    TreeState
+        ``root`` からの相対パス (``/`` 区切り。``root`` 自身は ``.``) ->
+        (種類 ``file`` / ``dir`` / ``link``、ファイルは中身・リンクは
+        リンク先、ディレクトリは ``None``、更新時刻)。
+    """
+    state: TreeState = {}
+    for path in [root, *sorted(root.rglob("*"))]:
+        if path.is_symlink():
+            kind, content = "link", os.fsencode(os.readlink(path))
+        elif path.is_dir():
+            kind, content = "dir", None
+        else:
+            kind, content = "file", path.read_bytes()
+        state[path.relative_to(root).as_posix()] = (
+            kind,
+            content,
+            path.lstat().st_mtime_ns,
+        )
+    return state
 
 
 # --- WindowsLikePaths -----------------------------------------------------

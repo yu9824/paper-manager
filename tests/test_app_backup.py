@@ -21,6 +21,13 @@
   修正): 絶対パス・ドライブ指定・``..`` の成分・空の名前を 1 つでも含む
   zip は、何も書かずに中止して失敗を返す。正当なバックアップ (日本語名、
   ``\\`` を含むフォルダ名、旧形式の ``pdf/<名前>.pdf``) は受け付ける
+- 復元の読み出しの検証 (known-bug-fixes の要件 9.4): 読み出せないメンバー
+  (内容の CRC の不一致、破損した圧縮データ、暗号化、未対応の圧縮方式) を
+  1 つでも含む zip は、メンバー名の検証を通っても、何も書かずに中止して
+  失敗を返し、読み出せないメンバー名をメッセージに載せる。データ
+  ディレクトリ (``.json.backup`` を含む) は更新時刻まで変わらず、続けて
+  正常な zip を復元すると、``.json.backup`` に中止前の内容が入る。画面から
+  でも同じ
 - バックアップの作成と復元が、変換後のパス (``to_fs_path``) を起点に行われる
   こと。変換がデータディレクトリを別のディレクトリへ写す状態での読み書き
   先と、Windows のパスの扱いを模した環境 (``windows_like_paths``) での
@@ -53,6 +60,7 @@ import json
 import os
 import re
 import shutil
+import warnings
 import zipfile
 from collections.abc import Callable, Iterator, Mapping
 from datetime import datetime
@@ -65,14 +73,19 @@ from conftest import (
     _FORBIDDEN_PATHS,
     _TEMP_ROOT,
     PDF_BYTES,
+    UNREADABLE_CASES,
+    UNREADABLE_KINDS,
     ConvertedSpace,
     DataPaths,
     FakeUpload,
     SampleData,
     Uploads,
     check_isolation,
+    corrupt_zip_member,
+    make_unreadable_zip,
     redirect_data_dir,
     run_page,
+    tree_state,
     write_pdf,
 )
 from streamlit.testing.v1 import AppTest
@@ -1205,6 +1218,334 @@ def test_restore_aborts_on_a_drive_in_a_component_when_the_join_reparses_it(
     assert snapshot_tree(data_paths.root.parent) == tree_before
 
 
+# --- 要件 9.4: 読み出せないメンバーを含む zip の復元 ------------------------
+# 要件の番号は known-bug-fixes spec のもの. メンバー名の検証を通っても、
+# 読み出せないメンバー (内容の CRC の不一致、破損した圧縮データ、暗号化、
+# 未対応の圧縮方式) を含む zip は、書き込みの前に中止しなければならない.
+# 書き込みの途中で読み出しに失敗すると、書き込み先を開いた後の 0 バイトの
+# ``list.json`` が残り、続けて正常な zip を復元すると ``.json.backup`` の
+# 旧内容も失われる. zip は ``conftest.make_unreadable_zip`` が、バイト列の
+# 書き換えで独立に作る (zip は開けるが、対象のメンバーだけが読み出せない).
+
+# 中止のメッセージが含む、データを変更していないことの記述
+UNCHANGED_MESSAGE = "データは変更していません"
+BACKUP_NAMES = ("list.json.backup", "config.json.backup")
+# 続けて復元する、正常なバックアップのメンバー
+FOLLOWING_BACKUP_MEMBERS = {
+    LIST_NAME: NEW_LIST,
+    CONFIG_NAME: NEW_CONFIG,
+    "pdf/2022 - B - U/00.pdf": PDF_BYTES,
+}
+
+
+def assert_no_backup_files(data_root: Path) -> None:
+    """``.json.backup`` が作られていないことを確かめる."""
+    for name in BACKUP_NAMES:
+        assert not (data_root / name).exists(), name
+
+
+@pytest.mark.parametrize(("kind", "role"), UNREADABLE_CASES)
+def test_restore_aborts_without_writing_on_an_unreadable_member(
+    kind: str,
+    role: str,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    sample_data: SampleData,
+    data_paths: DataPaths,
+) -> None:
+    """読み出せないメンバーが 1 つでもあれば、何も書かずに失敗を返す (要件 9.4).
+
+    読み出せないメンバーは、``list.json``・``config.json``・最後の PDF の
+    それぞれ. 最後の PDF が読み出せないときも、その前の ``list.json`` と
+    ``config.json`` は書かれない (先頭から順に書く実装は、読み出せない
+    メンバーに届く前に書いてしまうため). データディレクトリ
+    (``.json.backup`` を含む. 更新時刻も) も、その外 (親ディレクトリ) も
+    変わらない. メッセージとログに、読み出せないメンバーの名前が載り、
+    ログには読み出せなかった理由も載る.
+    """
+    unreadable = make_unreadable_zip({role: kind})
+    backup = tmp_path / "unreadable.zip"
+    backup.write_bytes(unreadable.data)
+    outside = data_paths.root.parent
+    state_before = tree_state(outside)
+    assert data_paths.list_file.is_file()  # 書き換えられれば検出できる
+
+    success, message = restore_from_zip(backup)
+
+    assert success is False
+    assert message != BAD_ZIP_MESSAGE
+    [name] = unreadable.unreadable
+    assert name in message
+    assert UNCHANGED_MESSAGE in message
+    for readable in unreadable.readable:
+        assert readable not in message
+    assert tree_state(outside) == state_before
+    assert_no_backup_files(data_paths.root)
+    # ログには名前と、読み出せなかった理由 (例外のメッセージ) が載る
+    assert name in caplog.text
+    assert UNREADABLE_KINDS[kind][1] in caplog.text
+
+
+def stored_zip_with_corrupt_first_copy(name: str) -> bytes:
+    """同じ名前のメンバーを 2 つ持つ zip を作り、先の方だけ CRC を壊して返す.
+
+    ``zipfile`` で ``ZIP_STORED`` の zip を作り (重複名の警告は無視する)、
+    先のコピーの中身のバイトを 1 つだけ書き換える。後のコピーは正しい。
+    """
+    first, second = PDF_BYTES + b"first copy", PDF_BYTES + b"later copy"
+    buffer = BytesIO()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as zf:
+            zf.writestr(LIST_NAME, NEW_LIST)
+            zf.writestr(name, first)
+            zf.writestr(name, second)
+    data = buffer.getvalue()
+    assert data.count(first) == 1  # 前提: 書き換える位置が一意
+    return data.replace(first, first[:-1] + b"X")
+
+
+def test_restore_aborts_when_the_first_of_two_same_named_members_is_corrupt(
+    tmp_path: Path, sample_data: SampleData, data_paths: DataPaths
+) -> None:
+    """同じ名前のメンバーは、どのコピーも確かめ、読み出せなければ中止する (9.4).
+
+    名前で開く実装は、後のコピーしか確かめない。先のコピーが壊れていても、
+    後のコピーが正しければ見逃して、復元を始めてしまう。
+    """
+    name = "pdf/2021 - A - T/00.pdf"
+    backup = tmp_path / "duplicated.zip"
+    backup.write_bytes(stored_zip_with_corrupt_first_copy(name))
+    outside = data_paths.root.parent
+    state_before = tree_state(outside)
+
+    success, message = restore_from_zip(backup)
+
+    assert success is False
+    assert name in message
+    assert UNCHANGED_MESSAGE in message
+    assert tree_state(outside) == state_before
+    assert_no_backup_files(data_paths.root)
+
+
+def test_restore_escapes_control_characters_of_an_unreadable_member_name(
+    tmp_path: Path, sample_data: SampleData, data_paths: DataPaths
+) -> None:
+    """読み出せないメンバーの名前の制御文字は、エスケープして表示する (9.4).
+
+    端末の制御文字 (ESC など) や改行をそのままエラーに出さない。
+    """
+    name = "pdf/2021 - A - T\x1b[31m\tx/00.pdf"
+    backup = tmp_path / "control.zip"
+    backup.write_bytes(stored_zip_with_corrupt_first_copy(name))
+
+    success, message = restore_from_zip(backup)
+
+    assert success is False
+    assert "\x1b" not in message and "\t" not in message
+    assert "pdf/2021 - A - T\\x1b[31m\\tx/00.pdf" in message
+
+
+@pytest.mark.parametrize("kind", UNREADABLE_KINDS)
+def test_restore_aborts_on_an_unreadable_member_of_a_memory_zip(
+    kind: str, sample_data: SampleData, data_paths: DataPaths
+) -> None:
+    """メモリ上の zip (画面が渡す形) でも、読み出せなければ中止する (要件 9.4)."""
+    unreadable = make_unreadable_zip({"list": kind})
+    state_before = tree_state(data_paths.root.parent)
+
+    success, message = restore_from_zip(BytesIO(unreadable.data))
+
+    assert success is False
+    assert "list.json" in message
+    assert tree_state(data_paths.root.parent) == state_before
+    assert_no_backup_files(data_paths.root)
+
+
+@pytest.mark.parametrize("kind", UNREADABLE_KINDS)
+def test_restore_aborts_on_an_unreadable_version_info(
+    kind: str,
+    tmp_path: Path,
+    sample_data: SampleData,
+    data_paths: DataPaths,
+) -> None:
+    """``version.json`` が読み出せなくても、何も書かずに中止する (要件 9.4).
+
+    ``version.json`` は書き込みの前に読まれるが、``list.json`` などと同じく
+    読み出せないメンバーとして扱い、メッセージに名前を載せる.
+    """
+    backup = tmp_path / "unreadable.zip"
+    backup.write_bytes(make_unreadable_zip({"version": kind}).data)
+    state_before = tree_state(data_paths.root.parent)
+
+    success, message = restore_from_zip(backup)
+
+    assert success is False
+    assert message != BAD_ZIP_MESSAGE
+    assert "version.json" in message
+    assert UNCHANGED_MESSAGE in message
+    assert tree_state(data_paths.root.parent) == state_before
+
+
+def test_restore_reports_every_unreadable_member(
+    tmp_path: Path, sample_data: SampleData, data_paths: DataPaths
+) -> None:
+    """読み出せないメンバーが複数あれば、すべてをメッセージに載せる (要件 9.4).
+
+    原因が異なっても (CRC の不一致、暗号化、破損した圧縮データ)、読み出せる
+    ``version.json`` と ``config.json`` は載せない.
+    """
+    unreadable = make_unreadable_zip(
+        {"list": "crc", "config": "encrypted", "pdf": "deflate-error"}
+    )
+    backup = tmp_path / "unreadable.zip"
+    backup.write_bytes(unreadable.data)
+    state_before = tree_state(data_paths.root.parent)
+
+    success, message = restore_from_zip(backup)
+
+    assert success is False
+    assert unreadable.unreadable == (
+        "list.json",
+        "config.json",
+        "pdf/2021 - A - T/00.pdf",
+    )
+    for name in unreadable.unreadable:
+        assert name in message
+    assert tree_state(data_paths.root.parent) == state_before
+
+
+def test_restore_keeps_the_listed_unreadable_names_short(
+    tmp_path: Path, sample_data: SampleData, data_paths: DataPaths
+) -> None:
+    """読み出せないメンバーが多くても、載せる名前は上限までに抑える (要件 9.4)."""
+    names = [
+        f"pdf/2021 - A - T/{n:02d}.pdf" for n in range(MAX_LISTED_NAMES + 5)
+    ]
+    with zipfile.ZipFile(tmp_path / "unreadable.zip", "w") as zf:
+        for name in names:
+            zf.writestr(name, PDF_BYTES, compress_type=zipfile.ZIP_STORED)
+    data = (tmp_path / "unreadable.zip").read_bytes()
+    for name in names:
+        data = corrupt_zip_member(data, name, "crc")
+    (tmp_path / "unreadable.zip").write_bytes(data)
+    state_before = tree_state(data_paths.root.parent)
+
+    success, message = restore_from_zip(tmp_path / "unreadable.zip")
+
+    assert success is False
+    assert message.count("pdf/2021 - A - T/") == MAX_LISTED_NAMES
+    assert names[0] in message
+    assert names[-1] not in message
+    assert "ほか 5 件" in message
+    assert tree_state(data_paths.root.parent) == state_before
+
+
+def test_restore_verifies_a_member_larger_than_the_read_chunk_to_the_end(
+    tmp_path: Path, sample_data: SampleData, data_paths: DataPaths
+) -> None:
+    """読み出しの確認は、1 回に読む量より大きいメンバーも最後まで行う (要件 9.4).
+
+    3 MiB の PDF の最後の 1 バイトだけを書き換えた zip (CRC が合わない) を、
+    1 回分だけ読んで止める実装は見逃す.
+    """
+    big = b"x" * (3 * 2**20)
+    path = tmp_path / "big.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr(LIST_NAME, NEW_LIST)
+        zf.writestr("pdf/2021 - A - T/00.pdf", big)
+    data = bytearray(path.read_bytes())
+    # 保存方式 ZIP_STORED なので、中身がそのまま並ぶ。その最後の 1 バイト
+    data[data.index(big) + len(big) - 1] ^= 0xFF
+    path.write_bytes(bytes(data))
+    state_before = tree_state(data_paths.root.parent)
+
+    success, message = restore_from_zip(path)
+
+    assert success is False
+    assert "pdf/2021 - A - T/00.pdf" in message
+    assert tree_state(data_paths.root.parent) == state_before
+
+
+@pytest.mark.parametrize("kind", UNREADABLE_KINDS)
+def test_restore_keeps_the_original_in_the_backup_after_an_aborted_one(
+    kind: str,
+    tmp_path: Path,
+    sample_data: SampleData,
+    snapshot: Snapshot,
+    data_paths: DataPaths,
+) -> None:
+    """中止した復元の後に正常な zip を復元しても、元の内容を失わない (要件 9.4).
+
+    読み出せない ``list.json`` を含む zip の復元が中止された後、正常な zip を
+    復元すると成功し、``.json.backup`` には、中止した復元の前の内容
+    (サンプルの論文リストと設定) が入る. 書き込みの途中で失敗する実装は、
+    0 バイトの ``list.json`` を残し、この復元がそれを退避して元の内容を
+    失う.
+    """
+    broken = tmp_path / "unreadable.zip"
+    broken.write_bytes(make_unreadable_zip({"list": kind}).data)
+    following = write_zip(tmp_path / "following.zip", FOLLOWING_BACKUP_MEMBERS)
+
+    aborted, _ = restore_from_zip(broken)
+    success, message = restore_from_zip(following)
+
+    assert aborted is False
+    assert success, message
+    assert data_paths.list_file.read_bytes() == NEW_LIST
+    assert data_paths.config_file.read_bytes() == NEW_CONFIG
+    assert (data_paths.root / "list.json.backup").read_bytes() == (
+        snapshot.list_json
+    )
+    assert (data_paths.root / "config.json.backup").read_bytes() == (
+        snapshot.config_json
+    )
+    assert read_pdfs(data_paths.root) == {
+        **snapshot.pdfs,
+        "pdf/2022 - B - U/00.pdf": PDF_BYTES,
+    }
+
+
+@pytest.mark.parametrize(
+    ("kind", "role"),
+    [
+        pytest.param("crc", "list", id="crc-list"),
+        pytest.param("encrypted", "pdf", id="encrypted-pdf"),
+    ],
+)
+def test_restore_aborts_on_an_unreadable_member_in_the_converted_space(
+    kind: str,
+    role: str,
+    tmp_path: Path,
+    converted_space: ConvertedSpace,
+    data_paths: DataPaths,
+) -> None:
+    """変換後のパスの空間でも、読み出せなければ何も書かずに中止する (要件 9.4).
+
+    変換後のデータディレクトリ (Windows のパスを模した別名、または別の
+    ディレクトリ) にも、変換前のデータディレクトリにも、何も書かれず、
+    ``.json.backup`` も作られない.
+    """
+    converted = converted_space.root
+    converted.mkdir(parents=True, exist_ok=True)
+    (converted / LIST_NAME).write_bytes(OLD_LIST)
+    (converted / CONFIG_NAME).write_bytes(OLD_CONFIG)
+    write_pdf(converted_space.pdf / "2020 - X - Y" / "00.pdf")
+    backup = tmp_path / "unreadable.zip"
+    backup.write_bytes(make_unreadable_zip({role: kind}).data)
+    states_before = (tree_state(converted), tree_state(data_paths.root))
+
+    success, message = restore_from_zip(backup)
+
+    assert success is False
+    assert UNCHANGED_MESSAGE in message
+    assert (tree_state(converted), tree_state(data_paths.root)) == (
+        states_before
+    )
+    assert_no_backup_files(converted)
+    assert_no_backup_files(data_paths.root)
+
+
 # --- 要件 1.2: 変換後のパスを起点にした作成と復元 ---------------------------
 # ``windows_like_paths`` は、変換後のパス (``//x``) を変換前のパス (``/x``) と
 # 別のルートとして扱わせる. 変換後のパスどうしで ``relative_to`` を使わないと
@@ -1662,6 +2003,84 @@ def test_restore_page_writes_into_the_converted_data_dir(
     # 変換前のパスの下には、ファイルが 1 つも書かれない (``PaperList`` は
     # 作るたびに空の PDF ルートを作るので、ディレクトリは数えない)
     assert [p for p in data_paths.root.rglob("*") if p.is_file()] == []
+
+
+# --- 要件 9.4, 9.3: 画面からの復元で、読み出せないメンバーを含む zip ----------
+# プレビュー (メンバー名の一覧と ``version.json``) は読み出せるメンバーだけ
+# で成り立つので、ボタンが出る. 押すと、共通の復元処理が書き込みの前に中止
+# する.
+
+
+@pytest.mark.parametrize(("kind", "role"), UNREADABLE_CASES)
+def test_restore_page_aborts_on_an_unreadable_member_and_changes_nothing(
+    kind: str,
+    role: str,
+    fake_file_uploader: UploaderInstaller,
+    rerun_calls: list[None],
+    outside_cleanup: None,
+    sample_data: SampleData,
+    data_paths: DataPaths,
+) -> None:
+    """読み出せないメンバーを含む zip は、画面からでも何も書かずに中止する.
+
+    エラーが読み出せないメンバーの名前を挙げて表示され、成功は表示されず、
+    再描画もされない (再描画するとエラーが消える). 論文リスト・設定・PDF を
+    含むデータディレクトリ (退避ファイルも増えない. 更新時刻も) も、その外
+    (親ディレクトリ) も変わらない (要件 9.4, 9.3).
+    """
+    unreadable = make_unreadable_zip({role: kind})
+    at = open_restore_page(fake_file_uploader, unreadable.data)
+    outside = data_paths.root.parent
+    state_before = tree_state(outside)
+    assert data_paths.list_file.is_file()  # 書き換えられれば検出できる
+
+    at = click_restore(at)
+
+    [error] = at.error
+    [name] = unreadable.unreadable
+    assert name in error.value
+    assert error.value != BAD_ZIP_MESSAGE
+    assert UNCHANGED_MESSAGE in error.value
+    assert not at.success
+    assert rerun_calls == []
+    assert tree_state(outside) == state_before
+    assert_no_backup_files(data_paths.root)
+
+
+@pytest.mark.usefixtures("rerun_calls")
+def test_restore_page_keeps_the_original_after_an_aborted_restore(
+    tmp_path: Path,
+    fake_file_uploader: UploaderInstaller,
+    outside_cleanup: None,
+    sample_data: SampleData,
+    snapshot: Snapshot,
+    data_paths: DataPaths,
+) -> None:
+    """中止した後に正当なバックアップを復元しても、元の内容を失わない.
+
+    読み出せない ``list.json`` を含む zip の復元が中止された後、同じ画面から
+    正当なバックアップを復元すると成功し、``.json.backup`` には、中止した
+    復元の前の内容が入る (要件 9.4, 9.3).
+    """
+    broken = make_unreadable_zip({"list": "crc"}).data
+    aborted = restore_on_page(fake_file_uploader, broken)
+    assert [e.value for e in aborted.error]  # 前提: 中止してエラーが出た
+    backup = write_zip(
+        tmp_path / "following.zip", FOLLOWING_BACKUP_MEMBERS
+    ).read_bytes()
+
+    at = restore_on_page(fake_file_uploader, backup)
+
+    assert not at.error
+    [success] = at.success
+    assert re.search(r"PDF\D*1(?!\d)", success.value), success.value
+    assert data_paths.list_file.read_bytes() == NEW_LIST
+    assert (data_paths.root / "list.json.backup").read_bytes() == (
+        snapshot.list_json
+    )
+    assert (data_paths.root / "config.json.backup").read_bytes() == (
+        snapshot.config_json
+    )
 
 
 # --- 要件 1.2: バックアップのページの PDF の件数 (BackupPage) ---------------

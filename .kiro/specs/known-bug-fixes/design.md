@@ -536,7 +536,7 @@ def format_person(person: "pybtex.database.Person") -> str: ...
 - 復元は、zip を開いた直後（`BadZipFile` の判定の後）に全メンバー名を検証し、1 つでも不正なら何も書かずに `(False, message)` を返す（9.1、9.2）。既存の「無効なzipファイルです。」の文言と、`list.json.backup` / `config.json.backup` への退避は変えない
 - 不正なメンバー名: POSIX の絶対パス（`/x`、`//x`）、Windows のドライブ・ルート指定（`C:/x`、`C:x`、`\x`、UNC）、`/` と `\` のどちらで分割しても成分が `..` に等しいもの、データディレクトリと結合して正規化した結果がデータディレクトリの外になるもの。`resolve()` は使わない（利用者のシンボリックリンクを壊さない）
 - 復元の書き込み先は `to_fs_path(DIRPATH_DATA) / member` とする
-- メンバー名の検証の後、書き込みの前に、すべてのメンバーを読み出せることを確かめる（`ZipFile.testzip()` による CRC の検証。破損した圧縮データや暗号化で読み出し自体が例外になる場合も、書き込み前に捕捉して中止する）。読み出せないメンバーがあれば、何も書かず、`.json.backup` も作らずに `(False, message)` を返す。message には読み出せないメンバー名（分かる場合）を含める（9.4）
+- メンバー名の検証の後、書き込みの前に、すべてのメンバーを読み出せることを確かめる（`_find_unreadable_members`）。`infolist()` の各 `ZipInfo` を `open(info)` で開き、1 MiB ずつ最後まで読んで CRC を検証する自前のループで、`Exception` を捕捉して名前を記録し続け、読み出せないメンバーをすべて集める（重複名のメンバーも `ZipInfo` で開くので、すべてのコピーを確かめる）。`ZipFile.testzip()` は使わない: `BadZipFile` だけを名前付きで返し、`zlib.error`（破損した圧縮データ）・`RuntimeError`（暗号化）・`NotImplementedError`（未対応の圧縮方式）は名前なしの例外のまま漏れること、最初の 1 件で止まること、名前で開くので重複名は最後のコピーしか確かめないことが理由。読み出せないメンバーがあれば、何も書かず、`.json.backup` も作らずに `(False, message)` を返す。message には読み出せないメンバー名を含め、不正名のメッセージと同じ書式（上限 10 件、制御文字はエスケープ）にする（9.4）
 
 **Dependencies**
 - Inbound: RestorePage、Cli — 復元（P0）
@@ -556,6 +556,8 @@ def restore_from_zip(
 ) -> tuple[bool, str]: ...
 # (False, invalid-zip message) for BadZipFile,
 # (False, abort message listing unsafe names) when any name is unsafe,
+# (False, abort message listing unreadable members) when any member cannot
+# be read to the end (bad CRC, corrupt or encrypted or unsupported data),
 # (True, message with the number of restored PDFs) otherwise.
 ```
 - Postconditions: `False` を返すとき、データディレクトリの中身は呼び出し前と同一
@@ -563,7 +565,7 @@ def restore_from_zip(
 **Implementation Notes**
 - Integration: 画面（`pages/_restore.py`）は `restore_from_zip(BytesIO(...), update_session_state=True)` を呼び、複製した実装を削除する。CLI は既存のまま helper を呼ぶ（9.3）
 - Validation: 正当なバックアップ（日本語名、POSIX で作った `\` を含むフォルダ名、旧形式のフラットな `pdf/<name>.pdf`）がすべて受け付けられることを検証する
-- Risks: なし（検証は書き込み前に完結する）
+- Risks: 検証は書き込み前に完結する。復元しない無関係なメンバー（アプリが作るバックアップには無い）が読み出せなくても中止する。`MemoryError` も読み出せないものとして中止する（何も書かない側に倒れる）。書き込みの途中の失敗（ディスクがいっぱい・権限）は対象外で、復元の書き込みは原子的ではない
 
 #### OrphanPdf
 

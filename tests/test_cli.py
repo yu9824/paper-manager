@@ -21,7 +21,10 @@ known-bug-fixes spec の番号)。
   変えないこと (要件 10.6)、``--force`` なしでは確認入力が ``yes`` / ``y``
   の場合だけ復元し、それ以外では復元せず終了コード 0 で終了すること
   (要件 10.7)、復元が失敗を返したときにエラーメッセージを表示して終了
-  コード 1 になること (要件 10.8)
+  コード 1 になること (要件 10.8)。不正なメンバー名や、読み出せないメンバー
+  (CRC の不一致、破損した圧縮データ、暗号化など) を含む zip の復元が、データ
+  ディレクトリを変えずに終了コード 1 になること (known-bug-fixes の要件 9.3,
+  9.4)
 
 Streamlit の起動関数 (``cli.main_run`` / ``cli.main_version``) は、受け取った
 引数を記録するだけの関数に差し替える (``streamlit_calls`` fixture)。差し替えは
@@ -71,9 +74,12 @@ from conftest import (
     _FORBIDDEN_PATHS,
     _TEMP_ROOT,
     APP_DIR,
+    UNREADABLE_CASES,
     DataPaths,
     SampleData,
     check_isolation,
+    make_unreadable_zip,
+    tree_state,
 )
 
 import paper_manager
@@ -1492,3 +1498,84 @@ def test_restore_of_a_zip_with_an_unsafe_member_exits_with_1_and_keeps_data(
     assert not escape_targets.exists()
     assert not (tmp_path / _ABSOLUTE_NAME).exists()
     assert member in capsys.readouterr().out
+
+
+# --- restore: 読み出せないメンバーを含む zip (要件 9.3, 9.4) ----------------
+#
+# 内容の CRC が壊れた、圧縮データが壊れた、暗号化された、未対応の圧縮方式の
+# メンバーを含む zip は、メンバー名の検証を通っても、helper の
+# ``restore_from_zip`` が書き込みの前に中止する (``tests/test_app_backup.py``
+# が網羅する)。ここでは、CLI がその失敗を終了コード 1 にし、データディレク
+# トリ (``.json.backup`` を含む。更新時刻も) を変えないことを確かめる。zip は
+# ``conftest.make_unreadable_zip`` が、バイト列の書き換えで独立に作る。
+
+_UNCHANGED_MESSAGE = "データは変更していません"
+
+
+@pytest.mark.parametrize("via", ["command", "function"])
+@pytest.mark.parametrize(("kind", "role"), UNREADABLE_CASES)
+def test_restore_of_an_unreadable_zip_exits_with_1_and_keeps_data(
+    kind: str,
+    role: str,
+    via: str,
+    tmp_path: Path,
+    sample_data: SampleData,
+    data_paths: DataPaths,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """読み出せないメンバーを含む zip は、データを変えず、終了コード 1 になる.
+
+    ``--force`` ありで、``main`` を経由する場合と、引数のリストを受け取る
+    ``restore`` を直接呼ぶ場合を確かめる。メッセージには読み出せない
+    メンバーの名前と、データを変更していないことが載る。
+    """
+    unreadable = make_unreadable_zip({role: kind})
+    backup = tmp_path / "unreadable.zip"
+    backup.write_bytes(unreadable.data)
+    arguments = [str(backup), "--force"]
+    state_before = tree_state(data_paths.root.parent)
+    assert data_paths.list_file.is_file()  # 書き換えられれば検出できる
+
+    if via == "command":
+        code = _main_exit_code(["restore", *arguments])
+    else:
+        with pytest.raises(SystemExit) as excinfo:
+            cli_main.restore(arguments)
+        code = excinfo.value.code
+
+    assert code == 1
+    assert tree_state(data_paths.root.parent) == state_before
+    output = capsys.readouterr().out
+    [name] = unreadable.unreadable
+    assert name in output
+    assert _UNCHANGED_MESSAGE in output
+    for backup_name in ("list.json.backup", "config.json.backup"):
+        assert not (data_paths.root / backup_name).exists()
+
+
+@pytest.mark.parametrize("via", ["command", "function"])
+def test_restore_of_an_unreadable_zip_after_the_confirmation_keeps_data(
+    via: str,
+    tmp_path: Path,
+    sample_data: SampleData,
+    data_paths: DataPaths,
+    fake_input: Callable[[Optional[str]], list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """確認に yes と答えても、読み出せない zip はデータを変えずに終了コード 1."""
+    backup = tmp_path / "unreadable.zip"
+    backup.write_bytes(make_unreadable_zip({"list": "crc"}).data)
+    prompts = fake_input("y")
+    state_before = tree_state(data_paths.root.parent)
+
+    if via == "command":
+        code = _main_exit_code(["restore", str(backup)])
+    else:
+        with pytest.raises(SystemExit) as excinfo:
+            cli_main.restore([str(backup)])
+        code = excinfo.value.code
+
+    assert code == 1
+    assert len(prompts) == 1
+    assert tree_state(data_paths.root.parent) == state_before
+    assert "list.json" in capsys.readouterr().out
