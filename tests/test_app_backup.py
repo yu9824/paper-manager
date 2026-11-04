@@ -228,7 +228,13 @@ def write_zip(path: Path, members: Mapping[str, bytes]) -> Path:
     """
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, content in members.items():
-            zf.writestr(name, content)
+            if name:
+                zf.writestr(name, content)
+            else:
+                # Python 3.9〜3.11 の ``writestr`` は、空の名前を文字列で
+                # 受け取ると IndexError になる (3.12 で直った)。
+                # ``ZipInfo`` で渡せば、どの版でも空の名前のメンバーを書ける
+                zf.writestr(zipfile.ZipInfo(name), content)
     return path
 
 
