@@ -74,7 +74,7 @@ __all__ = ("Entry", "PaperList")  # __all__ はタプル
 ## Code Organization Principles
 
 - **永続化の単一経路**: 論文リストの保存は `save_paper_list()`（session state とファイルの両方。成否を `bool` で返す）を通す。ページから直接 `list.json` を書かない。`config_page` は読み込みだけで、書き戻さない
-- **ファイル操作の起点は変換したパス**: PDF ルートやデータディレクトリの下のファイルを操作するコードは `to_fs_path()` を通した起点から始め、表示は `to_display_path()` を通す（`app/components`・`app/helper` の PDF 保存/削除、孤立 PDF、バックアップ/復元、一覧ページの PDF 読み込み）
+- **ファイル操作の起点は変換したパス**: PDF ルートの下の PDF やバックアップ/復元の zip を操作するコードは `to_fs_path()` を通した起点から始め、表示は `to_display_path()` を通す（`app/components`・`app/helper` の PDF 保存/削除、孤立 PDF、バックアップ/復元、一覧ページの PDF 読み込み）
 - **PDF パスは Entry から導出する**: `entry.get_pdf_dir()` / `get_pdf_files()` を使い、パスを手組みしない。`base_dir` 引数で保存先を差し替えられる設計を保つ
 - **後方互換コードは明示する**: 旧形式対応は `@deprecated` を付けるか、コメントで「後方互換性」と明記する
 - **docstring・コメント**: numpy スタイル。説明文は日本語・英語が混在してよい。UI 文言は日本語

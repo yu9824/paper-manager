@@ -65,7 +65,7 @@ Streamlit のマルチページアプリを、`streamlit run` をラップした
 
 - **パス定数は import 時に確定する**: `_constants.py` が `PAPER_MANAGER_DATA_DIR` を import 時に読み、`DIRPATH_DATA` / `FILEPATH_LIST` などを決める。各モジュールは `from paper_manager._constants import FILEPATH_LIST` のように**値を束縛**しているため、実行時に差し替えるには利用側モジュールの属性を差し替える必要がある（テストでは環境変数を import 前に設定するのが確実）
 - **PDF の保存形式**: `DIRPATH_PDF/<pdf_dir_name>/NN.pdf`。ファイル名をゼロ埋め連番にしてパスを短くし、Windows の MAX_PATH を回避する。フォルダ名（`pdf_dir_name`）は 200 文字以内で、末尾の `.` と空白を除去し、空になるときは `Unknown` にする。名前は PDF ディレクトリの場所に依存しない。既存のフォルダ名は変えない（旧規則の名前は `legacy_pdf_dir_name` で探して新しい名前へ上書きなしで移行する）
-- **ファイル操作のパスは変換する**: ファイルを開く・作る・一覧・削除・改名・zip を読み書きする起点は `to_fs_path()`（Windows では `\\?\` の拡張長パス）を通し、画面とログに出すパスは `to_display_path()` で prefix を外す。変換後のパスと変換前のパス（`DIRPATH_PDF` など）を混ぜて比較・`relative_to` しない。フォルダ名の同一判定は `folder_name_key()`（大文字小文字と Unicode 正規化を無視。macOS・Windows の既定のファイルシステムに合わせる）で行う
+- **ファイル操作のパスは変換する**: ファイルを開く・作る・一覧・削除・改名・zip を読み書きする起点は `to_fs_path()`（Windows では `\\?\` の拡張長パス）を通し、画面とログに出すパスは `to_display_path()` で prefix を外す。変換後のパスと変換前のパス（`DIRPATH_PDF` など）を混ぜて比較・`relative_to` しない。対象は PDF ルート以下の PDF とバックアップ/復元の zip で、`list.json` / `config.json` は対象外（データディレクトリ自体が約 250 文字を超える環境は未対応）。フォルダ名の同一判定は `folder_name_key()`（大文字小文字と Unicode 正規化を無視。macOS・Windows の既定のファイルシステムに合わせる）で行う
 - **壊れた `list.json` を上書きしない**: `load_paper_list()` が壊れた状態（解析できない・UTF-8 でない・一覧の形でない）を区別して警告だけを出し、ページを開いただけでは書き換えない。保存するときは、書き込みの前に `list.json.broken-<timestamp>` へ退避して退避先を画面に出す。BOM 付き UTF-8 は正常として読む
 - **復元は書き込みの前に検証する**: `restore_from_zip()` は zip の全メンバー名を検証し、データディレクトリの外を指す名前が 1 つでもあれば、何も書かずに中止する（画面と CLI で同じ処理を使う）
 - **引用キーは出力時に整える**: `list.json` の `ID` は変えず、BibTeX・XML の出力時に `sanitize_citation_key()` / `unique_citation_keys()` で空白と `,{}` を除き、大文字小文字を無視して重複を解消する
