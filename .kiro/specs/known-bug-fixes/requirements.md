@@ -52,6 +52,7 @@ paper-manager の既知バグ（test-suite spec の KB1〜KB10）、利用者か
 3. The Paper Manager shall PDF フォルダ名を、保存先ディレクトリの長さによって変えない
 4. If PDF フォルダの作成、または PDF の読み込み・書き込みに失敗した, then the Paper Manager shall 失敗したことと対象のパスを画面に表示する
 5. The Paper Manager shall パス全体の長さが 250 文字を超えることだけを理由に、PDF の保存を拒否しない
+6. If 論文の編集と同時に追加した PDF の保存に失敗した, then the Paper Manager shall 論文の更新に成功して画面が再描画された後も、失敗したことと対象のパスを利用者が確認できるようにする
 
 ### Requirement 2: PDF フォルダ名の生成
 **Objective:** As a 論文を登録する利用者, I want どの論文でも PDF フォルダ名を作れること, so that 著者やタイトルの内容によって PDF を保存できなくならない
@@ -124,6 +125,7 @@ paper-manager の既知バグ（test-suite spec の KB1〜KB10）、利用者か
 1. If 復元する zip に、データディレクトリの外を指すパスが含まれる, then the Paper Manager shall データディレクトリの外にファイルを作らない（KB3）
 2. If 前項の zip を復元しようとした, then the Paper Manager shall 復元を中止してエラーを表示し、データディレクトリの中身を変えない
 3. The Paper Manager shall 前 2 項を、画面からの復元と CLI からの復元の両方で満たす
+4. If 復元する zip のメンバーが読み出せない（CRC の不一致、破損した圧縮データ、暗号化など）, then the Paper Manager shall 何も書かずに復元を中止してエラーを表示し、データディレクトリの中身（`.json.backup` を含む）を変えない
 
 ### Requirement 10: 壊れた論文リストのファイル
 **Objective:** As a 論文リストのファイルが壊れてしまった利用者, I want 壊れたファイルの内容が失われないこと, so that 壊れたファイルから論文リストを取り戻せる

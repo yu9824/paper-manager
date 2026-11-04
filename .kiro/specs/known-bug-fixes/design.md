@@ -249,6 +249,7 @@ flowchart TD
 | 1.3 | フォルダ名を保存先の長さで変えない | EntryFolderNaming | `Entry.pdf_dir_name` | — |
 | 1.4 | 失敗と対象のパスを画面に出す | PathAdapter, PdfStorage, ListPage, OrphanPdf | `to_display_path`, `save_pdfs`, `delete_pdfs`, `delete_orphaned_pdfs(failures=)` | パスの変換 |
 | 1.5 | 250 文字超を理由に拒否しない | PdfStorage | `save_pdfs` | — |
+| 1.6 | 編集と同時に追加した PDF の保存の失敗を、再描画の後も確認できる | PdfStorage, PaperRegistry, ListPage | `save_pdfs(failures=)`, `update_entry_in_list(failures=)`, `KEY_NOTICES` | — |
 | 2.1 | フォルダ名を 200 文字以内にする | EntryFolderNaming | `Entry.pdf_dir_name` | — |
 | 2.2 | 末尾を `.` や空白にしない | EntryFolderNaming | `Entry.pdf_dir_name` | — |
 | 2.3 | 著者がなければ `Unknown` | EntryFolderNaming | `Entry.pdf_dir_name` | — |
@@ -281,6 +282,7 @@ flowchart TD
 | 9.1 | データディレクトリの外に書かない | BackupRestore | `find_unsafe_member_names`, `restore_from_zip` | 復元 |
 | 9.2 | 中止してエラーを出し、データを変えない | BackupRestore | `restore_from_zip` | 復元 |
 | 9.3 | 画面と CLI の両方 | BackupRestore, RestorePage, Cli | `restore_from_zip` | 復元 |
+| 9.4 | 読み出せないメンバーがあれば、何も書かずに中止する | BackupRestore | `restore_from_zip` | 復元 |
 | 10.1 | 壊れたファイルで落ちずに警告する | PaperListStore, ConfigPage | `load_paper_list`, `PaperList.from_file` | 論文リストの読み込みと保存 |
 | 10.2 | 描画だけでは書き換えない | ConfigPage | `config_page.__call__` | 論文リストの読み込みと保存 |
 | 10.3 | 保存前に退避して退避先を出す | PaperListStore, PaperRegistry, ConfigPage | `backup_broken_paper_list`, `save_paper_list` | 論文リストの読み込みと保存 |
@@ -527,13 +529,14 @@ def format_person(person: "pybtex.database.Person") -> str: ...
 | Field | Detail |
 |-------|--------|
 | Intent | 変換後のパスでバックアップを作り、メンバー名を検証してから復元する |
-| Requirements | 1.2, 9.1, 9.2, 9.3 |
+| Requirements | 1.2, 9.1, 9.2, 9.3, 9.4 |
 
 **Responsibilities & Constraints**
 - バックアップは `to_fs_path(DIRPATH_PDF)` を起点に `rglob` し、メンバー名は変換後の空間での `relative_to(to_fs_path(DIRPATH_DATA))` から作る（`/` 区切り、prefix なし）。`zipfile.write` の arcname は必ず明示する
 - 復元は、zip を開いた直後（`BadZipFile` の判定の後）に全メンバー名を検証し、1 つでも不正なら何も書かずに `(False, message)` を返す（9.1、9.2）。既存の「無効なzipファイルです。」の文言と、`list.json.backup` / `config.json.backup` への退避は変えない
 - 不正なメンバー名: POSIX の絶対パス（`/x`、`//x`）、Windows のドライブ・ルート指定（`C:/x`、`C:x`、`\x`、UNC）、`/` と `\` のどちらで分割しても成分が `..` に等しいもの、データディレクトリと結合して正規化した結果がデータディレクトリの外になるもの。`resolve()` は使わない（利用者のシンボリックリンクを壊さない）
 - 復元の書き込み先は `to_fs_path(DIRPATH_DATA) / member` とする
+- メンバー名の検証の後、書き込みの前に、すべてのメンバーを読み出せることを確かめる（`ZipFile.testzip()` による CRC の検証。破損した圧縮データや暗号化で読み出し自体が例外になる場合も、書き込み前に捕捉して中止する）。読み出せないメンバーがあれば、何も書かず、`.json.backup` も作らずに `(False, message)` を返す。message には読み出せないメンバー名（分かる場合）を含める（9.4）
 
 **Dependencies**
 - Inbound: RestorePage、Cli — 復元（P0）
@@ -610,12 +613,13 @@ def delete_orphaned_pdfs(
 | Field | Detail |
 |-------|--------|
 | Intent | PDF を保存・削除する |
-| Requirements | 1.1, 1.2, 1.4, 1.5 |
+| Requirements | 1.1, 1.2, 1.4, 1.5, 1.6 |
 
 **Responsibilities & Constraints**
 - パス全体の長さによる保存のスキップ（250 文字の規則）を削除する（1.5）
 - フォルダの作成やファイルの書き込み・削除の `OSError` は、ファイルごとに `st.error`（`to_display_path` のパスと理由）とログに出し、残りのファイルの処理を続ける（1.4）
 - `delete_pdfs` は `get_pdf_dir` と `pdf_filename` から得た変換後のパスで操作する
+- `save_pdfs` は、省略可能な引数 `failures`（`list[str]`）を受け取り、`st.error` に出したものと同じ文（表示用のパスと理由）を追加する。呼び出し側が、再描画で消える画面のエラーを通知として残せるようにするため（1.6）。省略したときの振る舞いは変えない
 
 **Contracts**: Service [x]
 
@@ -625,6 +629,7 @@ def save_pdfs(
     uploaded_files: list[UploadedFile],
     entry: Entry,
     base_dir: Optional[Path] = None,
+    failures: Optional[list[str]] = None,
 ) -> int: ...
 
 def delete_pdfs(
@@ -640,13 +645,14 @@ def delete_pdfs(
 | Field | Detail |
 |-------|--------|
 | Intent | 論文を登録・更新し、論文リストを保存する |
-| Requirements | 3.1, 3.2, 3.3, 10.3 |
+| Requirements | 1.6, 3.1, 3.2, 3.3, 10.3 |
 
 **Responsibilities & Constraints**
 - 登録の重複判定は、既存の全エントリの `folder_name_key(pdf_dir_name)` との一致で行う（3.1）
 - 更新では、自分を除いた他のエントリと比較キーが一致すれば拒否する（3.3）
 - 更新で `pdf_dir_name` が大文字小文字（または Unicode 正規化）だけ変わるときは、元のフォルダを一時名（`.rename-<uuid>`）へ移してから新しい名前へ移す。2 段目が失敗したら元の名前に戻し、エラーを表示する（3.2）
 - 改名先が既にあり、元のフォルダと同じフォルダでない（`os.path.samefile` が偽）ときは、既存のとおり拒否する
+- `update_entry_in_list` は、省略可能な引数 `failures` を受け取って `save_pdfs` へ渡す。編集ダイアログ（ListPage）は、更新に成功して `st.rerun()` する前に、`failures` の各文を `KEY_NOTICES` に追加する。次の描画で `config_page` が表示して消すので、再描画の後も失敗を確認できる（1.6）。登録ページは再描画しないため、この引数を使わない（`st.error` がそのまま残る）
 - `save_paper_list` は、書き込みの前に `backup_broken_paper_list` を呼ぶ。退避したら `st.warning` で退避先（`to_display_path`）を表示し、同じ文を session state の通知に追加する（10.3）
 
 **Contracts**: Service [x]
@@ -666,6 +672,7 @@ def update_entry_in_list(
     key_original: str,
     entry_updated: Entry,
     uploaded_files: Optional[list[UploadedFile]] = None,
+    failures: Optional[list[str]] = None,
 ) -> bool: ...
 ```
 - Postconditions: `False` を返すとき、論文リスト（ファイルと session state）と PDF フォルダは呼び出し前と同一

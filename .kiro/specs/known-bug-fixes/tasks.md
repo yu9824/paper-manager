@@ -208,6 +208,23 @@
   - CI の全 Python バージョンでテストが成功したことを記録している
   - _Requirements: 12.4_
 
+- [ ] 7. 検証で見つかった残件の修正
+- [ ] 7.1 読み出せないメンバーを含む zip の復元を、何も書かずに中止する
+  - 復元は、メンバー名の検証の後、書き込みの前に、すべてのメンバーを読み出せることを確かめる（CRC の検証。破損した圧縮データや暗号化で読み出しが例外になる場合も、書き込み前に捕捉する）
+  - 読み出せないメンバーがあれば、何も書かず、`.json.backup` も作らずに失敗とメッセージ（読み出せないメンバー名を含む）を返す。データディレクトリの中身は呼び出し前と同一
+  - 内容の CRC が壊れた zip（`list.json`・`config.json`・PDF のそれぞれ）、圧縮データが壊れた zip、暗号化された zip を、共通の復元処理・画面・CLI から復元しようとすると、エラーが表示され（CLI は終了コード 1）、データディレクトリ（`.json.backup` を含む）が変わらないことを確かめるテストが成功する。正当なバックアップの復元は、これまでどおり成功する
+  - _Boundary: BackupRestore_
+  - _Depends: 5.3_
+  - _Requirements: 9.2, 9.3, 9.4_
+
+- [ ] 7.2 編集ダイアログで追加した PDF の保存の失敗を、再描画の後も確認できるようにする
+  - PDF の保存処理と論文の更新処理に、省略可能な引数 `failures` を足し、画面のエラーと同じ文（表示用のパスと理由）を呼び出し元へ返せるようにする。省略したときの振る舞いは変えない
+  - 編集ダイアログは、更新に成功して再描画する前に、`failures` の各文を保留中の通知（`KEY_NOTICES`）に追加する。次の描画で表示されて消える。登録ページの振る舞いは変えない
+  - 編集ダイアログで PDF を追加して保存の一部が失敗する状態で更新すると、更新後の画面に失敗したことと表示用のパスが（変換後の prefix なしで）残ること、失敗がなければ通知が増えないこと、更新自体が失敗したときに通知を増やさずエラーが残ることを確かめるテストが、Streamlit 1.50 でも成功する
+  - _Boundary: PdfStorage, PaperRegistry, ListPage_
+  - _Depends: 5.2_
+  - _Requirements: 1.4, 1.6_
+
 ## Implementation Notes
 - 1.1: `paper_manager.helper` から `to_fs_path` / `to_display_path` / `folder_name_key` を再エクスポートした。差し替え口は `paper_manager.helper._path._convert` / `_unconvert`（呼び出し時に参照されるので、名前で import した側にも効く）。純粋な変換は `_to_extended_length` / `_from_extended_length`。`to_fs_path("")` は ValueError（空のパスは渡さない）。Python 3.9 / 3.10 の `ntpath.normpath` は `\\?\` 付きのパスを変えないが、3.11 以降は正規化する（変換は prefix を付ける前に abspath するので結果は同じ）。比較キーの既知の差: U+0131（ı）と i / I は NTFS 風の比較では同じ名前だが、比較キーでは別になる（トルコ語などのタイトルで、Windows ではフォルダを共有しうる。設計どおりで範囲外）
 - 1.2: `tests/conftest.py` の opt-in の fixture `windows_like_paths` は、変換を `/x` → `//x` の別名に差し替える（pathlib では `root == "//"` で別のルートになり、`==`・集合・`relative_to` が一致しない。ファイル操作は同じ場所を指して成功する）。**変換後の空間にとどまるかの確認に `Path.resolve()` / `os.path.realpath` / `os.path.relpath` / `os.path.commonpath` を使わない**（別名が外れて混在を再現しない）。Windows では skip する。Linux で `//x` が `/x` を指すことは CI（6.2）で確認する
