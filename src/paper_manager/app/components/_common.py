@@ -330,11 +330,18 @@ def _failure_reason(error: OSError) -> str:
     return type(error).__name__
 
 
-def _report_failure(action: str, path: Path, error: OSError) -> None:
+def _report_failure(
+    action: str,
+    path: Path,
+    error: OSError,
+    failures: Optional[list[str]] = None,
+) -> None:
     """ファイル操作の失敗を、ログと画面の両方に出す。
 
     画面とログには、何をしようとして失敗したかと、``to_display_path`` で
     prefix を外したパス、パスを含まない理由 (``_failure_reason``) を出す。
+    ``failures`` を渡したときは、画面 (``st.error``) に出したものと同じ文を
+    追加する。
 
     Parameters
     ----------
@@ -344,11 +351,16 @@ def _report_failure(action: str, path: Path, error: OSError) -> None:
         対象のパス (変換後のパスでも変換前のパスでもよい)。
     error : OSError
         捕捉した例外。
+    failures : Optional[list[str]], optional
+        画面に出した文を追加する一覧。省略すると何も追加しない。
     """
     reason = _failure_reason(error)
     message = f"{action}: {to_display_path(path)}"
+    sentence = f"{message}\nError: {reason}"
     _logger.error(f"{message}: {reason}")
-    st.error(f"{message}\nError: {reason}")
+    st.error(sentence)
+    if failures is not None:
+        failures.append(sentence)
 
 
 def _exists_as(check: Callable[[], bool], path: Path) -> bool:
@@ -414,6 +426,7 @@ def save_pdfs(
     uploaded_files: list[UploadedFile],
     entry: Entry,
     base_dir: Union[Path, None] = None,
+    failures: Optional[list[str]] = None,
 ) -> int:
     """複数のPDFファイルを保存する。
 
@@ -421,6 +434,12 @@ def save_pdfs(
     Windows では拡張長のパス) なので、パス全体の長さにかかわらず保存する。
     フォルダの作成やファイルの書き込みに失敗したら、そのパス (表示用の
     パス) と理由をログと画面に出し、残りのファイルの処理を続ける。
+
+    画面のエラーは、画面が再描画されると消える。呼び出し元がその後も失敗を
+    伝えられるよう、``failures`` を渡すと、画面 (``st.error``) に出したものと
+    同じ文 (表示用のパスと理由。変換後の prefix は含まない) を、失敗ごとに
+    1 文ずつ追加する。成功したファイルの分は何も追加しない。省略すると、
+    これまでと同じ振る舞いになる。
 
     Parameters
     ----------
@@ -430,6 +449,9 @@ def save_pdfs(
         対象の論文エントリ
     base_dir : Union[Path, None], optional
         PDFの基本ディレクトリ。Noneの場合はDIRPATH_PDFを使用。
+    failures : Optional[list[str]], optional
+        失敗の文を追加する一覧。渡された一覧の既存の中身は残し、後ろに
+        追加する。
 
     Returns
     -------
@@ -445,14 +467,14 @@ def save_pdfs(
     try:
         pdf_dir.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        _report_failure("Failed to create PDF directory", pdf_dir, e)
+        _report_failure("Failed to create PDF directory", pdf_dir, e, failures)
         return 0
 
     # 既存のPDFファイル名を取得しておき、重複しない新しい名前を付与する
     try:
         existing_files = {f.name for f in pdf_dir.glob("*.pdf")}
     except OSError as e:
-        _report_failure("Failed to access PDF directory", pdf_dir, e)
+        _report_failure("Failed to access PDF directory", pdf_dir, e, failures)
         return 0
 
     index = 0
@@ -473,7 +495,7 @@ def save_pdfs(
             with open(filepath, mode="wb") as f:
                 f.write(uploaded_file.getvalue())
         except OSError as e:
-            _report_failure("Failed to save PDF file", filepath, e)
+            _report_failure("Failed to save PDF file", filepath, e, failures)
             continue  # このファイルはスキップして次のファイルを試す
 
         existing_files.add(new_name)
@@ -1098,6 +1120,7 @@ def update_entry_in_list(
     key_original: str,
     entry_updated: Entry,
     uploaded_files: Optional[list[UploadedFile]] = None,
+    failures: Optional[list[str]] = None,
 ) -> bool:
     """論文エントリを更新する。
 
@@ -1117,6 +1140,13 @@ def update_entry_in_list(
     フォルダは元の名前に保つ (一時名からも戻せなかったときだけ、一時名の場所を
     エラーに含める)。
 
+    追加したPDFの一部を保存できなくても、論文を保存できれば ``True`` を返す
+    (保存の失敗は ``save_pdfs`` が画面に出す)。呼び出し元が更新の後に再描画
+    すると画面のエラーは消えるので、``failures`` を渡すと、更新に成功した
+    ときだけ、保存に失敗したPDFの文 (``save_pdfs`` が画面に出したものと同じ
+    文) を追加する。更新を拒否・中止して ``False`` を返すときは、
+    ``failures`` を変えない (再描画しなければ、画面のエラーが残る)。
+
     Parameters
     ----------
     paper_list : PaperList
@@ -1127,6 +1157,10 @@ def update_entry_in_list(
         更新後の論文エントリ
     uploaded_files : Optional[list[UploadedFile]]
         アップロードされたPDFファイルのリスト
+    failures : Optional[list[str]], optional
+        追加したPDFの保存の失敗の文を追加する一覧。渡された一覧の既存の
+        中身は残し、後ろに追加する。省略すると、これまでと同じ振る舞いに
+        なる。
 
     Returns
     -------
@@ -1171,15 +1205,19 @@ def update_entry_in_list(
         entry_updated["ID"] = new_id
         paper_list[new_id] = entry_updated
 
-    # 新しいPDFファイルを保存
+    # 新しいPDFファイルを保存 (失敗の文は、更新に成功したときだけ呼び出し元へ返す)
+    pdf_failures: list[str] = []
     if uploaded_files:
-        save_pdfs(uploaded_files, entry_updated)
+        save_pdfs(uploaded_files, entry_updated, failures=pdf_failures)
 
     # PaperListを保存 (退避できずに保存しなかった場合は、更新しなかったことにする)
     if not save_paper_list(paper_list):
         paper_list.clear()
         paper_list.update(original_entries)
         return False
+
+    if failures is not None:
+        failures.extend(pdf_failures)
 
     _logger.debug(f"Entry updated: {paper_list=}")
     return True

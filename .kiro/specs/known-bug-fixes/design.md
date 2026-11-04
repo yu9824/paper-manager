@@ -654,14 +654,14 @@ def delete_pdfs(
 - 更新では、自分を除いた他のエントリと比較キーが一致すれば拒否する（3.3）
 - 更新で `pdf_dir_name` が大文字小文字（または Unicode 正規化）だけ変わるときは、元のフォルダを一時名（`.rename-<uuid>`）へ移してから新しい名前へ移す。2 段目が失敗したら元の名前に戻し、エラーを表示する（3.2）
 - 改名先が既にあり、元のフォルダと同じフォルダでない（`os.path.samefile` が偽）ときは、既存のとおり拒否する
-- `update_entry_in_list` は、省略可能な引数 `failures` を受け取って `save_pdfs` へ渡す。編集ダイアログ（ListPage）は、更新に成功して `st.rerun()` する前に、`failures` の各文を `KEY_NOTICES` に追加する。次の描画で `config_page` が表示して消すので、再描画の後も失敗を確認できる（1.6）。登録ページは再描画しないため、この引数を使わない（`st.error` がそのまま残る）
+- `update_entry_in_list` は、省略可能な引数 `failures` を受け取る。`save_pdfs` の失敗の文は内部の一覧に集め、更新に成功して `True` を返すときだけ `failures` に追加する。拒否・中止して `False` を返すときは `failures` を変えない（`edit_entry` は `False` のとき再描画しないので、画面のエラーが残る）。編集ダイアログ（ListPage）は、更新に成功して `st.rerun()` する前に、`failures` の各文を `KEY_NOTICES` に追加する。次の描画で `config_page` が表示して消すので、再描画の後も失敗を確認できる（1.6）。登録ページは再描画しないため、この引数を使わない（`st.error` がそのまま残る）
 - `save_paper_list` は、書き込みの前に `backup_broken_paper_list` を呼ぶ。退避したら `st.warning` で退避先（`to_display_path`）を表示し、同じ文を session state の通知に追加する（10.3）
 
 **Contracts**: Service [x]
 
 ##### Service Interface
 ```python
-def save_paper_list(paper_list: PaperList) -> None: ...
+def save_paper_list(paper_list: PaperList) -> bool: ...
 
 def register_entry_to_list(
     paper_list: PaperList,
@@ -677,7 +677,7 @@ def update_entry_in_list(
     failures: Optional[list[str]] = None,
 ) -> bool: ...
 ```
-- Postconditions: `False` を返すとき、論文リスト（ファイルと session state）と PDF フォルダは呼び出し前と同一
+- Postconditions: `False` を返すとき、論文リスト（ファイルと session state）と PDF フォルダは呼び出し前と同一。`failures` が変わるのは `update_entry_in_list` が `True` を返すときだけ
 
 #### EntryForm
 

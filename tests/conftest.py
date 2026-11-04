@@ -11,6 +11,7 @@
 まま確定してしまう (ガードが検出してセッションを止める)。
 """
 
+import builtins
 import copy
 import importlib
 import io
@@ -757,6 +758,34 @@ def rerun_calls(monkeypatch: pytest.MonkeyPatch) -> list[None]:
     calls: list[None] = []
     monkeypatch.setattr(st, "rerun", lambda *a, **k: calls.append(None))
     return calls
+
+
+def failing_open_on_call(
+    failing_call: int, error: OSError
+) -> Callable[..., Any]:
+    """``failing_call`` 回目の呼び出しだけ ``error`` を送出する ``open`` を返す.
+
+    ほかの呼び出しは組み込みの ``open`` に渡す。``_common`` のモジュール
+    変数 ``open`` として差し替えて、``save_pdfs`` の書き込みの失敗を
+    再現する (権限に頼らないので、root でも同じ結果になる)。
+
+    Parameters
+    ----------
+    failing_call : int
+        失敗させる呼び出しの順番 (1 から数える)。
+    error : OSError
+        送出する例外。
+    """
+    calls = 0
+
+    def fake_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == failing_call:
+            raise error
+        return builtins.open(file, *args, **kwargs)
+
+    return fake_open
 
 
 # --- UnreadableZips -------------------------------------------------------

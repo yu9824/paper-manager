@@ -72,6 +72,15 @@ JSON として解析できない、UTF-8 として読めない、論文の一覧
   常にスクリプト全体を再実行する。そのため ``edit_entry`` を直接呼ぶ画面
   (``edit_screen``) を実行し、再描画 (``st.rerun``) の有無は、画面の実行
   回数の増え方で確かめる (再描画すると 1 回余分に実行される)
+- 編集ダイアログで追加した PDF の保存に一部失敗しても更新は成功し、再描画
+  すると画面のエラーは消える。そこで、失敗した保存の文 (画面のエラーと同じ
+  表示用のパスと理由。変換後の prefix なし) を保留中の通知 (``KEY_NOTICES``)
+  に積み、次の描画で ``config_page`` が警告として表示して消す (known-bug-fixes
+  要件 1.4, 1.6)。失敗がなければ通知を増やさない。更新が拒否・失敗した
+  ときは、通知を増やさず再描画もせず、エラーを表示したままにする。既存の
+  通知は消さず、順序を保って追記する。``edit_screen`` に ``config_page`` の
+  通知の表示 (``show_notices``) を足した画面で、再描画の後の表示まで確かめ、
+  実際のページ (``run_page``) でも同じ通知が 1 回だけ表示されることを確かめる
 
 論文リストページは PDF の本数を数えるとき、旧形式の PDF を新形式へ移行する
 非推奨の内部処理 (``pdf_filename`` / ``_migrate_legacy_pdf_filenames``)
@@ -98,12 +107,16 @@ from conftest import (
     PDF_BYTES,
     ConvertedSpace,
     DataPaths,
+    FakeUpload,
+    failing_open_on_call,
     run_page,
     write_pdf,
 )
 from pybtex.database.input import bibtex
+from streamlit.runtime.pages_manager import PagesManager
 from streamlit.testing.v1 import AppTest
 
+from paper_manager.app.components import _common
 from paper_manager.app.helper import KEY_NOTICES
 from paper_manager.entry import Entry, PaperList
 from paper_manager.entry._entry import KEY_PAPER_LIST
@@ -1146,30 +1159,39 @@ def test_exporting_several_papers_gives_every_citation_key_once(
 # --- 編集ダイアログ (要件 3.3) ---
 
 
-def edit_screen(key: str) -> None:
+def edit_screen(key: str, show_notices: bool = False) -> None:
     """論文 ``key`` の編集ダイアログ (``edit_entry``) を出す画面 (AppTest 用).
 
     実行のたびに session state の ``runs`` を増やす。再描画 (``st.rerun``)
     すると、1 回の操作で 2 回実行される。論文リストページと同じく、論文
     リストに ``key`` がなければダイアログを出さない (更新で ID が変わると、
     再描画後にダイアログは閉じる)。
+
+    ``show_notices`` が真なら、``config_page`` と同じく、本体の前に保留中の
+    通知を表示して消す (``config_page`` が呼ぶ関数をそのまま使う)。偽なら
+    表示しないので、通知が session state に残る。
     """
     import streamlit as st
 
     from paper_manager.app._list import edit_entry
+    from paper_manager.app.helper._config import _show_pending_notices
     from paper_manager.entry import PaperList
 
     st.session_state["runs"] = st.session_state.get("runs", 0) + 1
+    if show_notices:
+        _show_pending_notices()
     if not PaperList.from_session_state():
         PaperList.from_file().to_session_state()
     if key in PaperList.from_session_state():
         edit_entry(key)
 
 
-def open_edit_dialog(key: str) -> AppTest:
+def open_edit_dialog(key: str, show_notices: bool = False) -> AppTest:
     """論文 ``key`` の編集ダイアログを 1 回実行する."""
     at = AppTest.from_function(
-        edit_screen, default_timeout=APP_TIMEOUT_SECONDS, args=(key,)
+        edit_screen,
+        default_timeout=APP_TIMEOUT_SECONDS,
+        args=(key, show_notices),
     ).run()
     assert not at.exception, describe_exceptions(at)
     assert at.session_state["runs"] == 1
@@ -1278,3 +1300,363 @@ def test_the_edit_dialog_redraws_when_it_is_cancelled(
     assert error_messages(at) == []
     assert at.session_state["runs"] == 3
     assert data_paths.list_file.read_bytes() == before
+
+
+# --- 編集ダイアログ: 追加した PDF の保存の失敗 (要件 1.4, 1.6) ---
+# 更新に成功すると ``st.rerun()`` で画面のエラーが消えるので、PDF の保存の
+# 失敗は、再描画の前に保留中の通知 (``KEY_NOTICES``) へ積む。通知は次の描画で
+# ``config_page`` が警告として表示して消す。PDF の書き込みは、``_common`` の
+# ``open`` を差し替えて失敗させる (権限に頼らない)。
+
+# PDF のアップロード欄 (``pdf_upload_form``) のラベルの接頭辞
+UPLOADER_LABEL = "PDF file(s)"
+PDF_WRITE_ERROR = OSError(errno.EIO, "Input/output error")
+
+
+def pdf_uploads(count: int) -> list[FakeUpload]:
+    """中身が互いに異なる、アップロードされた PDF を ``count`` 件作る."""
+    return [
+        FakeUpload(
+            f"upload-{index:02d}.pdf",
+            PDF_BYTES + f"%upload {index:02d}\n".encode("ascii"),
+        )
+        for index in range(count)
+    ]
+
+
+def fail_pdf_write(
+    monkeypatch: pytest.MonkeyPatch, failing_call: Optional[int] = 2
+) -> None:
+    """PDF の ``failing_call`` 回目の書き込みだけが ``OSError`` で失敗する.
+
+    ``failing_call`` が ``None`` のときは、すべての書き込みが失敗する。
+    """
+    if failing_call is None:
+
+        def always_fail(*args: Any, **kwargs: Any) -> Any:
+            raise PDF_WRITE_ERROR
+
+        fake_open: Callable[..., Any] = always_fail
+    else:
+        fake_open = failing_open_on_call(failing_call, PDF_WRITE_ERROR)
+    monkeypatch.setattr(_common, "open", fake_open, raising=False)
+
+
+@pytest.fixture
+def shown_errors(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """``st.error`` に渡された本文を、呼ばれた順に記録する.
+
+    記録したうえで、本来のエラーも表示する (``AppTest`` の要素は残る)。
+    再描画で画面から消えたエラーの本文を、後から読むために使う。
+    """
+    calls: list[str] = []
+    original = st.error
+
+    def error(body: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(str(body))
+        return original(body, *args, **kwargs)
+
+    monkeypatch.setattr(st, "error", error)
+    return calls
+
+
+EDIT_CHANGES = [
+    pytest.param({"journal": "A Different Journal"}, id="same-folder"),
+    pytest.param({"title": "A Revised Study"}, id="renamed-folder"),
+]
+
+
+def saved_pdf_names(
+    converted_space: ConvertedSpace, entry: Entry
+) -> list[str]:
+    """``entry`` の PDF フォルダにある PDF の名前を、変換後の空間の実体で返す."""
+    return sorted(
+        path.name
+        for path in (converted_space.pdf / entry.pdf_dir_name).glob("*.pdf")
+    )
+
+
+@pytest.mark.parametrize("changes", EDIT_CHANGES)
+def test_the_edit_dialog_keeps_a_failed_pdf_save_as_a_notice(
+    converted_space: ConvertedSpace,
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    fake_file_uploader: Callable[..., None],
+    shown_errors: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    changes: dict[str, str],
+) -> None:
+    """一部の保存に失敗した更新の後、失敗が通知に残る (1.4, 1.6).
+
+    3 件を追加し、2 件目の書き込みだけが失敗する。更新は成功して再描画
+    するので、画面のエラーは消える。失敗した 1 件の文は、画面のエラーと
+    同じ表示用のパスと理由で通知に残る。保存できた 2 件は残り、論文は
+    更新されている。変換後のパスの prefix は通知に出ない。
+    """
+    entry = make_entry()
+    (key,) = store_papers(data_paths, entry)
+    updated = Entry({**entry, **changes})
+    fake_file_uploader({UPLOADER_LABEL: pdf_uploads(3)})
+    fail_pdf_write(monkeypatch)
+    at = open_edit_dialog(key)
+
+    at = submit_edit(at, **changes)
+
+    assert not at.exception, describe_exceptions(at)
+    # 更新に成功して再描画した (再描画の前に出たエラーは、実画面では消える。
+    # AppTest は版によって残すので、画面のエラーの有無では確かめない)
+    assert at.session_state["runs"] == 3
+    assert len(shown_errors) == 1
+    assert at.session_state[KEY_NOTICES] == shown_errors
+    (notice,) = at.session_state[KEY_NOTICES]
+    failed = updated.get_pdf_dir(data_paths.pdf) / "01.pdf"
+    assert to_display_path(failed) in notice
+    assert "Input/output error" in notice
+    assert str(failed) not in notice  # 変換後のパスは出さない
+    assert saved_pdf_names(converted_space, updated) == ["00.pdf", "01.pdf"]
+    (stored,) = stored_papers(data_paths.list_file).values()
+    assert stored.items() >= changes.items()
+
+
+def test_the_edit_dialog_keeps_every_failed_pdf_save(
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    fake_file_uploader: Callable[..., None],
+    shown_errors: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """すべての保存に失敗したら、ファイルごとに 1 文ずつ通知に残る (1.6).
+
+    PDF は 1 件も保存されないが、論文は更新される。
+    """
+    (key,) = store_papers(data_paths, make_entry())
+    fake_file_uploader({UPLOADER_LABEL: pdf_uploads(3)})
+    fail_pdf_write(monkeypatch, None)
+    at = open_edit_dialog(key)
+
+    at = submit_edit(at, journal="A Different Journal")
+
+    assert not at.exception, describe_exceptions(at)
+    assert at.session_state["runs"] == 3
+    assert len(shown_errors) == 3
+    assert at.session_state[KEY_NOTICES] == shown_errors
+    assert list(data_paths.pdf.rglob("*.pdf")) == []
+    (stored,) = stored_papers(data_paths.list_file).values()
+    assert stored["journal"] == "A Different Journal"
+
+
+def test_the_failed_pdf_save_is_shown_in_the_next_render_and_then_cleared(
+    converted_space: ConvertedSpace,
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    fake_file_uploader: Callable[..., None],
+    shown_errors: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """再描画の後の画面に、失敗と表示用のパスが警告として出て、その次には出ない.
+
+    ``config_page`` と同じく、描画の冒頭で通知を表示して消す画面
+    (``show_notices``) で確かめる。
+    """
+    entry = make_entry()
+    (key,) = store_papers(data_paths, entry)
+    fake_file_uploader({UPLOADER_LABEL: pdf_uploads(3)})
+    fail_pdf_write(monkeypatch)
+    at = open_edit_dialog(key, show_notices=True)
+
+    at = submit_edit(at, journal="A Different Journal")
+
+    assert not at.exception, describe_exceptions(at)
+    assert at.session_state["runs"] == 3  # 更新に成功して再描画した
+    (warning,) = [w.value for w in at.warning]
+    failed = entry.get_pdf_dir(data_paths.pdf) / "01.pdf"
+    assert warning == shown_errors[0]
+    assert to_display_path(failed) in warning
+    assert str(failed) not in warning
+    assert KEY_NOTICES not in at.session_state
+
+    at = at.run()
+
+    assert not at.exception, describe_exceptions(at)
+    assert [w.value for w in at.warning] == []
+
+
+def test_the_real_page_shows_the_kept_failure_once(
+    converted_space: ConvertedSpace,
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    fake_file_uploader: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """編集ダイアログが残した通知を、実際のページが 1 回だけ警告で表示する (1.6).
+
+    ``AppTest`` は、ダイアログだけの再実行も、``edit_screen`` とページの間の
+    session state の共有もできない。そこで、``edit_screen`` が残した通知を
+    取り出し、実際のページ (``run_page``) の session state に置いて描画
+    する。
+    """
+    (key,) = store_papers(data_paths, make_entry())
+    fake_file_uploader({UPLOADER_LABEL: pdf_uploads(3)})
+    fail_pdf_write(monkeypatch)
+    at = open_edit_dialog(key)
+    at = submit_edit(at, journal="A Different Journal")
+    notices = list(at.session_state[KEY_NOTICES])
+    assert len(notices) == 1  # 前提
+    # Streamlit 1.50 は、1 つのテストの中の最初の AppTest で、マルチページ判定
+    # を固定する。from_function の後に from_file を実行するので、判定し直す
+    monkeypatch.setattr(
+        PagesManager, "uses_pages_directory", None, raising=False
+    )
+    page = run_page(None)
+    assert not page.exception, describe_exceptions(page)
+    own_warnings = [w.value for w in page.warning]
+
+    page.session_state[KEY_NOTICES] = notices
+    page = page.run()
+
+    assert not page.exception, describe_exceptions(page)
+    assert [w.value for w in page.warning] == [*notices, *own_warnings]
+    assert KEY_NOTICES not in page.session_state
+
+    page = page.run()
+
+    assert not page.exception, describe_exceptions(page)
+    assert [w.value for w in page.warning] == own_warnings
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_the_edit_dialog_adds_no_notice_when_every_pdf_is_saved(
+    converted_space: ConvertedSpace,
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    fake_file_uploader: Callable[..., None],
+    shown_errors: list[str],
+    count: int,
+) -> None:
+    """失敗がなければ、通知は増えない (追加なしの更新も同じ) (1.6)."""
+    entry = make_entry()
+    (key,) = store_papers(data_paths, entry)
+    fake_file_uploader({UPLOADER_LABEL: pdf_uploads(count)})
+    at = open_edit_dialog(key)
+
+    at = submit_edit(at, journal="A Different Journal")
+
+    assert not at.exception, describe_exceptions(at)
+    assert at.session_state["runs"] == 3  # 更新に成功して再描画した
+    assert shown_errors == []
+    assert KEY_NOTICES not in at.session_state
+    assert len(saved_pdf_names(converted_space, entry)) == count
+
+
+def test_the_edit_dialog_adds_no_notice_for_a_rejected_update(
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    fake_file_uploader: Callable[..., None],
+    shown_errors: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """重複で拒否された更新は、通知を増やさず、エラーを表示したままにする (1.6).
+
+    拒否では PDF を保存しないので、保存の失敗は起きない。再描画もしない。
+    """
+    first = make_entry(title="Alpha Paper")
+    second = make_entry(title="Beta Paper")
+    _, second_key = store_papers(data_paths, first, second)
+    fake_file_uploader({UPLOADER_LABEL: pdf_uploads(2)})
+    fail_pdf_write(monkeypatch, None)
+    at = open_edit_dialog(second_key)
+
+    at = submit_edit(at, title="Alpha Paper")
+
+    assert not at.exception, describe_exceptions(at)
+    (message,) = error_messages(at)
+    assert message.startswith("FAIL: Duplicated pdf_dir_name: ")
+    assert shown_errors == [message]
+    assert at.session_state["runs"] == 2  # 再描画していない
+    assert KEY_NOTICES not in at.session_state
+    assert list(data_paths.pdf.rglob("*.pdf")) == []
+
+
+def test_the_edit_dialog_adds_no_notice_when_saving_the_list_fails(
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    fake_file_uploader: Callable[..., None],
+    shown_errors: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """論文リストを保存できず失敗した更新は、通知を増やさず再描画しない (1.6).
+
+    PDF の保存の失敗と、保存の中止のエラーが、どちらも画面に残る。
+    """
+    (key,) = store_papers(data_paths, make_entry())
+    fake_file_uploader({UPLOADER_LABEL: pdf_uploads(2)})
+    fail_pdf_write(monkeypatch, 1)
+    at = open_edit_dialog(key)
+    broken = b'{"a": {"title": 1}}'
+    data_paths.list_file.write_bytes(broken)
+
+    def copy2(*args: Any, **kwargs: Any) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(shutil, "copy2", copy2)
+
+    at = submit_edit(at, journal="A Different Journal")
+
+    assert not at.exception, describe_exceptions(at)
+    pdf_failure, list_failure = error_messages(at)
+    assert "Input/output error" in pdf_failure
+    assert "保存しませんでした" in list_failure
+    assert at.session_state["runs"] == 2  # 再描画していない
+    assert KEY_NOTICES not in at.session_state
+    assert data_paths.list_file.read_bytes() == broken
+
+
+def test_the_edit_dialog_keeps_the_notices_that_are_already_pending(
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    fake_file_uploader: Callable[..., None],
+    shown_errors: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """既に保留中の通知は消さず、その後ろに失敗の文を追記する (1.6)."""
+    (key,) = store_papers(data_paths, make_entry())
+    fake_file_uploader({UPLOADER_LABEL: pdf_uploads(3)})
+    fail_pdf_write(monkeypatch)
+    at = open_edit_dialog(key)
+    at.session_state[KEY_NOTICES] = ["EARLIER NOTICE"]
+
+    at = submit_edit(at, journal="A Different Journal")
+
+    assert not at.exception, describe_exceptions(at)
+    assert len(shown_errors) == 1
+    assert at.session_state[KEY_NOTICES] == ["EARLIER NOTICE", *shown_errors]
+
+
+def test_the_edit_dialog_puts_the_failure_after_the_backup_notice(
+    data_paths: DataPaths,
+    make_entry: Callable[..., Entry],
+    fake_file_uploader: Callable[..., None],
+    shown_errors: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """壊れた論文リストの退避先の通知は消えず、失敗の文はその後ろに並ぶ (1.6).
+
+    ダイアログを開いた後に ``list.json`` が壊れると、更新の保存が壊れた
+    ファイルを退避し、退避先を通知に残す。その後に、PDF の保存の失敗が
+    追記される。
+    """
+    (key,) = store_papers(data_paths, make_entry())
+    fake_file_uploader({UPLOADER_LABEL: pdf_uploads(3)})
+    fail_pdf_write(monkeypatch)
+    at = open_edit_dialog(key)
+    data_paths.list_file.write_bytes(b'{"a": {"title": 1}}')
+
+    at = submit_edit(at, journal="A Different Journal")
+
+    assert not at.exception, describe_exceptions(at)
+    (backup,) = sorted(data_paths.root.glob("list.json.broken-*"))
+    notices = at.session_state[KEY_NOTICES]
+    assert len(notices) == 2
+    assert to_display_path(backup) in notices[0]
+    assert len(shown_errors) == 1
+    assert notices[1] == shown_errors[0]

@@ -6,6 +6,13 @@
 - 共通の補助: fixture と補助関数 (後続のセクションからも使う)
 - PDF の保存: ``save_pdfs`` (要件 9.1, 9.2。9.3 は下記)
 - PDF の削除: ``delete_pdfs`` (要件 9.4, 9.5)
+- PDF の保存の失敗を呼び出し元へ返す: ``save_pdfs`` と
+  ``update_entry_in_list`` の省略可能な引数 ``failures`` が、画面のエラーと
+  同じ文を返すこと。省略したときの振る舞い、登録ページの振る舞い、更新が
+  失敗したときに ``failures`` を変えないことも確かめる (known-bug-fixes
+  要件 1.6。``save_pdfs`` の分は PDF の保存の節、``update_entry_in_list`` の
+  分は更新の節にある。編集ダイアログが通知へ積むところは
+  ``tests/test_pages_smoke.py``)
 - 論文の登録・更新: ``register_entry_to_list`` / ``update_entry_in_list``
   (要件 9.6〜9.10)。このセクションだけで使う補助は、セクションの冒頭に
   ある
@@ -48,8 +55,8 @@ PDF の置き場所は ``Entry.get_pdf_dir`` から導出する。通知 (``st.e
 確かめる。
 """
 
-import builtins
 import errno
+import inspect
 import json
 import os
 import re
@@ -71,6 +78,7 @@ from conftest import (
     FakeUpload,
     StMessages,
     Uploads,
+    failing_open_on_call,
     redirect_data_dir,
     write_pdf,
 )
@@ -432,34 +440,6 @@ def test_save_pdfs_keeps_saving_when_numbers_cross_the_old_limit(
     assert st_messages.error == []
 
 
-def failing_open_on_call(
-    failing_call: int, error: OSError
-) -> Callable[..., Any]:
-    """``failing_call`` 回目の呼び出しだけ ``error`` を送出する ``open`` を返す.
-
-    ほかの呼び出しは組み込みの ``open`` に渡す。``_common`` のモジュール
-    変数 ``open`` として差し替えて、``save_pdfs`` の書き込みの失敗を
-    再現する (権限に頼らないので、root でも同じ結果になる)。
-
-    Parameters
-    ----------
-    failing_call : int
-        失敗させる呼び出しの順番 (1 から数える)。
-    error : OSError
-        送出する例外。
-    """
-    calls = 0
-
-    def fake_open(file: Any, *args: Any, **kwargs: Any) -> Any:
-        nonlocal calls
-        calls += 1
-        if calls == failing_call:
-            raise error
-        return builtins.open(file, *args, **kwargs)
-
-    return fake_open
-
-
 def test_save_pdfs_reports_a_failed_write_and_processes_the_rest(
     entry: Entry,
     pdf_root: Path,
@@ -547,6 +527,204 @@ def test_save_pdfs_saves_in_the_converted_path_space(
     assert pdf_names(plain_dir) == ["00.pdf", "01.pdf"]
     assert (plain_dir / "01.pdf").read_bytes() == uploads[1].getvalue()
     assert st_messages.error == []
+
+
+# --- PDF の保存の失敗を返す: save_pdfs(failures=) (known-bug-fixes 1.6) ----
+# 編集ダイアログは、更新に成功すると再描画して、画面のエラーを消す。そこで
+# ``save_pdfs`` は、画面 (``st.error``) に出したのと同じ文 (表示用のパスと
+# 理由) を、省略可能な引数 ``failures`` に追加して呼び出し元へ返す。呼び出し
+# 元が通知として残せるようにするため。省略したときの振る舞いは変わらない。
+
+WRITE_ERROR = OSError(errno.EIO, "Input/output error")
+
+
+def test_the_failures_argument_is_optional_and_comes_last() -> None:
+    """``failures`` は最後の省略可能な引数で、既存の位置引数の呼び出しを変えない."""
+    save = list(inspect.signature(save_pdfs).parameters.values())
+    update = list(inspect.signature(update_entry_in_list).parameters.values())
+
+    assert [p.name for p in save] == [
+        "uploaded_files",
+        "entry",
+        "base_dir",
+        "failures",
+    ]
+    assert [p.name for p in update] == [
+        "paper_list",
+        "key_original",
+        "entry_updated",
+        "uploaded_files",
+        "failures",
+    ]
+    assert save[-1].default is None
+    assert update[-1].default is None
+
+
+def test_registering_has_no_failures_argument() -> None:
+    """登録は ``failures`` を持たない (登録ページは再描画しない)."""
+    register = inspect.signature(register_entry_to_list).parameters
+
+    assert list(register) == ["paper_list", "entry", "uploaded_files"]
+
+
+def test_save_pdfs_returns_a_failed_write_as_the_message_on_the_screen(
+    entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    path_space: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """失敗した分だけが、画面のエラーと同じ文で ``failures`` に入る (1.6).
+
+    3 件のうち 2 件目の書き込みだけが失敗する。1 件目と 3 件目は保存され、
+    ``failures`` には失敗した 1 件の文だけが入る。文は ``st.error`` に渡した
+    ものと同一で、表示用のパス (変換後の prefix なし) と理由を含む。
+    """
+    monkeypatch.setattr(
+        _common, "open", failing_open_on_call(2, WRITE_ERROR), raising=False
+    )
+    uploads = make_uploads(3)
+    failures: list[str] = []
+
+    saved = save_pdfs(uploads, entry, failures=failures)
+
+    pdf_dir = entry.get_pdf_dir(pdf_root)
+    assert saved == 2
+    assert pdf_names(pdf_dir) == ["00.pdf", "01.pdf"]
+    assert len(st_messages.error) == 1
+    assert failures == st_messages.error
+    (message,) = failures
+    assert to_display_path(pdf_dir / "01.pdf") in message
+    assert "Input/output error" in message
+    if path_space:
+        assert str(pdf_dir / "01.pdf") not in message
+
+
+def test_save_pdfs_returns_every_file_that_cannot_be_written(
+    entry: Entry, pdf_root: Path, st_messages: StMessages
+) -> None:
+    """書き込めないフォルダでは、ファイルごとに 1 文ずつ ``failures`` に入る (1.6)."""
+    pdf_dir = entry.get_pdf_dir(pdf_root)
+    pdf_dir.mkdir(parents=True)
+    failures: list[str] = []
+
+    with read_only(pdf_dir):
+        saved = save_pdfs(make_uploads(3), entry, failures=failures)
+
+    assert saved == 0
+    assert len(failures) == 3
+    assert failures == st_messages.error
+    for message in failures:
+        assert to_display_path(pdf_dir / "00.pdf") in message
+        assert "Permission denied" in message
+
+
+def test_save_pdfs_returns_a_folder_that_cannot_be_created(
+    entry: Entry, pdf_root: Path, st_messages: StMessages
+) -> None:
+    """フォルダを作れない失敗も、画面のエラーと同じ文で ``failures`` に入る (1.6)."""
+    pdf_root.mkdir(parents=True, exist_ok=True)
+    pdf_dir = entry.get_pdf_dir(pdf_root)
+    failures: list[str] = []
+
+    with read_only(pdf_root):
+        saved = save_pdfs(make_uploads(2), entry, failures=failures)
+
+    assert saved == 0
+    assert len(failures) == 1
+    assert failures == st_messages.error
+    assert to_display_path(pdf_dir) in failures[0]
+    assert "Permission denied" in failures[0]
+
+
+def test_save_pdfs_returns_a_folder_that_cannot_be_listed(
+    entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """既存の PDF を調べられない失敗も、``failures`` に入る (1.6)."""
+
+    def fail_to_list(self: Path, *args: Any, **kwargs: Any) -> Any:
+        raise OSError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(Path, "glob", fail_to_list)
+    failures: list[str] = []
+
+    saved = save_pdfs(make_uploads(2), entry, failures=failures)
+
+    pdf_dir = entry.get_pdf_dir(pdf_root)
+    assert saved == 0
+    assert len(failures) == 1
+    assert failures == st_messages.error
+    assert to_display_path(pdf_dir) in failures[0]
+    assert "Permission denied" in failures[0]
+
+
+def test_save_pdfs_returns_nothing_when_every_file_is_saved(
+    entry: Entry, pdf_root: Path, st_messages: StMessages
+) -> None:
+    """失敗がなければ、``failures`` は空のまま (1.6)."""
+    failures: list[str] = []
+
+    saved = save_pdfs(make_uploads(3), entry, failures=failures)
+
+    assert saved == 3
+    assert failures == []
+    assert st_messages.error == []
+
+
+def test_save_pdfs_adds_to_the_failures_it_is_given(
+    entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """渡された ``failures`` の中身を残し、後ろに追加する (1.6)."""
+    monkeypatch.setattr(
+        _common, "open", failing_open_on_call(1, WRITE_ERROR), raising=False
+    )
+    failures = ["an earlier failure"]
+
+    save_pdfs(make_uploads(1), entry, failures=failures)
+
+    assert failures[0] == "an earlier failure"
+    assert failures[1:] == st_messages.error
+    assert len(failures) == 2
+
+
+def test_save_pdfs_without_failures_behaves_as_before(
+    entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``failures`` を省略しても、渡しても、戻り値・画面のエラー・保存結果は同じ (1.6).
+
+    省略は、位置引数だけの呼び出しと、``None`` を明示した呼び出しの両方を
+    確かめる。
+    """
+
+    def run(*args: Any, **kwargs: Any) -> tuple[int, list[str], Any]:
+        shutil.rmtree(pdf_root, ignore_errors=True)
+        st_messages.error.clear()
+        monkeypatch.setattr(
+            _common,
+            "open",
+            failing_open_on_call(2, WRITE_ERROR),
+            raising=False,
+        )
+        saved = save_pdfs(make_uploads(3), entry, *args, **kwargs)
+        return saved, list(st_messages.error), pdf_tree(pdf_root)
+
+    without = run()
+    explicit_none = run(None, None)
+    with_failures = run(failures=[])
+
+    assert without[0] == 2
+    assert len(without[1]) == 1
+    assert explicit_none == without
+    assert with_failures == without
 
 
 # --- PDF の削除: delete_pdfs (要件 9.4, 9.5) -------------------------------
@@ -1884,6 +2062,262 @@ def test_update_rejects_when_the_destination_folder_already_exists(
     assert read_state(stored.paper_list, data_paths) == before
     assert pdf_tree(pdf_root) == pdfs_before
     assert (existing_dir / "00.pdf").read_bytes() == existing["00.pdf"]
+
+
+# --- 更新で追加した PDF の保存の失敗を返す: failures (known-bug-fixes 1.6) --
+# ``update_entry_in_list`` は、省略可能な引数 ``failures`` を ``save_pdfs`` へ
+# 渡し、更新に成功したとき (``True``) だけ、追加した PDF の保存の失敗の文を
+# ``failures`` に追加する。更新に成功すれば、一部の PDF の保存に失敗しても
+# ``True`` を返す (論文は保存できたため)。拒否・失敗 (``False``) のときは、
+# ``failures`` を変えない (呼び出し元は画面のエラーをそのまま残す)。
+
+UPDATE_CHANGES = [
+    pytest.param({"journal": "Journal of Updated Results"}, id="same-folder"),
+    pytest.param({"title": "A Revised Study of Testing"}, id="renamed-folder"),
+]
+
+
+@pytest.mark.parametrize("changes", UPDATE_CHANGES)
+def test_update_returns_a_failed_pdf_save_and_still_succeeds(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    stored: Stored,
+    st_messages: StMessages,
+    path_space: bool,
+    changes: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """一部の PDF の保存に失敗しても更新は成功し、失敗は ``failures`` に入る (1.6).
+
+    既存の ``00.pdf``・``01.pdf`` の後ろに 3 件を追加し、2 件目の書き込みだけ
+    が失敗する。論文は更新され、保存できた 2 件は残る。``failures`` には
+    失敗した 1 件の文だけが、画面のエラーと同一で入り、表示用のパス
+    (変換後の prefix なし) と理由を含む。
+    """
+    updated = edited(stored.paper_list[stored.key], **changes)
+    new_dir = updated.get_pdf_dir(pdf_root)
+    monkeypatch.setattr(
+        _common, "open", failing_open_on_call(2, WRITE_ERROR), raising=False
+    )
+    uploads = make_uploads(3)
+    failures: list[str] = []
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, uploads, failures
+    )
+
+    assert result is True
+    assert stored_fields(data_paths)[updated["ID"]].items() >= changes.items()
+    assert pdf_names(new_dir) == ["00.pdf", "01.pdf", "02.pdf", "03.pdf"]
+    assert (new_dir / "02.pdf").read_bytes() == uploads[0].getvalue()
+    assert (new_dir / "03.pdf").read_bytes() == uploads[2].getvalue()
+    assert len(st_messages.error) == 1
+    assert failures == st_messages.error
+    (message,) = failures
+    assert to_display_path(new_dir / "03.pdf") in message
+    assert "Input/output error" in message
+    if path_space:
+        assert str(new_dir / "03.pdf") not in message
+
+
+def test_update_adds_to_the_failures_it_is_given(
+    stored: Stored,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """渡された ``failures`` の中身を残し、後ろに追加する (1.6)."""
+    updated = edited(stored.paper_list[stored.key], journal="Another Journal")
+    monkeypatch.setattr(
+        _common, "open", failing_open_on_call(1, WRITE_ERROR), raising=False
+    )
+    failures = ["an earlier failure"]
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, make_uploads(1), failures
+    )
+
+    assert result is True
+    assert failures[0] == "an earlier failure"
+    assert failures[1:] == st_messages.error
+    assert len(failures) == 2
+
+
+@pytest.mark.parametrize("changes", UPDATE_CHANGES)
+def test_update_returns_nothing_when_every_pdf_is_saved(
+    stored: Stored,
+    st_messages: StMessages,
+    changes: dict[str, str],
+) -> None:
+    """失敗がなければ、``failures`` は空のまま (1.6)."""
+    updated = edited(stored.paper_list[stored.key], **changes)
+    failures: list[str] = []
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, make_uploads(2), failures
+    )
+
+    assert result is True
+    assert failures == []
+    assert st_messages.error == []
+
+
+def test_update_without_uploads_returns_nothing(
+    stored: Stored, st_messages: StMessages
+) -> None:
+    """PDF を追加しない更新は、``failures`` に何も入れない (1.6)."""
+    updated = edited(stored.paper_list[stored.key], journal="Another Journal")
+    failures: list[str] = []
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, None, failures
+    )
+
+    assert result is True
+    assert failures == []
+
+
+def test_update_without_failures_behaves_as_before(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    stored: Stored,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``failures`` を省略した更新は、PDF の保存に失敗しても従来どおり (1.6).
+
+    ``True`` を返し、論文は更新され、失敗は画面のエラーに出る。
+    """
+    updated = edited(stored.paper_list[stored.key], journal="Another Journal")
+    monkeypatch.setattr(
+        _common, "open", failing_open_on_call(2, WRITE_ERROR), raising=False
+    )
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, make_uploads(3)
+    )
+
+    assert result is True
+    assert (
+        stored_fields(data_paths)[stored.key]["journal"] == "Another Journal"
+    )
+    assert pdf_names(updated.get_pdf_dir(pdf_root)) == [
+        "00.pdf",
+        "01.pdf",
+        "02.pdf",
+        "03.pdf",
+    ]
+    assert len(st_messages.error) == 1
+    assert "Input/output error" in st_messages.error[0]
+
+
+def test_a_rejected_update_leaves_the_failures_alone(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    other_entry: Entry,
+    stored: Stored,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """重複で拒否された更新 (``False``) は、``failures`` を変えない (1.6).
+
+    PDF の保存はそもそも行われないので、保存の失敗は起きない。
+    """
+    updated = edited(
+        stored.paper_list[stored.key],
+        author="Bob Jones",
+        title="Quantum Widgets",
+        year="2019",
+    )
+    assert updated.pdf_dir_name == other_entry.pdf_dir_name  # 前提
+    monkeypatch.setattr(
+        _common, "open", failing_open_on_call(1, WRITE_ERROR), raising=False
+    )
+    failures = ["an earlier failure"]
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, make_uploads(2), failures
+    )
+
+    assert result is False
+    assert failures == ["an earlier failure"]
+    assert len(st_messages.error) == 1
+    assert "Duplicated" in st_messages.error[0]
+
+
+def test_an_update_to_an_existing_folder_leaves_the_failures_alone(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    stored: Stored,
+    st_messages: StMessages,
+) -> None:
+    """改名先のフォルダが既にあって拒否された更新は、``failures`` を変えない (1.6)."""
+    updated = edited(
+        stored.paper_list[stored.key], title="A Revised Study of Testing"
+    )
+    make_pdfs(updated.get_pdf_dir(pdf_root), ["00.pdf"])
+    failures: list[str] = []
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, make_uploads(1), failures
+    )
+
+    assert result is False
+    assert failures == []
+    assert len(st_messages.error) == 1
+    assert "already exists" in st_messages.error[0]
+
+
+def test_an_update_that_cannot_save_the_list_leaves_the_failures_alone(
+    data_paths: DataPaths,
+    pdf_root: Path,
+    stored: Stored,
+    st_messages: StMessages,
+    unbackable_list: bytes,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """論文リストを保存できず失敗した更新は、``failures`` を変えない (1.6).
+
+    PDF の保存は論文リストの保存より前に行うので、保存の失敗は画面のエラー
+    には出る。ただし、更新が失敗したので ``failures`` には入れない
+    (呼び出し元は再描画せず、画面のエラーを残す)。
+    """
+    updated = edited(stored.paper_list[stored.key], journal="Another Journal")
+    monkeypatch.setattr(
+        _common, "open", failing_open_on_call(1, WRITE_ERROR), raising=False
+    )
+    failures: list[str] = []
+
+    result = update_entry_in_list(
+        stored.paper_list, stored.key, updated, make_uploads(1), failures
+    )
+
+    assert result is False
+    assert failures == []
+    assert len(st_messages.error) == 2  # PDF の保存の失敗と、保存の中止
+    assert "Input/output error" in st_messages.error[0]
+    assert "保存しませんでした" in st_messages.error[1]
+
+
+def test_registering_shows_a_failed_pdf_save_only_on_the_screen(
+    entry: Entry,
+    pdf_root: Path,
+    st_messages: StMessages,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """登録は再描画しないので、PDF の保存の失敗は画面のエラーに残すだけ (1.6).
+
+    通知 (``KEY_NOTICES``) には積まない。登録そのものは成功する。
+    """
+    monkeypatch.setattr(
+        _common, "open", failing_open_on_call(2, WRITE_ERROR), raising=False
+    )
+
+    result = register_entry_to_list(PaperList({}), entry, make_uploads(3))
+
+    assert result is True
+    assert len(st_messages.error) == 1
+    assert "Input/output error" in st_messages.error[0]
+    assert KEY_NOTICES not in st.session_state
 
 
 # --- 大文字小文字だけ違うフォルダ名 (known-bug-fixes 要件 3.1〜3.4) --------

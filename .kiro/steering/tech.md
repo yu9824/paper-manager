@@ -31,7 +31,7 @@ Streamlit のマルチページアプリを、`streamlit run` をラップした
 ### Code Quality
 - ruff: `line-length = 79`、docstring は **numpy スタイル**
 - エラーは握りつぶさず、ログ（`_logger.error`）と UI 通知（`st.error`）の両方に出す。ファイル操作は `OSError` を捕捉し、1件の失敗で処理全体を止めずに続行する設計が多い
-- 失敗が想定される操作は例外ではなく `(bool, message)` や件数（`int`）、成否（`bool`）を返すパターンがある（例: `restore_from_zip`, `save_pdfs`, `delete_pdfs`, `save_paper_list`）。呼び出し側は戻り値を見て、失敗したときに画面のエラーを消す再描画（`st.rerun()`）をしない
+- 失敗が想定される操作は例外ではなく `(bool, message)` や件数（`int`）、成否（`bool`）を返すパターンがある（例: `restore_from_zip`, `save_pdfs`, `delete_pdfs`, `save_paper_list`）。呼び出し側は戻り値を見て、失敗したときに画面のエラーを消す再描画（`st.rerun()`）をしない。再描画をする呼び出し側（編集ダイアログ）は、再描画の前に失敗の文を `KEY_NOTICES`（次の描画で `config_page` が `st.warning` に出して消す保留中の通知）に積む
 
 ### Logging
 - 独自の `paper_manager.logging` を使う。各モジュールで `_logger = get_child_logger(__name__)` を定義し、`print` は CLI の対話出力のみに限定する

@@ -39,7 +39,11 @@ from paper_manager.app.components import (
     update_entry_in_list,
 )
 from paper_manager.app.components._common import _report_failure
-from paper_manager.app.helper import MAP_REQUIRED_FIELDS, config_page
+from paper_manager.app.helper import (
+    KEY_NOTICES,
+    MAP_REQUIRED_FIELDS,
+    config_page,
+)
 from paper_manager.app.helper._orphan_pdf import (
     delete_orphaned_pdfs,
     find_closest_entry_for_orphaned_pdf,
@@ -793,6 +797,12 @@ def main() -> None:
 def edit_entry(key_selected: str) -> None:
     """論文エントリの編集フォームを表示する。
 
+    更新に成功したときだけ再描画して閉じる。再描画すると画面のエラーは
+    消えるので、追加した PDF の保存に失敗していたら、その文 (画面のエラーと
+    同じ文) を保留中の通知 (``KEY_NOTICES``) に追加する。通知は、次の描画で
+    ``config_page`` が警告として表示して消す。更新を拒否・中止したときは、
+    再描画も通知の追加もせず、エラーを画面に残す。
+
     Parameters
     ----------
     key_selected : str
@@ -833,6 +843,9 @@ def edit_entry(key_selected: str) -> None:
         )
 
     if flag_done_edit:
+        # 追加したPDFの保存に失敗した文 (画面のエラーと同じ文)
+        failures: list[str] = []
+
         # 必須フィールドのチェック（ENTRYTYPE ごと）
         entry_type = entry_edited["ENTRYTYPE"]
         missing_fields = MAP_REQUIRED_FIELDS[entry_type] - set(
@@ -845,10 +858,14 @@ def edit_entry(key_selected: str) -> None:
             )
         # 共通関数を使用してエントリを更新
         elif update_entry_in_list(
-            paper_list, key_selected, entry_edited, uploaded_files
+            paper_list, key_selected, entry_edited, uploaded_files, failures
         ):
             # 成功したときだけ再描画して閉じる。失敗したときは、
-            # update_entry_in_list が出したエラーを画面に残す
+            # update_entry_in_list が出したエラーを画面に残す。
+            # 再描画で消える PDF の保存の失敗は、通知に積んでおき、
+            # 次の描画で config_page が表示する
+            if failures:
+                st.session_state.setdefault(KEY_NOTICES, []).extend(failures)
             st.rerun()
 
     elif flag_cancel_edit:
