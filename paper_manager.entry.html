@@ -1,0 +1,1216 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>paper_manager.entry package &#8212; paper-manager 2.1.5 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="_static/jupyter-sphinx.css" />
+    <link rel="stylesheet" type="text/css" href="_static/thebelab.css" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="_static/documentation_options.js?v=0b7ef1d2"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="_static/thebelab-helper.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@jupyter-widgets/html-manager@^1.0.1/dist/embed-amd.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'paper_manager.entry';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="_static/favicon.png"/>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="paper_manager.helper package" href="paper_manager.helper.html" />
+    <link rel="prev" title="paper_manager.bib package" href="paper_manager.bib.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="_static/searchtools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <script src="searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/site_logo.png" class="logo__image only-light" alt="paper-manager 2.1.5 documentation - Home"/>
+    <img src="_static/site_logo_dark.png" class="logo__image only-dark pst-js-only" alt="paper-manager 2.1.5 documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="modules.html">paper_manager</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 current active has-children"><a class="reference internal" href="paper_manager.html">paper_manager package</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l3 has-children"><a class="reference internal" href="paper_manager.app.html">paper_manager.app package</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="paper_manager.app.components.html">paper_manager.app.components package</a></li>
+<li class="toctree-l4"><a class="reference internal" href="paper_manager.app.helper.html">paper_manager.app.helper package</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3"><a class="reference internal" href="paper_manager.bib.html">paper_manager.bib package</a></li>
+<li class="toctree-l3 current active"><a class="current reference internal" href="#">paper_manager.entry package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="paper_manager.helper.html">paper_manager.helper package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="paper_manager.logging.html">paper_manager.logging package</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Tutorials</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="tutorials/index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/logging.html">Logging Tutorial</a></li>
+</ul>
+</details></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">ガイド</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="guides/index.html">ガイド</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="guides/usage.html">使用方法ガイド</a></li>
+<li class="toctree-l2"><a class="reference internal" href="guides/backup_restore.html">バックアップ・復元ガイド</a></li>
+<li class="toctree-l2"><a class="reference internal" href="guides/proxy_settings.html">プロキシ設定ガイド</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="_sources/paper_manager.entry.rst" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.rst</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>paper_manager.entry package</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry"><code class="docutils literal notranslate"><span class="pre">Entry</span></code></a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.get_key"><code class="docutils literal notranslate"><span class="pre">Entry.get_key()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.get_pdf_count"><code class="docutils literal notranslate"><span class="pre">Entry.get_pdf_count()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.get_pdf_dir"><code class="docutils literal notranslate"><span class="pre">Entry.get_pdf_dir()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.get_pdf_files"><code class="docutils literal notranslate"><span class="pre">Entry.get_pdf_files()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.has_pdf"><code class="docutils literal notranslate"><span class="pre">Entry.has_pdf()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.items"><code class="docutils literal notranslate"><span class="pre">Entry.items()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.keys"><code class="docutils literal notranslate"><span class="pre">Entry.keys()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.legacy_pdf_dir_name"><code class="docutils literal notranslate"><span class="pre">Entry.legacy_pdf_dir_name</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.pdf_dir_name"><code class="docutils literal notranslate"><span class="pre">Entry.pdf_dir_name</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.pdf_filename"><code class="docutils literal notranslate"><span class="pre">Entry.pdf_filename</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.values"><code class="docutils literal notranslate"><span class="pre">Entry.values()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList"><code class="docutils literal notranslate"><span class="pre">PaperList</span></code></a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.from_file"><code class="docutils literal notranslate"><span class="pre">PaperList.from_file()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.from_session_state"><code class="docutils literal notranslate"><span class="pre">PaperList.from_session_state()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.items"><code class="docutils literal notranslate"><span class="pre">PaperList.items()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.keys"><code class="docutils literal notranslate"><span class="pre">PaperList.keys()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.to_file"><code class="docutils literal notranslate"><span class="pre">PaperList.to_file()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.to_session_state"><code class="docutils literal notranslate"><span class="pre">PaperList.to_session_state()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.values"><code class="docutils literal notranslate"><span class="pre">PaperList.values()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListLoad"><code class="docutils literal notranslate"><span class="pre">PaperListLoad</span></code></a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListLoad.paper_list"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.paper_list</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListLoad.status"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.status</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListLoad.reason"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.reason</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id0"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.paper_list</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id7"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.reason</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id8"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.status</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListStatus"><code class="docutils literal notranslate"><span class="pre">PaperListStatus</span></code></a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListStatus.OK"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.OK</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListStatus.MISSING"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.MISSING</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListStatus.BROKEN"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.BROKEN</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id9"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.BROKEN</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id10"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.MISSING</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id11"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.OK</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.backup_broken_paper_list"><code class="docutils literal notranslate"><span class="pre">backup_broken_paper_list()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.load_paper_list"><code class="docutils literal notranslate"><span class="pre">load_paper_list()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.sanitize_citation_key"><code class="docutils literal notranslate"><span class="pre">sanitize_citation_key()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.unique_citation_keys"><code class="docutils literal notranslate"><span class="pre">unique_citation_keys()</span></code></a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="module-paper_manager.entry">
+<span id="paper-manager-entry-package"></span><h1>paper_manager.entry package<a class="headerlink" href="#module-paper_manager.entry" title="Link to this heading">#</a></h1>
+<p>論文エントリと論文リストを管理するモジュール。</p>
+<p>このモジュールは、学術論文の情報を管理するためのクラスを提供します。</p>
+<dl>
+<dt>主なクラス:</dt><dd><p>Entry: 個々の論文エントリを表す辞書風のクラス
+PaperList: 複数の論文エントリを管理する辞書風のクラス</p>
+</dd>
+<dt>論文リストのファイルの読み込みと退避:</dt><dd><dl class="simple">
+<dt>load_paper_list: ファイルを読み込み、状態 (PaperListStatus: 正常・</dt><dd><p>ファイルなし・壊れている) とともに返す (PaperListLoad)</p>
+</dd>
+</dl>
+<p>backup_broken_paper_list: 壊れたファイルを日時入りの別名へ複製する</p>
+</dd>
+<dt>PDF の警告の記録:</dt><dd><dl class="simple">
+<dt>KEY_SHOWN_PDF_WARNINGS: 画面に出した PDF の移行・アクセスの警告を記録する</dt><dd><p>session state のキー (<code class="docutils literal notranslate"><span class="pre">config_page</span></code> が描画の冒頭で消す)</p>
+</dd>
+</dl>
+</dd>
+<dt>引用キー:</dt><dd><dl class="simple">
+<dt>sanitize_citation_key: BibTeX の引用キーとして読めない文字 (空白・<code class="docutils literal notranslate"><span class="pre">,</span></code>・</dt><dd><p><code class="docutils literal notranslate"><span class="pre">{</span></code>・<code class="docutils literal notranslate"><span class="pre">}</span></code>) を除く</p>
+</dd>
+<dt>unique_citation_keys: 整えたうえで、大文字小文字を区別せずに重複しない</dt><dd><p>引用キーの並びにする</p>
+</dd>
+</dl>
+</dd>
+<dt>例:</dt><dd><div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">paper_manager.entry</span><span class="w"> </span><span class="kn">import</span> <span class="n">Entry</span><span class="p">,</span> <span class="n">PaperList</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">entry</span> <span class="o">=</span> <span class="n">Entry</span><span class="p">({</span>
+<span class="gp">... </span>    <span class="s2">"ENTRYTYPE"</span><span class="p">:</span> <span class="s2">"article"</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="s2">"title"</span><span class="p">:</span> <span class="s2">"Example Paper"</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="s2">"author"</span><span class="p">:</span> <span class="s2">"John Doe"</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="s2">"year"</span><span class="p">:</span> <span class="s2">"2024"</span>
+<span class="gp">... </span><span class="p">})</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">paper_list</span> <span class="o">=</span> <span class="n">PaperList</span><span class="p">({</span><span class="s2">"key1"</span><span class="p">:</span> <span class="n">entry</span><span class="p">})</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">len</span><span class="p">(</span><span class="n">paper_list</span><span class="p">)</span>
+<span class="go">1</span>
+</pre></div>
+</div>
+</dd>
+</dl>
+<dl class="py class">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">paper_manager.entry.</span></span><span class="sig-name descname"><span class="pre">Entry</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">_Entry__mapping</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Mapping</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'ENTRYTYPE'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'ID'</span></span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#paper_manager.entry.Entry" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">MutableMapping</span></code></p>
+<p>論文エントリを表す辞書風のクラス。</p>
+<p>このクラスは、学術論文の情報（著者、タイトル、ジャーナル、DOIなど）を
+管理するための辞書風のインターフェースを提供します。</p>
+<dl>
+<dt>特徴:</dt><dd><ul class="simple">
+<li><p>辞書のようにアクセス可能（<code class="docutils literal notranslate"><span class="pre">entry[&quot;title&quot;]</span></code>）</p></li>
+<li><p>値の前後の空白を自動的に削除</p></li>
+<li><p>一意なキーの生成機能</p></li>
+<li><p>複数のPDFファイルをサポート（各エントリごとに専用ディレクトリ）</p></li>
+</ul>
+</dd>
+<dt>PDFファイルの管理:</dt><dd><p>各エントリは、<cite>pdf_dir_name`プロパティで生成されるディレクトリ名の
+フォルダにPDFファイルを保存します。複数のPDFファイルをサポートしており、
+各ファイルは`00.pdf</cite>, <cite>01.pdf</cite>, <a href="#id1"><span class="problematic" id="id2">`</span></a>02.pdf`のように連番で命名されます。</p>
+<dl class="simple">
+<dt>旧バージョンとの互換性:</dt><dd><ul class="simple">
+<li><p><a href="#id3"><span class="problematic" id="id4">`</span></a>pdf_filename`プロパティは非推奨（deprecated）です</p></li>
+<li><p>旧形式のPDFファイルは自動的に新しい形式に移行されます</p></li>
+</ul>
+</dd>
+</dl>
+</dd>
+<dt>属性:</dt><dd><dl class="simple">
+<dt>pdf_dir_name: PDFファイルを保存するディレクトリ名を生成するプロパティ</dt><dd><p>（形式: <code class="docutils literal notranslate"><span class="pre">'&lt;year&gt;</span> <span class="pre">-</span> <span class="pre">&lt;first_author&gt;</span> <span class="pre">-</span> <span class="pre">&lt;title&gt;'</span></code>）</p>
+</dd>
+</dl>
+</dd>
+<dt>メソッド:</dt><dd><p>get_key: 既存のキーと重複しない一意なキーを生成
+get_pdf_dir: PDFファイルを保存するディレクトリのパスを取得
+get_pdf_files: このエントリに関連するPDFファイルのリストを取得
+has_pdf: PDFファイルが存在するかどうかを確認
+get_pdf_count: 関連するPDFファイルの数を取得</p>
+</dd>
+<dt>例:</dt><dd><div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">entry</span> <span class="o">=</span> <span class="n">Entry</span><span class="p">({</span>
+<span class="gp">... </span>    <span class="s2">"ENTRYTYPE"</span><span class="p">:</span> <span class="s2">"article"</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="s2">"title"</span><span class="p">:</span> <span class="s2">"Example Paper"</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="s2">"author"</span><span class="p">:</span> <span class="s2">"John Doe"</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="s2">"year"</span><span class="p">:</span> <span class="s2">"2024"</span>
+<span class="gp">... </span><span class="p">})</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">entry</span><span class="p">[</span><span class="s2">"title"</span><span class="p">]</span>
+<span class="go">'Example Paper'</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">entry</span><span class="o">.</span><span class="n">pdf_dir_name</span>
+<span class="go">'2024 - John Doe - Example Paper'</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">pdf_files</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">get_pdf_files</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">len</span><span class="p">(</span><span class="n">pdf_files</span><span class="p">)</span>
+<span class="go">2  # 複数のPDFファイルが存在する場合</span>
+</pre></div>
+</div>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry.get_key">
+<span class="sig-name descname"><span class="pre">get_key</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keys</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Collection</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="headerlink" href="#paper_manager.entry.Entry.get_key" title="Link to this definition">#</a></dt>
+<dd><p>Generate a unique key using the ‘author’ and ‘year’ fields.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>keys</strong> (<em>Collection</em><em>[</em><em>str</em><em>]</em>) – A collection of existing keys to avoid duplicates.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A unique key based on the first author’s name and the year,
+<code class="docutils literal notranslate"><span class="pre">&lt;first_author&gt;&lt;year&gt;_&lt;n&gt;</span></code>. Whitespace, <code class="docutils literal notranslate"><span class="pre">,</span></code>, <code class="docutils literal notranslate"><span class="pre">{</span></code> and <code class="docutils literal notranslate"><span class="pre">}</span></code>
+are removed (see <a class="reference internal" href="#paper_manager.entry.sanitize_citation_key" title="paper_manager.entry.sanitize_citation_key"><code class="xref py py-func docutils literal notranslate"><span class="pre">sanitize_citation_key()</span></code></a>) because BibTeX
+cannot read them in a citation key. The duplicate check against
+<code class="docutils literal notranslate"><span class="pre">keys</span></code> is case-sensitive.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry.get_pdf_count">
+<span class="sig-name descname"><span class="pre">get_pdf_count</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">base_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Path</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">int</span></span></span><a class="headerlink" href="#paper_manager.entry.Entry.get_pdf_count" title="Link to this definition">#</a></dt>
+<dd><p>Get the number of PDF files associated with this entry.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>base_dir</strong> (<em>Union</em><em>[</em><em>Path</em><em>, </em><em>None</em><em>]</em><em>, </em><em>optional</em>) – Base directory for PDF storage. If None, uses DIRPATH_PDF.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of PDF files.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry.get_pdf_dir">
+<span class="sig-name descname"><span class="pre">get_pdf_dir</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">base_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Path</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Path</span></span></span><a class="headerlink" href="#paper_manager.entry.Entry.get_pdf_dir" title="Link to this definition">#</a></dt>
+<dd><p>Get the directory path for storing PDF files.</p>
+<p>このエントリ専用のPDFディレクトリのパスを返します。
+複数のPDFファイルは、このディレクトリ内に`00.pdf`, <cite>01.pdf`のように
+連番で保存されます。パスは、ファイル操作用に変換した PDF ルート
+(``to_fs_path`</cite>。Windows では拡張長のパス) から作るので、パス全体の
+長さにかかわらず、そのままファイル操作に使えます。画面とログには
+<code class="docutils literal notranslate"><span class="pre">to_display_path</span></code> で戻したパスを出します。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>base_dir</strong> (<em>Union</em><em>[</em><em>Path</em><em>, </em><em>None</em><em>]</em><em>, </em><em>optional</em>) – Base directory for PDF storage. If None, uses DIRPATH_PDF.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><code class="docutils literal notranslate"><span class="pre">to_fs_path(base_dir</span> <span class="pre">or</span> <span class="pre">DIRPATH_PDF)</span> <span class="pre">/</span> <span class="pre">pdf_dir_name</span></code>.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry.get_pdf_files">
+<span class="sig-name descname"><span class="pre">get_pdf_files</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">base_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Path</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">Path</span><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#paper_manager.entry.Entry.get_pdf_files" title="Link to this definition">#</a></dt>
+<dd><p>Get a list of PDF files associated with this entry.</p>
+<p>このエントリに関連するすべてのPDFファイルのリストを返します。
+ファイルは`00.pdf`, <cite>01.pdf</cite>, <a href="#id5"><span class="problematic" id="id6">`</span></a>02.pdf`のように連番で命名され、
+ソートされた順序で返されます。</p>
+<dl>
+<dt>旧バージョンとの互換性:</dt><dd><p>一覧を作る前に、次の順で旧形式から移行します。どの移行も
+既存のファイルを上書きしません。</p>
+<ol class="arabic simple">
+<li><p>現在の名前のフォルダがなく、修正前の規則の名前
+(<code class="docutils literal notranslate"><span class="pre">legacy_pdf_dir_name</span></code>) のフォルダがあれば、現在の名前へ
+移す。移す先が既にあれば移さない</p></li>
+<li><p>旧形式の単一 PDF (<code class="docutils literal notranslate"><span class="pre">base_dir/pdf_filename</span></code>) があれば、
+フォルダの有無にかかわらず、フォルダの空いている番号へ移す</p></li>
+<li><p>フォルダ内の旧命名規則のファイル名を <code class="docutils literal notranslate"><span class="pre">NN.pdf</span></code> に変える</p></li>
+</ol>
+<p>移行に失敗したとき、または移す先が既にあるため移さなかった
+ときは、ログと画面の警告 (表示用のパス) の両方に出します
+(同じ警告は 1 回の描画の中で 1 回だけ)。</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>base_dir</strong> (<em>Union</em><em>[</em><em>Path</em><em>, </em><em>None</em><em>]</em><em>, </em><em>optional</em>) – Base directory for PDF storage. If None, uses DIRPATH_PDF.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The PDF files in the folder sorted by name, followed by the
+legacy single PDF when it could not be moved into the folder
+(so that it stays visible). Paths are under the converted PDF
+root (see <code class="docutils literal notranslate"><span class="pre">get_pdf_dir</span></code>). Empty list if no PDFs exist. It
+never raises.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list[Path]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry.has_pdf">
+<span class="sig-name descname"><span class="pre">has_pdf</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">base_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Path</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bool</span></span></span><a class="headerlink" href="#paper_manager.entry.Entry.has_pdf" title="Link to this definition">#</a></dt>
+<dd><p>Check if this entry has any associated PDF files.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>base_dir</strong> (<em>Union</em><em>[</em><em>Path</em><em>, </em><em>None</em><em>]</em><em>, </em><em>optional</em>) – Base directory for PDF storage. If None, uses DIRPATH_PDF.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>True if at least one PDF file exists, False otherwise.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry.items">
+<span class="sig-name descname"><span class="pre">items</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">ItemsView</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#paper_manager.entry.Entry.items" title="Link to this definition">#</a></dt>
+<dd><p>Return a view of the mapping’s items.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry.keys">
+<span class="sig-name descname"><span class="pre">keys</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">KeysView</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#paper_manager.entry.Entry.keys" title="Link to this definition">#</a></dt>
+<dd><p>Return a view of the mapping’s keys.</p>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry.legacy_pdf_dir_name">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">legacy_pdf_dir_name</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#paper_manager.entry.Entry.legacy_pdf_dir_name" title="Link to this definition">#</a></dt>
+<dd><p>Return the folder name built with the rule before the KB7 fix.</p>
+<p>後方互換のための修正前の規則の名前。KB7 の範囲で修正後の名前
+(<code class="docutils literal notranslate"><span class="pre">pdf_dir_name</span></code>) と異なり、いずれかの OS でフォルダを作れた長さ
+(255 文字以内) のときだけ値を持つ。その名前のフォルダは、PDF の
+一覧の取得時に現在の名前へ移す (KB7 の範囲の移行と孤立判定だけで
+使う)。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The pre-fix folder name when it differs from <code class="docutils literal notranslate"><span class="pre">pdf_dir_name</span></code>
+and has at most 255 characters, otherwise <code class="docutils literal notranslate"><span class="pre">None</span></code>. It never
+raises.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>Optional[str]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry.pdf_dir_name">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">pdf_dir_name</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#paper_manager.entry.Entry.pdf_dir_name" title="Link to this definition">#</a></dt>
+<dd><p>Generate a sanitized directory name for the entry’s PDF files.</p>
+<p>The directory name format is ‘&lt;year&gt; - &lt;first_author&gt; - &lt;title&gt;’.
+If the resulting name is too long, the title will be truncated to
+fit within the maximum directory name length. If it is still too
+long, ‘&lt;year&gt; - &lt;first_author&gt;’ is used, and then the year cut to
+the maximum length. A name that would be empty is replaced with
+<code class="docutils literal notranslate"><span class="pre">Unknown</span></code>. The name does not depend on where the PDF directory
+is located.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>A sanitized, non-empty directory name for the entry. It has at
+most <code class="docutils literal notranslate"><span class="pre">MAX_DIRNAME_LENGTH</span></code> characters and does not end with
+<code class="docutils literal notranslate"><span class="pre">.</span></code> or a space. A non-empty name that fits with the rule used
+before the KB7 fix is returned unchanged, so existing folders
+keep their names.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry.pdf_filename">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">pdf_filename</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#paper_manager.entry.Entry.pdf_filename" title="Link to this definition">#</a></dt>
+<dd><div class="deprecated">
+<p><span class="versionmodified deprecated">Deprecated since version Use: </span><cite>pdf_dir_name</cite> and <cite>get_pdf_files()</cite> for multiple PDF support. This property is kept for backward compatibility and will be removed in a future version.</p>
+</div>
+<p>Generate a sanitized filename for the entry’s PDF file.</p>
+<blockquote>
+<div><div class="deprecated">
+<p><span class="versionmodified deprecated">Deprecated since version Use: </span><cite>pdf_dir_name</cite> and <cite>get_pdf_files()</cite> for multiple PDF support.
+This property is kept for backward compatibility and will be removed
+in a future version.</p>
+</div>
+<p>The filename format is ‘&lt;year&gt; - &lt;first_author&gt; - &lt;title&gt;.pdf’.
+A missing title falls back to <code class="docutils literal notranslate"><span class="pre">Unknown</span></code> (as in <cite>pdf_dir_name</cite>)
+so that entries without a title do not raise. Otherwise the name
+is kept unchanged to find legacy single PDF files.</p>
+<dl class="simple">
+<dt>str</dt><dd><p>A sanitized filename for the entry.</p>
+</dd>
+</dl>
+</div></blockquote>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.Entry.values">
+<span class="sig-name descname"><span class="pre">values</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">ValuesView</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#paper_manager.entry.Entry.values" title="Link to this definition">#</a></dt>
+<dd><p>Return a view of the mapping’s values.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperList">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">paper_manager.entry.</span></span><span class="sig-name descname"><span class="pre">PaperList</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">_PaperList__mapping</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Mapping</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference internal" href="#paper_manager.entry.Entry" title="paper_manager.entry._entry.Entry"><span class="pre">Entry</span></a><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#paper_manager.entry.PaperList" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">MutableMapping</span></code></p>
+<p>A mutable mapping that manages a collection of <cite>Entry</cite> objects representing academic papers.</p>
+<p>This class provides methods for loading and saving the paper list from a file or session state.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperList.from_file">
+<span class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">from_file</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">_filepath_paper_list_json</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PathLike</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#paper_manager.entry.PaperList" title="paper_manager.entry._entry.PaperList"><span class="pre">PaperList</span></a></span></span><a class="headerlink" href="#paper_manager.entry.PaperList.from_file" title="Link to this definition">#</a></dt>
+<dd><p>Loads a paper list from a JSON file.</p>
+<p><code class="docutils literal notranslate"><span class="pre">load_paper_list</span></code> の互換のための薄いラッパー。ファイルが壊れて
+いる (<code class="docutils literal notranslate"><span class="pre">PaperListStatus.BROKEN</span></code>) ときは、例外を送出せずに、画面に
+警告 <code class="docutils literal notranslate"><span class="pre">Broken</span> <span class="pre">paper</span> <span class="pre">list</span> <span class="pre">(json)</span></code> を、ログに理由を出し、空の論文
+リストを返す。ファイルがないときは、警告を出さずに空の論文リストを
+返す。ファイルは変更しない (壊れたファイルの退避もしない)。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>_filepath_paper_list_json</strong> (<em>Union</em><em>[</em><em>os.PathLike</em><em>, </em><em>str</em><em>, </em><em>None</em><em>]</em><em>, </em><em>optional</em>) – The file path to load the paper list from. If None, a default path is used.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>An instance of <cite>PaperList</cite> initialized with the loaded data.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#paper_manager.entry.PaperList" title="paper_manager.entry.PaperList">PaperList</a></p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>OSError</strong> – If the file exists but cannot be read (e.g. no permission to
+    read it). See <code class="docutils literal notranslate"><span class="pre">load_paper_list</span></code>.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperList.from_session_state">
+<span class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">from_session_state</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#paper_manager.entry.PaperList" title="paper_manager.entry._entry.PaperList"><span class="pre">PaperList</span></a></span></span><a class="headerlink" href="#paper_manager.entry.PaperList.from_session_state" title="Link to this definition">#</a></dt>
+<dd><p>Loads the paper list from Streamlit’s session state.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>An instance of <cite>PaperList</cite> initialized with the session state data.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#paper_manager.entry.PaperList" title="paper_manager.entry.PaperList">PaperList</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperList.items">
+<span class="sig-name descname"><span class="pre">items</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">ItemsView</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference internal" href="#paper_manager.entry.Entry" title="paper_manager.entry._entry.Entry"><span class="pre">Entry</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#paper_manager.entry.PaperList.items" title="Link to this definition">#</a></dt>
+<dd><p>Returns a view of the paper list’s items.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>A view of key-value pairs.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>ItemsView[str, <a class="reference internal" href="#paper_manager.entry.Entry" title="paper_manager.entry.Entry">Entry</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperList.keys">
+<span class="sig-name descname"><span class="pre">keys</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">KeysView</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#paper_manager.entry.PaperList.keys" title="Link to this definition">#</a></dt>
+<dd><p>Returns a view of the paper list’s keys.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>A view of the keys in the dictionary.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>KeysView[str]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperList.to_file">
+<span class="sig-name descname"><span class="pre">to_file</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">_filepath_paper_list_json</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PathLike</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#paper_manager.entry.PaperList.to_file" title="Link to this definition">#</a></dt>
+<dd><p>Saves the current paper list to a JSON file.</p>
+<p>UTF-8 で、BOM を付けずに書く (BOM 付きのファイルも読み込めるが、
+書き戻すと BOM はなくなる)。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>_filepath_paper_list_json</strong> (<em>Union</em><em>[</em><em>os.PathLike</em><em>, </em><em>str</em><em>, </em><em>None</em><em>]</em><em>, </em><em>optional</em>) – The file path to save the paper list. If None, a default path is used.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperList.to_session_state">
+<span class="sig-name descname"><span class="pre">to_session_state</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#paper_manager.entry.PaperList.to_session_state" title="Link to this definition">#</a></dt>
+<dd><p>Saves the current paper list to Streamlit’s session state.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperList.values">
+<span class="sig-name descname"><span class="pre">values</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">ValuesView</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#paper_manager.entry.Entry" title="paper_manager.entry._entry.Entry"><span class="pre">Entry</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#paper_manager.entry.PaperList.values" title="Link to this definition">#</a></dt>
+<dd><p>Returns a view of the paper list’s values.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>A view of <cite>Entry</cite> values.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>ValuesView[<a class="reference internal" href="#paper_manager.entry.Entry" title="paper_manager.entry.Entry">Entry</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperListLoad">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">paper_manager.entry.</span></span><span class="sig-name descname"><span class="pre">PaperListLoad</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">paper_list</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#paper_manager.entry.PaperList" title="paper_manager.entry._entry.PaperList"><span class="pre">PaperList</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">status</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#paper_manager.entry.PaperListStatus" title="paper_manager.entry._entry.PaperListStatus"><span class="pre">PaperListStatus</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">reason</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#paper_manager.entry.PaperListLoad" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">NamedTuple</span></code></p>
+<p>Result of <code class="docutils literal notranslate"><span class="pre">load_paper_list</span></code>.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperListLoad.paper_list">
+<span class="sig-name descname"><span class="pre">paper_list</span></span><a class="headerlink" href="#paper_manager.entry.PaperListLoad.paper_list" title="Link to this definition">#</a></dt>
+<dd><p>The loaded paper list. Empty when <code class="docutils literal notranslate"><span class="pre">status</span></code> is <code class="docutils literal notranslate"><span class="pre">MISSING</span></code> or
+<code class="docutils literal notranslate"><span class="pre">BROKEN</span></code> (no entry of a broken file is loaded).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#paper_manager.entry.PaperList" title="paper_manager.entry.PaperList">PaperList</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperListLoad.status">
+<span class="sig-name descname"><span class="pre">status</span></span><a class="headerlink" href="#paper_manager.entry.PaperListLoad.status" title="Link to this definition">#</a></dt>
+<dd><p>The state of the file.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#paper_manager.entry.PaperListStatus" title="paper_manager.entry.PaperListStatus">PaperListStatus</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperListLoad.reason">
+<span class="sig-name descname"><span class="pre">reason</span></span><a class="headerlink" href="#paper_manager.entry.PaperListLoad.reason" title="Link to this definition">#</a></dt>
+<dd><p>Why the file is broken. <code class="docutils literal notranslate"><span class="pre">None</span></code> unless <code class="docutils literal notranslate"><span class="pre">status</span></code> is <code class="docutils literal notranslate"><span class="pre">BROKEN</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[str]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id0">
+<span class="sig-name descname"><span class="pre">paper_list</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference internal" href="#paper_manager.entry.PaperList" title="paper_manager.entry._entry.PaperList"><span class="pre">PaperList</span></a></span><a class="headerlink" href="#id0" title="Link to this definition">#</a></dt>
+<dd><p>Alias for field number 0</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id7">
+<span class="sig-name descname"><span class="pre">reason</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#id7" title="Link to this definition">#</a></dt>
+<dd><p>Alias for field number 2</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id8">
+<span class="sig-name descname"><span class="pre">status</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference internal" href="#paper_manager.entry.PaperListStatus" title="paper_manager.entry._entry.PaperListStatus"><span class="pre">PaperListStatus</span></a></span><a class="headerlink" href="#id8" title="Link to this definition">#</a></dt>
+<dd><p>Alias for field number 1</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperListStatus">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">paper_manager.entry.</span></span><span class="sig-name descname"><span class="pre">PaperListStatus</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">values</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#paper_manager.entry.PaperListStatus" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">Enum</span></code></p>
+<p>State of the paper list file, judged from its contents.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperListStatus.OK">
+<span class="sig-name descname"><span class="pre">OK</span></span><a class="headerlink" href="#paper_manager.entry.PaperListStatus.OK" title="Link to this definition">#</a></dt>
+<dd><p>The file is a JSON object of entries (key -&gt; JSON object of fields)
+whose field values are all strings.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperListStatus.MISSING">
+<span class="sig-name descname"><span class="pre">MISSING</span></span><a class="headerlink" href="#paper_manager.entry.PaperListStatus.MISSING" title="Link to this definition">#</a></dt>
+<dd><p>There is no file at the path. A directory at the path also counts
+as no file (as before this state was introduced).</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="paper_manager.entry.PaperListStatus.BROKEN">
+<span class="sig-name descname"><span class="pre">BROKEN</span></span><a class="headerlink" href="#paper_manager.entry.PaperListStatus.BROKEN" title="Link to this definition">#</a></dt>
+<dd><p>The file cannot be decoded as UTF-8, cannot be parsed as JSON, or
+is not a JSON object of entries whose field values are strings
+(the top level is not an object, including <code class="docutils literal notranslate"><span class="pre">null</span></code>; an entry is
+not an object; or a field value is not a string).</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id9">
+<span class="sig-name descname"><span class="pre">BROKEN</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'broken'</span></span><a class="headerlink" href="#id9" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id10">
+<span class="sig-name descname"><span class="pre">MISSING</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'missing'</span></span><a class="headerlink" href="#id10" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id11">
+<span class="sig-name descname"><span class="pre">OK</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'ok'</span></span><a class="headerlink" href="#id11" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.entry.backup_broken_paper_list">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.entry.</span></span><span class="sig-name descname"><span class="pre">backup_broken_paper_list</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PathLike</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">now</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">datetime</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Path</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span></span><a class="headerlink" href="#paper_manager.entry.backup_broken_paper_list" title="Link to this definition">#</a></dt>
+<dd><p>Copy the paper list file aside when it is broken.</p>
+<p>状態が <code class="docutils literal notranslate"><span class="pre">BROKEN</span></code> のときだけ、同じディレクトリの
+<code class="docutils literal notranslate"><span class="pre">&lt;ファイル名&gt;.broken-&lt;YYYYmmdd_HHMMSS&gt;</span></code> (既にあれば <code class="docutils literal notranslate"><span class="pre">-1</span></code>、<code class="docutils literal notranslate"><span class="pre">-2</span></code> と
+連番) へ <code class="docutils literal notranslate"><span class="pre">shutil.copy2</span></code> で複製する。元のファイルは変更しない。復元が
+使う <code class="docutils literal notranslate"><span class="pre">list.json.backup</span></code> は使わない。Streamlit を呼ばない (退避先の
+表示は呼び出し元が行う)。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>filepath</strong> (<em>Union</em><em>[</em><em>os.PathLike</em><em>, </em><em>str</em><em>, </em><em>None</em><em>]</em><em>, </em><em>optional</em>) – The paper list file. If None, <code class="docutils literal notranslate"><span class="pre">FILEPATH_LIST</span></code> is used.</p></li>
+<li><p><strong>now</strong> (<em>Optional</em><em>[</em><em>datetime</em><em>]</em><em>, </em><em>optional</em>) – The time put in the name. If None, the current local time is used.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The backup file, or <code class="docutils literal notranslate"><span class="pre">None</span></code> if the file is not broken (<code class="docutils literal notranslate"><span class="pre">OK</span></code> or
+<code class="docutils literal notranslate"><span class="pre">MISSING</span></code>; nothing is created).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[Path]</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>OSError</strong> – If the file cannot be read, or the backup cannot be made. No backup
+    file is left behind then, and the caller must not overwrite the
+    broken file.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.entry.load_paper_list">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.entry.</span></span><span class="sig-name descname"><span class="pre">load_paper_list</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PathLike</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#paper_manager.entry.PaperListLoad" title="paper_manager.entry._entry.PaperListLoad"><span class="pre">PaperListLoad</span></a></span></span><a class="headerlink" href="#paper_manager.entry.load_paper_list" title="Link to this definition">#</a></dt>
+<dd><p>Load the paper list file and report its state.</p>
+<p>Streamlit を呼ばない (画面に何も出さない)。壊れているときの通知は
+呼び出し元が行う (<code class="docutils literal notranslate"><span class="pre">PaperList.from_file</span></code> は従来の警告を出す)。
+ファイルは変更しない。先頭に BOM の付いた UTF-8 のファイルは、BOM の後が
+正しい形なら <code class="docutils literal notranslate"><span class="pre">OK</span></code> とする。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>filepath</strong> (<em>Union</em><em>[</em><em>os.PathLike</em><em>, </em><em>str</em><em>, </em><em>None</em><em>]</em><em>, </em><em>optional</em>) – The paper list file. If None, <code class="docutils literal notranslate"><span class="pre">FILEPATH_LIST</span></code> is used.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The paper list (empty unless <code class="docutils literal notranslate"><span class="pre">OK</span></code>), the state (see
+<code class="docutils literal notranslate"><span class="pre">PaperListStatus</span></code>) and the reason why the file is broken.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#paper_manager.entry.PaperListLoad" title="paper_manager.entry.PaperListLoad">PaperListLoad</a></p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>OSError</strong> – If the file exists but cannot be read (e.g. no permission to read
+    it). Broken contents never raise.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.entry.sanitize_citation_key">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.entry.</span></span><span class="sig-name descname"><span class="pre">sanitize_citation_key</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">key</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="headerlink" href="#paper_manager.entry.sanitize_citation_key" title="Link to this definition">#</a></dt>
+<dd><p>Remove the characters that BibTeX cannot read from a citation key.</p>
+<p>pybtex reads the citation key of a brace-delimited entry up to the next
+whitespace, <code class="docutils literal notranslate"><span class="pre">,</span></code> or <code class="docutils literal notranslate"><span class="pre">}</span></code>. Whitespace (every character for which
+<code class="xref py py-meth docutils literal notranslate"><span class="pre">str.isspace()</span></code> is true), <code class="docutils literal notranslate"><span class="pre">,</span></code>, <code class="docutils literal notranslate"><span class="pre">{</span></code> and <code class="docutils literal notranslate"><span class="pre">}</span></code> are removed (<code class="docutils literal notranslate"><span class="pre">{</span></code> is
+removed as well so that braces stay balanced). Every other character
+(<code class="docutils literal notranslate"><span class="pre">.</span></code>, <code class="docutils literal notranslate"><span class="pre">-</span></code>, <code class="docutils literal notranslate"><span class="pre">'</span></code>, <code class="docutils literal notranslate"><span class="pre">\</span></code>, non-ASCII characters and so on) is kept, so
+a key that is readable today does not change.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>key</strong> (<em>str</em>) – A citation key.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The key without the characters above, or <code class="docutils literal notranslate"><span class="pre">Unknown</span></code> when nothing
+is left. Applying the function again returns the same key.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.entry.unique_citation_keys">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.entry.</span></span><span class="sig-name descname"><span class="pre">unique_citation_keys</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keys</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Sequence</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#paper_manager.entry.unique_citation_keys" title="Link to this definition">#</a></dt>
+<dd><p>Return citation keys that are unique ignoring case.</p>
+<p>pybtex treats citation keys case-insensitively and raises an exception
+when two keys differ only in case. Each key is cleaned with
+<a class="reference internal" href="#paper_manager.entry.sanitize_citation_key" title="paper_manager.entry.sanitize_citation_key"><code class="xref py py-func docutils literal notranslate"><span class="pre">sanitize_citation_key()</span></code></a>. A key that duplicates an earlier one
+(ignoring case) gets the suffix <code class="docutils literal notranslate"><span class="pre">_&lt;n&gt;</span></code> (the smallest <code class="docutils literal notranslate"><span class="pre">n</span></code> &gt;= 1 that no
+other key, earlier or later, uses). The first occurrence of a key is
+never changed.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>keys</strong> (<em>Sequence</em><em>[</em><em>str</em><em>]</em>) – Citation keys, for example the IDs of the entries to export.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Keys in the same length and order as <code class="docutils literal notranslate"><span class="pre">keys</span></code>, with no duplicates
+ignoring case. Without duplicates, each element is
+<code class="docutils literal notranslate"><span class="pre">sanitize_citation_key</span></code> applied to the input element.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list[str]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="paper_manager.bib.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">paper_manager.bib package</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="paper_manager.helper.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">paper_manager.helper package</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry"><code class="docutils literal notranslate"><span class="pre">Entry</span></code></a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.get_key"><code class="docutils literal notranslate"><span class="pre">Entry.get_key()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.get_pdf_count"><code class="docutils literal notranslate"><span class="pre">Entry.get_pdf_count()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.get_pdf_dir"><code class="docutils literal notranslate"><span class="pre">Entry.get_pdf_dir()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.get_pdf_files"><code class="docutils literal notranslate"><span class="pre">Entry.get_pdf_files()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.has_pdf"><code class="docutils literal notranslate"><span class="pre">Entry.has_pdf()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.items"><code class="docutils literal notranslate"><span class="pre">Entry.items()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.keys"><code class="docutils literal notranslate"><span class="pre">Entry.keys()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.legacy_pdf_dir_name"><code class="docutils literal notranslate"><span class="pre">Entry.legacy_pdf_dir_name</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.pdf_dir_name"><code class="docutils literal notranslate"><span class="pre">Entry.pdf_dir_name</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.pdf_filename"><code class="docutils literal notranslate"><span class="pre">Entry.pdf_filename</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.Entry.values"><code class="docutils literal notranslate"><span class="pre">Entry.values()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList"><code class="docutils literal notranslate"><span class="pre">PaperList</span></code></a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.from_file"><code class="docutils literal notranslate"><span class="pre">PaperList.from_file()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.from_session_state"><code class="docutils literal notranslate"><span class="pre">PaperList.from_session_state()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.items"><code class="docutils literal notranslate"><span class="pre">PaperList.items()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.keys"><code class="docutils literal notranslate"><span class="pre">PaperList.keys()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.to_file"><code class="docutils literal notranslate"><span class="pre">PaperList.to_file()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.to_session_state"><code class="docutils literal notranslate"><span class="pre">PaperList.to_session_state()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperList.values"><code class="docutils literal notranslate"><span class="pre">PaperList.values()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListLoad"><code class="docutils literal notranslate"><span class="pre">PaperListLoad</span></code></a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListLoad.paper_list"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.paper_list</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListLoad.status"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.status</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListLoad.reason"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.reason</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id0"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.paper_list</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id7"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.reason</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id8"><code class="docutils literal notranslate"><span class="pre">PaperListLoad.status</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListStatus"><code class="docutils literal notranslate"><span class="pre">PaperListStatus</span></code></a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListStatus.OK"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.OK</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListStatus.MISSING"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.MISSING</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.PaperListStatus.BROKEN"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.BROKEN</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id9"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.BROKEN</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id10"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.MISSING</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id11"><code class="docutils literal notranslate"><span class="pre">PaperListStatus.OK</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.backup_broken_paper_list"><code class="docutils literal notranslate"><span class="pre">backup_broken_paper_list()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.load_paper_list"><code class="docutils literal notranslate"><span class="pre">load_paper_list()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.sanitize_citation_key"><code class="docutils literal notranslate"><span class="pre">sanitize_citation_key()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.entry.unique_citation_keys"><code class="docutils literal notranslate"><span class="pre">unique_citation_keys()</span></code></a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By yu9824
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2025, yu9824.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

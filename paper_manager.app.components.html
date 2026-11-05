@@ -1,0 +1,754 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>paper_manager.app.components package &#8212; paper-manager 2.1.5 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="_static/jupyter-sphinx.css" />
+    <link rel="stylesheet" type="text/css" href="_static/thebelab.css" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="_static/documentation_options.js?v=0b7ef1d2"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="_static/thebelab-helper.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@jupyter-widgets/html-manager@^1.0.1/dist/embed-amd.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'paper_manager.app.components';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="_static/favicon.png"/>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="paper_manager.app.helper package" href="paper_manager.app.helper.html" />
+    <link rel="prev" title="paper_manager.app package" href="paper_manager.app.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="_static/searchtools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <script src="searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/site_logo.png" class="logo__image only-light" alt="paper-manager 2.1.5 documentation - Home"/>
+    <img src="_static/site_logo_dark.png" class="logo__image only-dark pst-js-only" alt="paper-manager 2.1.5 documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="modules.html">paper_manager</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 current active has-children"><a class="reference internal" href="paper_manager.html">paper_manager package</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l3 current active has-children"><a class="reference internal" href="paper_manager.app.html">paper_manager.app package</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l4 current active"><a class="current reference internal" href="#">paper_manager.app.components package</a></li>
+<li class="toctree-l4"><a class="reference internal" href="paper_manager.app.helper.html">paper_manager.app.helper package</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3"><a class="reference internal" href="paper_manager.bib.html">paper_manager.bib package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="paper_manager.entry.html">paper_manager.entry package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="paper_manager.helper.html">paper_manager.helper package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="paper_manager.logging.html">paper_manager.logging package</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Tutorials</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="tutorials/index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/logging.html">Logging Tutorial</a></li>
+</ul>
+</details></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">ガイド</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="guides/index.html">ガイド</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="guides/usage.html">使用方法ガイド</a></li>
+<li class="toctree-l2"><a class="reference internal" href="guides/backup_restore.html">バックアップ・復元ガイド</a></li>
+<li class="toctree-l2"><a class="reference internal" href="guides/proxy_settings.html">プロキシ設定ガイド</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="_sources/paper_manager.app.components.rst" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.rst</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>paper_manager.app.components package</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.custom_entry"><code class="docutils literal notranslate"><span class="pre">custom_entry()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.delete_pdfs"><code class="docutils literal notranslate"><span class="pre">delete_pdfs()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.pdf_upload_form"><code class="docutils literal notranslate"><span class="pre">pdf_upload_form()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.register_entry_to_list"><code class="docutils literal notranslate"><span class="pre">register_entry_to_list()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.save_paper_list"><code class="docutils literal notranslate"><span class="pre">save_paper_list()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.save_pdf"><code class="docutils literal notranslate"><span class="pre">save_pdf()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.save_pdfs"><code class="docutils literal notranslate"><span class="pre">save_pdfs()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.update_entry_in_list"><code class="docutils literal notranslate"><span class="pre">update_entry_in_list()</span></code></a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="module-paper_manager.app.components">
+<span id="paper-manager-app-components-package"></span><h1>paper_manager.app.components package<a class="headerlink" href="#module-paper_manager.app.components" title="Link to this heading">#</a></h1>
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.app.components.custom_entry">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.app.components.</span></span><span class="sig-name descname"><span class="pre">custom_entry</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">entry</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry._entry.Entry"><span class="pre">Entry</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry._entry.Entry"><span class="pre">Entry</span></a></span></span><a class="headerlink" href="#paper_manager.app.components.custom_entry" title="Link to this definition">#</a></dt>
+<dd><p>Entryオブジェクトをカスタマイズするためのフォームを表示する。</p>
+<p>エントリタイプに基づいて入力フィールドを動的に生成し、
+ユーザーが入力した値でEntryオブジェクトを更新する。</p>
+<ul class="simple">
+<li><p>著者は <code class="docutils literal notranslate"><span class="pre">AUTHOR_SEPARATOR</span></code> (`` and <code class="docutils literal notranslate"><span class="pre">)</span> <span class="pre">で、タグは</span>
+<span class="pre">``TAG_SEPARATOR</span></code> (<code class="docutils literal notranslate"><span class="pre">,</span> <span class="pre">``)</span> <span class="pre">で、既定値を選択肢に分け、保存時に連結</span>
+<span class="pre">する。変更しなければ表記は変わらない。</span></code>, `` 区切りで保存済みの著者は
+1 つの選択肢として、そのまま保存される。</p></li>
+<li><p>年は、保存されている値が空か有効なら数値入力で入力する。無効 (整数
+として往復しない、または入力できる範囲の外) なら、警告を出して文字の
+入力欄に切り替える。触らなければ元の値を保ち、入力し直せばその値で
+保存する。</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>entry</strong> (<a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry.Entry"><em>Entry</em></a>) – カスタマイズするEntryオブジェクト</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>更新されたEntryオブジェクト</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry.Entry">Entry</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.app.components.delete_pdfs">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.app.components.</span></span><span class="sig-name descname"><span class="pre">delete_pdfs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">entry</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry._entry.Entry"><span class="pre">Entry</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">base_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Path</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">specific_files</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">Path</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">int</span></span></span><a class="headerlink" href="#paper_manager.app.components.delete_pdfs" title="Link to this definition">#</a></dt>
+<dd><p>PDFファイルを削除する。</p>
+<p>削除は、ファイル操作用に変換したパス (<code class="docutils literal notranslate"><span class="pre">to_fs_path</span></code>。Windows では
+拡張長のパス) で行う。<code class="docutils literal notranslate"><span class="pre">specific_files</span></code> は変換前のパスでも変換後の
+パスでもよい。PDFフォルダが空かどうかの判定やPDFルートとの比較は、
+変換後のパスどうしで行う。</p>
+<p>エントリのPDFフォルダがPDFルートの直下の名前でないとき (フォルダ名の
+計算結果が空や <code class="docutils literal notranslate"><span class="pre">..</span></code> などで、PDFルートそのもの、またはその外を指す
+とき) は、フォルダを削除しない。</p>
+<p>ファイルやフォルダの削除に失敗したら、そのパス (表示用のパス) と理由
+をログと画面に出し、残りの削除を続ける。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>entry</strong> (<a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry.Entry"><em>Entry</em></a>) – 対象の論文エントリ</p></li>
+<li><p><strong>base_dir</strong> (<em>Union</em><em>[</em><em>Path</em><em>, </em><em>None</em><em>]</em><em>, </em><em>optional</em>) – PDFの基本ディレクトリ。Noneの場合はDIRPATH_PDFを使用。</p></li>
+<li><p><strong>specific_files</strong> (<em>Optional</em><em>[</em><em>list</em><em>[</em><em>Path</em><em>]</em><em>]</em><em>, </em><em>optional</em>) – 削除する特定のファイル。Noneの場合は全PDFを削除（PDFフォルダごと、
+および移せなかった旧形式の単一PDFを削除）。</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>削除したファイル数。削除に失敗したものは数えない。</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.app.components.pdf_upload_form">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.app.components.</span></span><span class="sig-name descname"><span class="pre">pdf_upload_form</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">accept_multiple</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">UploadedFile</span><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#paper_manager.app.components.pdf_upload_form" title="Link to this definition">#</a></dt>
+<dd><p>PDFファイルアップロードウィジェットを表示する。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>accept_multiple</strong> (<em>bool</em><em>, </em><em>optional</em>) – 複数ファイルのアップロードを許可するかどうか。デフォルトはTrue。</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>アップロードされたファイルオブジェクトのリスト。</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list[UploadedFile]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.app.components.register_entry_to_list">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.app.components.</span></span><span class="sig-name descname"><span class="pre">register_entry_to_list</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">paper_list</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.PaperList" title="paper_manager.entry._entry.PaperList"><span class="pre">PaperList</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">entry</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry._entry.Entry"><span class="pre">Entry</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">uploaded_files</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">UploadedFile</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bool</span></span></span><a class="headerlink" href="#paper_manager.app.components.register_entry_to_list" title="Link to this definition">#</a></dt>
+<dd><p>論文エントリをリストに登録する。</p>
+<p>重複チェックを行い、PDFファイルがあれば保存する。重複は、既存の全論文と
+PDFフォルダ名の比較キー (<code class="docutils literal notranslate"><span class="pre">folder_name_key</span></code>) が一致するかで判定する
+(大文字小文字やUnicode正規化だけが違う名前も重複。ファイルシステムが
+大文字小文字を区別するかにかかわらず、すべてのOSで同じ)。重複なら
+エラーを出し、論文リストもPDFも変えない。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>paper_list</strong> (<a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.PaperList" title="paper_manager.entry.PaperList"><em>PaperList</em></a>) – 論文リスト</p></li>
+<li><p><strong>entry</strong> (<a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry.Entry"><em>Entry</em></a>) – 登録する論文エントリ</p></li>
+<li><p><strong>uploaded_files</strong> (<em>Optional</em><em>[</em><em>list</em><em>[</em><em>UploadedFile</em><em>]</em><em>]</em>) – アップロードされたPDFファイルのリスト</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>登録成功した場合True。重複、または壊れた論文リストのファイルを退避
+できずに保存しなかった場合は、論文リストを変えずにFalse</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.app.components.save_paper_list">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.app.components.</span></span><span class="sig-name descname"><span class="pre">save_paper_list</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">paper_list</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.PaperList" title="paper_manager.entry._entry.PaperList"><span class="pre">PaperList</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bool</span></span></span><a class="headerlink" href="#paper_manager.app.components.save_paper_list" title="Link to this definition">#</a></dt>
+<dd><p>PaperListをセッションステートとファイルに保存する。</p>
+<p>書き込みの前に、論文リストのファイルの状態を確かめる (保存の直前に
+実ファイルを判定するので、画面を開いた後にファイルが壊れた場合も
+見逃さない)。壊れていれば、別名のファイル (<code class="docutils literal notranslate"><span class="pre">list.json.broken-&lt;日時&gt;</span></code>)
+へ退避してから書く。退避先 (表示用のパス) は、ログと画面 (<code class="docutils literal notranslate"><span class="pre">st.warning</span></code>)
+に出す。画面の再描画で消えないよう、同じ文言を session state の通知
+(<code class="docutils literal notranslate"><span class="pre">KEY_NOTICES</span></code>) にも残す。通知は、次の描画で <code class="docutils literal notranslate"><span class="pre">config_page</span></code> が
+表示してから消す。ファイルがない、または壊れていなければ、退避せずに
+書く。</p>
+<p>壊れたファイルを退避できなかった (またはファイルを読めず、状態を確かめ
+られなかった) ときは、壊れたファイルの内容を失わないよう、何も書かずに
+エラーをログと画面に出して <code class="docutils literal notranslate"><span class="pre">False</span></code> を返す。session state も変えない。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>paper_list</strong> (<a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.PaperList" title="paper_manager.entry.PaperList"><em>PaperList</em></a>) – 保存する論文リスト</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>保存した場合True。退避できずに保存しなかった場合False。</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.app.components.save_pdf">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.app.components.</span></span><span class="sig-name descname"><span class="pre">save_pdf</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uploaded_file_pdf</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">UploadedFile</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">filepath_pdf</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Path</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bool</span></span></span><a class="headerlink" href="#paper_manager.app.components.save_pdf" title="Link to this definition">#</a></dt>
+<dd><p>PDFファイルを保存する。</p>
+<div class="deprecated">
+<p><span class="versionmodified deprecated">Deprecated since version Use: </span><cite>save_pdfs()</cite> instead for multiple PDF support.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>uploaded_file_pdf</strong> (<em>Optional</em><em>[</em><em>UploadedFile</em><em>]</em>) – アップロードされたPDFファイル</p></li>
+<li><p><strong>filepath_pdf</strong> (<em>Path</em>) – 保存先のファイルパス</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>保存に成功した場合True</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.app.components.save_pdfs">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.app.components.</span></span><span class="sig-name descname"><span class="pre">save_pdfs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uploaded_files</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">UploadedFile</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">entry</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry._entry.Entry"><span class="pre">Entry</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">base_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Path</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">failures</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">int</span></span></span><a class="headerlink" href="#paper_manager.app.components.save_pdfs" title="Link to this definition">#</a></dt>
+<dd><p>複数のPDFファイルを保存する。</p>
+<p>保存先は、ファイル操作用に変換したパス (<code class="docutils literal notranslate"><span class="pre">Entry.get_pdf_dir</span></code>。
+Windows では拡張長のパス) なので、パス全体の長さにかかわらず保存する。
+フォルダの作成やファイルの書き込みに失敗したら、そのパス (表示用の
+パス) と理由をログと画面に出し、残りのファイルの処理を続ける。</p>
+<p>画面のエラーは、画面が再描画されると消える。呼び出し元がその後も失敗を
+伝えられるよう、<code class="docutils literal notranslate"><span class="pre">failures</span></code> を渡すと、画面 (<code class="docutils literal notranslate"><span class="pre">st.error</span></code>) に出したものと
+同じ文 (表示用のパスと理由。変換後の prefix は含まない) を、失敗ごとに
+1 文ずつ追加する。成功したファイルの分は何も追加しない。省略すると、
+これまでと同じ振る舞いになる。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>uploaded_files</strong> (<em>list</em><em>[</em><em>UploadedFile</em><em>]</em>) – アップロードされたPDFファイルのリスト</p></li>
+<li><p><strong>entry</strong> (<a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry.Entry"><em>Entry</em></a>) – 対象の論文エントリ</p></li>
+<li><p><strong>base_dir</strong> (<em>Union</em><em>[</em><em>Path</em><em>, </em><em>None</em><em>]</em><em>, </em><em>optional</em>) – PDFの基本ディレクトリ。Noneの場合はDIRPATH_PDFを使用。</p></li>
+<li><p><strong>failures</strong> (<em>Optional</em><em>[</em><em>list</em><em>[</em><em>str</em><em>]</em><em>]</em><em>, </em><em>optional</em>) – 失敗の文を追加する一覧。渡された一覧の既存の中身は残し、後ろに
+追加する。</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>保存したファイル数</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="paper_manager.app.components.update_entry_in_list">
+<span class="sig-prename descclassname"><span class="pre">paper_manager.app.components.</span></span><span class="sig-name descname"><span class="pre">update_entry_in_list</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">paper_list</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.PaperList" title="paper_manager.entry._entry.PaperList"><span class="pre">PaperList</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">key_original</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">entry_updated</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry._entry.Entry"><span class="pre">Entry</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">uploaded_files</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">UploadedFile</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">failures</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bool</span></span></span><a class="headerlink" href="#paper_manager.app.components.update_entry_in_list" title="Link to this definition">#</a></dt>
+<dd><p>論文エントリを更新する。</p>
+<p>PDFフォルダ名が変わらない更新は、そのまま更新する。変わる更新は、自分
+以外の論文とPDFフォルダ名の比較キー (<code class="docutils literal notranslate"><span class="pre">folder_name_key</span></code>) が一致する
+なら重複として拒否する (大文字小文字やUnicode正規化だけが違う名前も重複。
+ファイルシステムが大文字小文字を区別するかにかかわらず、すべてのOSで
+同じ)。重複でなければ、PDFフォルダを新しい名前へ改名してから更新する。</p>
+<p>改名の前に、元の論文の旧形式の単一PDFと修正前の名前のフォルダの移行
+(<code class="docutils literal notranslate"><span class="pre">Entry.get_pdf_files</span></code>) を済ませるので、改名後も新しい名前のフォルダの
+PDFとして見える。移行は既存のPDFを上書きせず、一覧の表示でも起きる。</p>
+<p>大文字小文字 (またはUnicode正規化) だけが変わる改名は、一時名を経由して
+行う。改名先が元のフォルダ自身でない既存のフォルダなら、上書き・統合せず
+に拒否する。拒否・失敗したとき (<code class="docutils literal notranslate"><span class="pre">False</span></code>) は、論文リストを変えず、PDF
+フォルダは元の名前に保つ (一時名からも戻せなかったときだけ、一時名の場所を
+エラーに含める)。</p>
+<p>追加したPDFの一部を保存できなくても、論文を保存できれば <code class="docutils literal notranslate"><span class="pre">True</span></code> を返す
+(保存の失敗は <code class="docutils literal notranslate"><span class="pre">save_pdfs</span></code> が画面に出す)。呼び出し元が更新の後に再描画
+すると画面のエラーは消えるので、<code class="docutils literal notranslate"><span class="pre">failures</span></code> を渡すと、更新に成功した
+ときだけ、保存に失敗したPDFの文 (<code class="docutils literal notranslate"><span class="pre">save_pdfs</span></code> が画面に出したものと同じ
+文) を追加する。更新を拒否・中止して <code class="docutils literal notranslate"><span class="pre">False</span></code> を返すときは、
+<code class="docutils literal notranslate"><span class="pre">failures</span></code> を変えない (再描画しなければ、画面のエラーが残る)。</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>paper_list</strong> (<a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.PaperList" title="paper_manager.entry.PaperList"><em>PaperList</em></a>) – 論文リスト</p></li>
+<li><p><strong>key_original</strong> (<em>str</em>) – 更新する論文の元のキー</p></li>
+<li><p><strong>entry_updated</strong> (<a class="reference internal" href="paper_manager.entry.html#paper_manager.entry.Entry" title="paper_manager.entry.Entry"><em>Entry</em></a>) – 更新後の論文エントリ</p></li>
+<li><p><strong>uploaded_files</strong> (<em>Optional</em><em>[</em><em>list</em><em>[</em><em>UploadedFile</em><em>]</em><em>]</em>) – アップロードされたPDFファイルのリスト</p></li>
+<li><p><strong>failures</strong> (<em>Optional</em><em>[</em><em>list</em><em>[</em><em>str</em><em>]</em><em>]</em><em>, </em><em>optional</em>) – 追加したPDFの保存の失敗の文を追加する一覧。渡された一覧の既存の
+中身は残し、後ろに追加する。省略すると、これまでと同じ振る舞いに
+なる。</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>更新成功した場合True。重複、改名の失敗、または壊れた論文リストの
+ファイルを退避できずに保存しなかった場合は、論文リストを変えずに
+False</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="paper_manager.app.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">paper_manager.app package</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="paper_manager.app.helper.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">paper_manager.app.helper package</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.custom_entry"><code class="docutils literal notranslate"><span class="pre">custom_entry()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.delete_pdfs"><code class="docutils literal notranslate"><span class="pre">delete_pdfs()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.pdf_upload_form"><code class="docutils literal notranslate"><span class="pre">pdf_upload_form()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.register_entry_to_list"><code class="docutils literal notranslate"><span class="pre">register_entry_to_list()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.save_paper_list"><code class="docutils literal notranslate"><span class="pre">save_paper_list()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.save_pdf"><code class="docutils literal notranslate"><span class="pre">save_pdf()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.save_pdfs"><code class="docutils literal notranslate"><span class="pre">save_pdfs()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#paper_manager.app.components.update_entry_in_list"><code class="docutils literal notranslate"><span class="pre">update_entry_in_list()</span></code></a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By yu9824
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2025, yu9824.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
