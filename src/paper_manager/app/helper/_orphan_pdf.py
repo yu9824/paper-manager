@@ -14,6 +14,14 @@
     - 孤立PDFファイルの削除
     - 孤立PDFに最も近いエントリの検出
 
+パスの扱い:
+    PDFルート（``DIRPATH_PDF``）は、起点で一度だけファイル操作用のパスに
+    変換（``to_fs_path``。Windowsでは拡張長のパス）する。そこから得た
+    子のパス（``iterdir`` や ``glob`` の結果）は、変換後の空間にある。
+    比較は変換後のパスどうしで行い、変換前の ``DIRPATH_PDF`` とは比べない
+    （Windowsでは拡張長のパスのprefixの有無で一致しないため）。画面とログ
+    には ``to_display_path`` で戻したパスを出す。
+
 例:
     >>> from paper_manager.app.helper._orphan_pdf import find_orphaned_pdfs
     >>> from paper_manager.entry import PaperList
@@ -29,13 +37,56 @@ from typing import Optional
 
 from paper_manager._constants import DIRPATH_PDF
 from paper_manager.entry import Entry, PaperList
+from paper_manager.helper import folder_name_key, to_display_path, to_fs_path
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
 
 
+def _valid_name_keys(paper_list: PaperList) -> tuple[set[str], set[str]]:
+    """論文に紐づく名前の比較キーを集める。
+
+    現在の名前（``pdf_dir_name``）と、修正前の名前（``legacy_pdf_dir_name``。
+    KB7の範囲で移行前のフォルダが残っているとき）の両方を有効とする。
+    比較キーは大文字小文字とUnicode正規化の違いを無視する（紐づくPDFを
+    孤立と判定して削除しないため。判定に迷う場合は孤立にしない側に倒す）。
+
+    Parameters
+    ----------
+    paper_list : PaperList
+        論文リスト
+
+    Returns
+    -------
+    tuple[set[str], set[str]]
+        ``(フォルダ名の比較キー, 旧形式の単一PDFのファイル名の比較キー)``。
+        旧形式のファイル名は、各エントリの ``pdf_filename`` と、
+        ``<フォルダ名>.pdf``（現在の名前・修正前の名前）。
+    """
+    dir_keys: set[str] = set()
+    file_keys: set[str] = set()
+    for entry in paper_list.values():
+        for dir_name in (entry.pdf_dir_name, entry.legacy_pdf_dir_name):
+            if dir_name is None:
+                continue
+            dir_keys.add(folder_name_key(dir_name))
+            file_keys.add(folder_name_key(f"{dir_name}.pdf"))
+        file_keys.add(folder_name_key(entry.pdf_filename))
+    return dir_keys, file_keys
+
+
 def find_orphaned_pdfs(paper_list: PaperList) -> list[Path]:
     """論文リストに紐づいていない孤立したPDFファイルを検出する。
+
+    走査はファイル操作用に変換したPDFルート（``to_fs_path(DIRPATH_PDF)``）
+    から行い、戻り値のパスも変換後の空間にある（画面とログに出すときは
+    ``to_display_path`` で戻す）。次のものは孤立と判定しない。
+
+    - 名前が、いずれかの論文の現在の名前または修正前の名前（KB7の範囲）と
+      一致する（大文字小文字とUnicode正規化の違いを除く）フォルダ内のPDF
+    - 名前が、いずれかの論文の旧形式の単一PDFの名前（``pdf_filename``、
+      ``<フォルダ名>.pdf``）と一致する、PDFルート直下のPDF。フォルダへ
+      移せなかった旧形式のPDFもここに含まれる
 
     Parameters
     ----------
@@ -45,41 +96,44 @@ def find_orphaned_pdfs(paper_list: PaperList) -> list[Path]:
     Returns
     -------
     list[Path]
-        孤立したPDFファイルのパスのリスト
+        孤立したPDFファイルのパスのリスト（変換後のパス。名前順）
     """
     orphaned_pdfs: list[Path] = []
 
-    if not DIRPATH_PDF.is_dir():
+    pdf_root = to_fs_path(DIRPATH_PDF)
+    if not pdf_root.is_dir():
         return orphaned_pdfs
 
-    # 論文リスト内のすべてのエントリのpdf_dir_nameを取得
-    valid_pdf_dirs = {entry.pdf_dir_name for entry in paper_list.values()}
-    valid_pdf_files = set()
-
-    # 各エントリのPDFファイルを収集
+    # 各エントリのPDFファイルを取得する。旧形式のPDFと修正前の名前の
+    # フォルダの移行を、PDFルートの走査の前に済ませるために呼ぶ
     for entry in paper_list.values():
-        pdf_files = entry.get_pdf_files()
-        valid_pdf_files.update(pdf_files)
+        entry.get_pdf_files()
+
+    valid_dir_keys, valid_file_keys = _valid_name_keys(paper_list)
 
     # PDFディレクトリ内のすべてのディレクトリをチェック
-    for pdf_dir in DIRPATH_PDF.iterdir():
+    for pdf_dir in sorted(pdf_root.iterdir()):
         if not pdf_dir.is_dir():
             # 旧形式の単一PDFファイルの可能性
             if pdf_dir.suffix == ".pdf":
-                if pdf_dir not in valid_pdf_files:
+                if folder_name_key(pdf_dir.name) not in valid_file_keys:
                     orphaned_pdfs.append(pdf_dir)
-                    _logger.debug(f"Found orphaned legacy PDF: {pdf_dir}")
+                    _logger.debug(
+                        "Found orphaned legacy PDF: %s",
+                        to_display_path(pdf_dir),
+                    )
             continue
 
-        # ディレクトリ名が有効なpdf_dir_nameと一致するかチェック
+        # ディレクトリ名が有効なフォルダ名と一致するかチェック
         dir_name = pdf_dir.name
-        if dir_name not in valid_pdf_dirs:
+        if folder_name_key(dir_name) not in valid_dir_keys:
             # このディレクトリ内のすべてのPDFファイルを孤立としてマーク
-            pdf_files_in_dir = list(pdf_dir.glob("*.pdf"))
+            pdf_files_in_dir = sorted(pdf_dir.glob("*.pdf"))
             orphaned_pdfs.extend(pdf_files_in_dir)
             _logger.debug(
-                f"Found orphaned PDF directory: {dir_name} "
-                f"({len(pdf_files_in_dir)} files)"
+                "Found orphaned PDF directory: %s (%d files)",
+                dir_name,
+                len(pdf_files_in_dir),
             )
 
     return orphaned_pdfs
@@ -93,7 +147,8 @@ def find_closest_entry_for_orphaned_pdf(
     Parameters
     ----------
     orphaned_pdf_path : Path
-        孤立PDFファイルのパス
+        孤立PDFファイルのパス。変換後のパスでも変換前のパスでもよい
+        （PDFルートとの比較は、どちらも変換後のパスにして行う）。
     paper_list : PaperList
         論文リスト
 
@@ -110,8 +165,8 @@ def find_closest_entry_for_orphaned_pdf(
     if orphaned_pdf_path.is_file():
         # ファイルの場合、親ディレクトリ名を使用
         orphaned_dir_name = orphaned_pdf_path.parent.name
-        # 親がDIRPATH_PDFの場合は、ファイル名から推測
-        if orphaned_pdf_path.parent == DIRPATH_PDF:
+        # 親がPDFルートの場合は、ファイル名から推測
+        if to_fs_path(orphaned_pdf_path.parent) == to_fs_path(DIRPATH_PDF):
             # 旧形式のPDFファイルの場合、ファイル名から推測
             orphaned_dir_name = orphaned_pdf_path.stem
     else:
@@ -186,42 +241,121 @@ def _calculate_similarity(s1: str, s2: str) -> float:
     return 0.0
 
 
-def delete_orphaned_pdfs(orphaned_pdfs: list[Path]) -> int:
-    """孤立したPDFファイルを削除する。
+def _failure_reason(error: Exception) -> str:
+    """削除の失敗の理由を、パスを含まない文字列で返す。
+
+    ``str(error)`` には変換後のパス（Windowsでは拡張長のパスのprefix付き）
+    が含まれるため、パスは呼び出し元が ``to_display_path`` で出す。
 
     Parameters
     ----------
-    orphaned_pdfs : list[Path]
-        削除するPDFファイルのパスのリスト
+    error : Exception
+        削除で送出された例外
+
+    Returns
+    -------
+    str
+        ``OSError`` は ``strerror``（なければ ``str(error)``）、
+        それ以外は ``str(error)``
+    """
+    if isinstance(error, OSError) and error.strerror:
+        return error.strerror
+    return str(error)
+
+
+def _count_pdfs(folder: Path) -> int:
+    """フォルダの下にあるPDFファイルの数を数える。
+
+    Parameters
+    ----------
+    folder : Path
+        数えるフォルダ（変換後のパス）
 
     Returns
     -------
     int
-        削除したファイル数
+        ``folder`` の下（サブフォルダを含む）にある ``*.pdf`` ファイルの数
+    """
+    return sum(1 for path in folder.rglob("*.pdf") if path.is_file())
+
+
+def delete_orphaned_pdfs(
+    orphaned_pdfs: list[Path],
+    failures: Optional[list[tuple[Path, str]]] = None,
+) -> int:
+    """孤立したPDFファイルを削除する。
+
+    削除は変換後のパス（``to_fs_path``）で行う。ファイルを削除した結果
+    フォルダが空になったら、そのフォルダも削除する（PDFルート自体は
+    削除しない。PDFルートかどうかは、変換後のPDFルートと比べて判定する）。
+    フォルダを渡されたら、削除の前にその下のPDFを数え、フォルダごと削除
+    して、削除したPDFの件数を数える。1件の失敗で残りの削除は止めない。
+
+    Parameters
+    ----------
+    orphaned_pdfs : list[Path]
+        削除するPDFファイル（またはフォルダ）のパスのリスト
+    failures : Optional[list[tuple[Path, str]]], default None
+        削除に失敗したパスと理由（パスを含まない）を追加するリスト。
+        渡されたリストに、失敗のたびに ``(パス, 理由)`` を追加する。
+        ``None`` なら失敗はログにだけ出す。画面には ``to_display_path`` で
+        戻したパスと理由を出す。ファイルの削除後に、空になったフォルダを
+        削除できなかったときは、そのフォルダを追加する（ファイルは削除
+        済みで、件数には数える）
+
+    Returns
+    -------
+    int
+        削除したPDFファイルの数。フォルダを渡した場合は、フォルダごと
+        削除したPDFの数。削除に失敗したフォルダのPDFは数えない
     """
     deleted_count = 0
+    pdf_root = to_fs_path(DIRPATH_PDF)
+
+    def record_failure(path: Path, error: Exception) -> None:
+        reason = _failure_reason(error)
+        _logger.error(
+            "Failed to delete orphaned PDF %s: %s",
+            to_display_path(path),
+            reason,
+        )
+        if failures is not None:
+            failures.append((path, reason))
 
     for pdf_path in orphaned_pdfs:
         try:
-            if pdf_path.is_file():
-                pdf_path.unlink()
-                deleted_count += 1
-                _logger.debug(f"Deleted orphaned PDF: {pdf_path}")
-
-                # ディレクトリが空になったら削除
-                parent_dir = pdf_path.parent
-                if parent_dir != DIRPATH_PDF and parent_dir.is_dir():
-                    if not any(parent_dir.iterdir()):
-                        parent_dir.rmdir()
-                        _logger.debug(f"Removed empty directory: {parent_dir}")
-
-            elif pdf_path.is_dir():
-                # ディレクトリ全体を削除
-                shutil.rmtree(pdf_path)
-                deleted_count += len(list(pdf_path.glob("*.pdf")))
-                _logger.debug(f"Deleted orphaned PDF directory: {pdf_path}")
-
+            target = to_fs_path(pdf_path)
+            is_file = target.is_file()
+            if is_file:
+                target.unlink()
+                count = 1
+            elif target.is_dir():
+                # ディレクトリ全体を削除（削除の前にPDFを数える）
+                count = _count_pdfs(target)
+                shutil.rmtree(target)
+            else:
+                continue
         except Exception as e:
-            _logger.warning(f"Failed to delete orphaned PDF {pdf_path}: {e}")
+            record_failure(pdf_path, e)
+            continue
+        deleted_count += count
+        _logger.debug("Deleted orphaned PDF: %s", to_display_path(target))
+
+        if not is_file:
+            continue
+        # ディレクトリが空になったら削除（PDFルート自体は削除しない）
+        parent_dir = target.parent
+        try:
+            if (
+                parent_dir != pdf_root
+                and parent_dir.is_dir()
+                and not any(parent_dir.iterdir())
+            ):
+                parent_dir.rmdir()
+                _logger.debug(
+                    "Removed empty directory: %s", to_display_path(parent_dir)
+                )
+        except Exception as e:
+            record_failure(pdf_path.parent, e)
 
     return deleted_count

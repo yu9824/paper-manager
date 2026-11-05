@@ -16,6 +16,8 @@ __all__ = (
     "COLNAME_AUTHOR",
     "COLNAME_TITLE",
     "COLNAME_JOURNAL",
+    "COLNAME_BOOKTITLE",
+    "COLNAME_PUBLISHER",
     "COLNAME_VOLUME",
     "COLNAME_NUMBER",
     "COLNAME_PAGES",
@@ -49,6 +51,8 @@ COLNAME_YEAR = "year"
 COLNAME_AUTHOR = "author"
 COLNAME_TITLE = "title"
 COLNAME_JOURNAL = "journal"
+COLNAME_BOOKTITLE = "booktitle"
+COLNAME_PUBLISHER = "publisher"
 COLNAME_VOLUME = "volume"
 COLNAME_NUMBER = "number"
 COLNAME_PAGES = "pages"

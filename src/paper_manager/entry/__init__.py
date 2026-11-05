@@ -6,6 +6,21 @@
     Entry: 個々の論文エントリを表す辞書風のクラス
     PaperList: 複数の論文エントリを管理する辞書風のクラス
 
+論文リストのファイルの読み込みと退避:
+    load_paper_list: ファイルを読み込み、状態 (PaperListStatus: 正常・
+        ファイルなし・壊れている) とともに返す (PaperListLoad)
+    backup_broken_paper_list: 壊れたファイルを日時入りの別名へ複製する
+
+PDF の警告の記録:
+    KEY_SHOWN_PDF_WARNINGS: 画面に出した PDF の移行・アクセスの警告を記録する
+        session state のキー (``config_page`` が描画の冒頭で消す)
+
+引用キー:
+    sanitize_citation_key: BibTeX の引用キーとして読めない文字 (空白・``,``・
+        ``{``・``}``) を除く
+    unique_citation_keys: 整えたうえで、大文字小文字を区別せずに重複しない
+        引用キーの並びにする
+
 例:
     >>> from paper_manager.entry import Entry, PaperList
     >>> entry = Entry({
@@ -20,6 +35,26 @@
 
 """
 
-from ._entry import Entry, PaperList
+from ._entry import (
+    KEY_SHOWN_PDF_WARNINGS,
+    Entry,
+    PaperList,
+    PaperListLoad,
+    PaperListStatus,
+    backup_broken_paper_list,
+    load_paper_list,
+    sanitize_citation_key,
+    unique_citation_keys,
+)
 
-__all__ = ("Entry", "PaperList")
+__all__ = (
+    "KEY_SHOWN_PDF_WARNINGS",
+    "Entry",
+    "PaperList",
+    "PaperListLoad",
+    "PaperListStatus",
+    "backup_broken_paper_list",
+    "load_paper_list",
+    "sanitize_citation_key",
+    "unique_citation_keys",
+)

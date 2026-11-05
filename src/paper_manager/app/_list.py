@@ -6,7 +6,7 @@ from copy import deepcopy
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import pandas as pd
 import streamlit as st
@@ -38,14 +38,19 @@ from paper_manager.app.components import (
     save_paper_list,
     update_entry_in_list,
 )
-from paper_manager.app.helper import MAP_REQUIRED_FIELDS, config_page
+from paper_manager.app.components._common import _report_failure
+from paper_manager.app.helper import (
+    KEY_NOTICES,
+    MAP_REQUIRED_FIELDS,
+    config_page,
+)
 from paper_manager.app.helper._orphan_pdf import (
     delete_orphaned_pdfs,
     find_closest_entry_for_orphaned_pdf,
     find_orphaned_pdfs,
 )
-from paper_manager.entry import Entry, PaperList
-from paper_manager.helper import split
+from paper_manager.entry import Entry, PaperList, unique_citation_keys
+from paper_manager.helper import split, to_display_path, to_fs_path
 from paper_manager.logging import get_child_logger
 
 _logger = get_child_logger(__name__)
@@ -126,8 +131,66 @@ def _render_link(entry: Entry) -> None:
         )
 
 
+def _with_citation_keys(entries: Sequence[Entry]) -> list[Entry]:
+    """引用キーを整えた論文エントリの複製を返す。
+
+    BibTeXの引用キーとして読めない文字（空白・``,``・``{``・``}``）を含む
+    既存の論文でも書き出せるよう、複製の ``ID`` を ``unique_citation_keys``
+    で整えたキー（大文字小文字を区別せずに重複しない）に置き換える。
+    論文リストのエントリと ``list.json`` の ``ID`` は変えない。
+
+    Parameters
+    ----------
+    entries : Sequence[Entry]
+        書き出す論文エントリ。``ID`` を持つ
+
+    Returns
+    -------
+    list[Entry]
+        ``entries`` と同じ長さ・順序の複製。``ID`` だけが整えたキーに
+        なっている
+    """
+    keys = unique_citation_keys([entry["ID"] for entry in entries])
+    copies = []
+    for entry, key in zip(entries, keys):
+        copied = Entry(entry)
+        copied["ID"] = key
+        copies.append(copied)
+    return copies
+
+
+def _to_bibtex(
+    entries: Sequence[Entry],
+) -> tuple[str, "bibtex.BibliographyData"]:
+    """論文エントリをBibTeXのテキストと、パースしたデータにする。
+
+    書き出す前に、引用キーを ``_with_citation_keys`` で整える。
+
+    Parameters
+    ----------
+    entries : Sequence[Entry]
+        書き出す論文エントリ
+
+    Returns
+    -------
+    tuple[str, bibtex.BibliographyData]
+        BibTeXテキストとパースされたBibliographyDataのタプル
+    """
+    bib_database = BibDatabase()
+    bib_database.entries = _with_citation_keys(entries)
+
+    bib_writer = BibTexWriter()
+    bib_text = bib_writer.write(bib_database)
+
+    bib_parser = bibtex.Parser()
+    return bib_text, bib_parser.parse_string(bib_text)
+
+
 def _render_citation(entry: Entry) -> tuple[str, "bibtex.BibliographyData"]:
     """論文の引用情報を表示する。
+
+    引用キーは ``_to_bibtex`` で整えて書き出す（論文リストの ``ID`` は
+    変えない）。
 
     Parameters
     ----------
@@ -142,14 +205,7 @@ def _render_citation(entry: Entry) -> tuple[str, "bibtex.BibliographyData"]:
     st.subheader("📝 引用情報")
 
     # bibtex
-    bib_database = BibDatabase()
-    bib_database.entries = [entry]
-
-    bib_writer = BibTexWriter()
-    bib_text = bib_writer.write(bib_database)
-
-    bib_parser = bibtex.Parser()
-    bibdata = bib_parser.parse_string(bib_text)
+    bib_text, bibdata = _to_bibtex([entry])
 
     _citation_key = tuple(bibdata.entries.keys())[0]
     formatted_entry = Style().format_entry(
@@ -170,8 +226,60 @@ def _render_citation(entry: Entry) -> tuple[str, "bibtex.BibliographyData"]:
     return bib_text, bibdata
 
 
+def _read_pdf(pdf_file: Path) -> Optional[bytes]:
+    """PDFファイルを読み込む。失敗したら、画面とログにエラーを出す。
+
+    Parameters
+    ----------
+    pdf_file : Path
+        読み込むPDFファイル。変換後のパスでも変換前のパスでもよい
+        （ファイル操作は変換後のパスで行う）
+
+    Returns
+    -------
+    Optional[bytes]
+        PDFの内容。読み込めなかった場合はNone。画面とログには、何をしようと
+        して失敗したかと、表示用のパス（``to_display_path``）、理由を出す
+    """
+    try:
+        return to_fs_path(pdf_file).read_bytes()
+    except OSError as e:
+        _report_failure("Failed to read PDF file", pdf_file, e)
+        return None
+
+
+def _download_filename(entry: Entry, pdf_file: Path, pdf_count: int) -> str:
+    """PDFをダウンロードするときのファイル名を決める。
+
+    PDFが1件だけで、名前が番号（``NN.pdf``）なら、``<フォルダ名>_NN.pdf``
+    にする。複数ある場合と、1件だけでも名前が番号でない場合（フォルダへ
+    移せなかった旧形式のPDFなど）は、PDFの名前のままにする。
+
+    Parameters
+    ----------
+    entry : Entry
+        論文エントリ
+    pdf_file : Path
+        ダウンロードするPDFファイル
+    pdf_count : int
+        論文のPDFの件数
+
+    Returns
+    -------
+    str
+        ダウンロードするファイル名
+    """
+    if pdf_count == 1 and re.fullmatch(r"[0-9]+", pdf_file.stem):
+        # ファイル名からインデックスを抽出（例: "00.pdf" -> 0）
+        return f"{entry.pdf_dir_name}_{int(pdf_file.stem):02d}.pdf"
+    return pdf_file.name
+
+
 def _render_pdf_viewer(pdf_files: list[Path], entry: Entry) -> None:
     """複数のPDFファイルを表示する。
+
+    選択したPDFを読み込めなかったときは、失敗したことと表示用のパスを
+    画面に出し、ビューアとダウンロードボタンは表示しない。
 
     Parameters
     ----------
@@ -197,16 +305,14 @@ def _render_pdf_viewer(pdf_files: list[Path], entry: Entry) -> None:
     if selected_pdf_name:
         selected_pdf = pdf_options[selected_pdf_name]
 
-        with open(selected_pdf, mode="rb") as f:
-            pdf_contents = f.read()
+        pdf_contents = _read_pdf(selected_pdf)
+        if pdf_contents is None:
+            return
 
-        # ファイル名の決定: 1枚だけの場合はディレクトリ名_{index:02d}.pdf
-        if len(pdf_files) == 1:
-            # ファイル名からインデックスを抽出（例: "00.pdf" -> 0）
-            index = int(selected_pdf.stem)
-            download_filename = f"{entry.pdf_dir_name}_{index:02d}.pdf"
-        else:
-            download_filename = selected_pdf.name
+        # ファイル名の決定
+        download_filename = _download_filename(
+            entry, selected_pdf, len(pdf_files)
+        )
 
         # ダウンロードボタン
         st.download_button(
@@ -222,6 +328,71 @@ def _render_pdf_viewer(pdf_files: list[Path], entry: Entry) -> None:
 
         # PDFビューア
         pdf_viewer(pdf_contents, width=700, height=1000)
+
+
+def _add_pdf_to_zip(
+    zip_file: zipfile.ZipFile, pdf_file: Path, arcname: str
+) -> bool:
+    """PDFファイルをzipに追加する。読み込めなければ、zipに入れない。
+
+    zipへ書き込む前にファイルの情報と内容を読み込むので、読み込みに失敗した
+    ファイルは、途中までの内容も含めて、zipに残らない。
+
+    Parameters
+    ----------
+    zip_file : zipfile.ZipFile
+        追加先のzip
+    pdf_file : Path
+        追加するPDFファイル。変換後のパスでも変換前のパスでもよい
+    arcname : str
+        zipの中での名前
+
+    Returns
+    -------
+    bool
+        追加した場合True。読み込めなかった場合はFalse（画面とログに、
+        何をしようとして失敗したかと表示用のパス、理由を出す）
+    """
+    source = to_fs_path(pdf_file)
+    try:
+        info = zipfile.ZipInfo.from_file(source, arcname)
+        contents = source.read_bytes()
+    except OSError as e:
+        _report_failure("Failed to add PDF file to ZIP file", pdf_file, e)
+        return False
+    zip_file.writestr(info, contents, compress_type=zipfile.ZIP_DEFLATED)
+    return True
+
+
+def _zip_pdfs(entries: Sequence[Entry]) -> tuple[bytes, int]:
+    """複数の論文のPDFを、階層構造を保ってzipにまとめる。
+
+    各論文のPDFは ``<pdf_dir_name>/<PDFの名前>`` に入れる。読み込めない
+    PDFは、エラーを出してzipに入れず、残りのPDFを続ける。
+
+    Parameters
+    ----------
+    entries : Sequence[Entry]
+        論文エントリのシーケンス
+
+    Returns
+    -------
+    tuple[bytes, int]
+        zipの内容と、zipに入れたPDFの件数
+    """
+    zip_buffer = BytesIO()
+    added = 0
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for entry in entries:
+            # 各エントリのpdf_dir_nameをディレクトリ名として使用
+            dir_name = entry.pdf_dir_name
+            for pdf_file in entry.get_pdf_files():
+                # 階層構造を保つ: dir_name/pdf_filename
+                if _add_pdf_to_zip(
+                    zip_file, pdf_file, f"{dir_name}/{pdf_file.name}"
+                ):
+                    added += 1
+    return zip_buffer.getvalue(), added
 
 
 def _render_export(
@@ -246,15 +417,8 @@ def _render_export(
     # サブヘッダーの設定
     st.subheader("💾 エクスポート")
 
-    # BibTeX テキストを生成
-    bib_database = BibDatabase()
-    bib_database.entries = list(entries)
-
-    bib_writer = BibTexWriter()
-    bib_text = bib_writer.write(bib_database)
-
-    bib_parser = bibtex.Parser()
-    bibdata = bib_parser.parse_string(bib_text)
+    # BibTeX テキストを生成（引用キーを整えた複製を書き出す）
+    bib_text, bibdata = _to_bibtex(entries)
 
     # エクスポートオプション
     options_file_ext: list[str] = ["bib", "xml"]
@@ -282,29 +446,18 @@ def _render_export(
     if ext == "pdf":
         if is_multi:
             # 複数選択時: 階層構造を保ってzipファイルを作成
-            zip_buffer = BytesIO()
-            with zipfile.ZipFile(
-                zip_buffer, "w", zipfile.ZIP_DEFLATED
-            ) as zip_file:
-                for entry in entries:
-                    pdf_files_for_entry = entry.get_pdf_files()
-                    if pdf_files_for_entry:
-                        # 各エントリのpdf_dir_nameをディレクトリ名として使用
-                        dir_name = entry.pdf_dir_name
-                        for pdf_file in pdf_files_for_entry:
-                            # 階層構造を保つ: dir_name/pdf_filename
-                            arcname = f"{dir_name}/{pdf_file.name}"
-                            zip_file.write(pdf_file, arcname)
-
-            zip_buffer.seek(0)
-            st.download_button(
-                "📦 ZIPファイルをダウンロード",
-                data=zip_buffer.getvalue(),
-                mime="application/zip",
-                icon=":material/download:",
-                file_name=str(filepath_base_export.with_suffix(".zip")),
-                use_container_width=True,
-            )
+            zip_bytes, added = _zip_pdfs(entries)
+            if added:
+                st.download_button(
+                    "📦 ZIPファイルをダウンロード",
+                    data=zip_bytes,
+                    mime="application/zip",
+                    icon=":material/download:",
+                    file_name=str(filepath_base_export.with_suffix(".zip")),
+                    use_container_width=True,
+                )
+            else:
+                st.info("No PDF files available.")
         else:
             # 単一選択時: 既存のPDFビューアを表示
             if pdf_files is None:
@@ -337,6 +490,51 @@ def _render_export(
                 xml.dom.minidom.parseString(xml_str).toprettyxml(indent="  "),
                 language="xml",
             )
+
+
+def _report_orphan_failures(
+    orphaned_pdfs: Sequence[Path],
+    failures: Sequence[tuple[Path, str]],
+    deleted: int,
+) -> None:
+    """孤立PDFの削除に失敗したパスと理由を、画面にエラーで出す。
+
+    ``failures`` には、削除を依頼したパスそのもの（PDFの削除に失敗した）
+    と、PDFは削除できたが空になった親フォルダを削除できなかったときの
+    そのフォルダのパスの、どちらも入る。後者を「PDFの削除に失敗した」と
+    表示しないよう、依頼したパスかどうかで分け、文言を分けて出す。
+    パスは ``to_display_path`` で変換後のprefixを外して出す（ログには
+    ``delete_orphaned_pdfs`` が失敗のたびに出している）。
+
+    Parameters
+    ----------
+    orphaned_pdfs : Sequence[Path]
+        削除を依頼した孤立PDFのパス
+    failures : Sequence[tuple[Path, str]]
+        ``delete_orphaned_pdfs`` が返した、失敗したパスと理由
+    deleted : int
+        削除に成功したPDFの件数
+    """
+    requested = set(orphaned_pdfs)
+    pdf_failures = [f for f in failures if f[0] in requested]
+    folder_failures = [f for f in failures if f[0] not in requested]
+
+    def lines(items: Sequence[tuple[Path, str]]) -> str:
+        return "\n".join(
+            f"- `{to_display_path(path)}`: {reason}" for path, reason in items
+        )
+
+    if pdf_failures:
+        st.error(
+            f"❌ {len(pdf_failures)}個の孤立PDFファイルを削除できませんでした"
+            f"（{deleted}個は削除しました）。\n\n{lines(pdf_failures)}"
+        )
+    if folder_failures:
+        st.error(
+            "❌ 孤立PDFファイルは削除しましたが、空になったフォルダを"
+            f"{len(folder_failures)}個削除できませんでした"
+            f"（削除したPDF: {deleted}個）。\n\n{lines(folder_failures)}"
+        )
 
 
 def _delete_entry(
@@ -374,8 +572,9 @@ def _delete_entry(
             delete_pdfs(entry)
         del paper_list[key]
 
-    save_paper_list(paper_list)
-    st.rerun()
+    # 退避できずに保存しなかった場合は、再描画しない (エラーを画面に残す)
+    if save_paper_list(paper_list):
+        st.rerun()
 
 
 @config_page
@@ -431,8 +630,11 @@ def main() -> None:
                     pdf_path, paper_list
                 )
 
-                # PDFファイルのパスを表示
-                pdf_display_path = pdf_path.relative_to(pdf_path.parent.parent)
+                # PDFファイルのパスを表示（変換後のprefixを外したパスで計算）
+                pdf_display = Path(to_display_path(pdf_path))
+                pdf_display_path = pdf_display.relative_to(
+                    pdf_display.parent.parent
+                )
                 if closest_match:
                     entry, similarity = closest_match
                     entry_title = entry.get(COLNAME_TITLE, "N/A")
@@ -459,9 +661,16 @@ def main() -> None:
                 key="delete_orphaned",
                 use_container_width=True,
             ):
-                deleted = delete_orphaned_pdfs(orphaned_pdfs)
-                st.success(f"✅ {deleted}個の孤立PDFファイルを削除しました。")
-                st.rerun()
+                failures: list[tuple[Path, str]] = []
+                deleted = delete_orphaned_pdfs(orphaned_pdfs, failures)
+                if failures:
+                    # 再描画するとエラーが消えるので、再描画せずに残す
+                    _report_orphan_failures(orphaned_pdfs, failures, deleted)
+                else:
+                    st.success(
+                        f"✅ {deleted}個の孤立PDFファイルを削除しました。"
+                    )
+                    st.rerun()
 
     st.divider()
 
@@ -588,6 +797,12 @@ def main() -> None:
 def edit_entry(key_selected: str) -> None:
     """論文エントリの編集フォームを表示する。
 
+    更新に成功したときだけ再描画して閉じる。再描画すると画面のエラーは
+    消えるので、追加した PDF の保存に失敗していたら、その文 (画面のエラーと
+    同じ文) を保留中の通知 (``KEY_NOTICES``) に追加する。通知は、次の描画で
+    ``config_page`` が警告として表示して消す。更新を拒否・中止したときは、
+    再描画も通知の追加もせず、エラーを画面に残す。
+
     Parameters
     ----------
     key_selected : str
@@ -628,6 +843,9 @@ def edit_entry(key_selected: str) -> None:
         )
 
     if flag_done_edit:
+        # 追加したPDFの保存に失敗した文 (画面のエラーと同じ文)
+        failures: list[str] = []
+
         # 必須フィールドのチェック（ENTRYTYPE ごと）
         entry_type = entry_edited["ENTRYTYPE"]
         missing_fields = MAP_REQUIRED_FIELDS[entry_type] - set(
@@ -638,11 +856,16 @@ def edit_entry(key_selected: str) -> None:
             st.error(
                 "('{}') is/are necessary.".format("', '".join(missing_fields))
             )
-        else:
-            # 共通関数を使用してエントリを更新
-            update_entry_in_list(
-                paper_list, key_selected, entry_edited, uploaded_files
-            )
+        # 共通関数を使用してエントリを更新
+        elif update_entry_in_list(
+            paper_list, key_selected, entry_edited, uploaded_files, failures
+        ):
+            # 成功したときだけ再描画して閉じる。失敗したときは、
+            # update_entry_in_list が出したエラーを画面に残す。
+            # 再描画で消える PDF の保存の失敗は、通知に積んでおき、
+            # 次の描画で config_page が表示する
+            if failures:
+                st.session_state.setdefault(KEY_NOTICES, []).extend(failures)
             st.rerun()
 
     elif flag_cancel_edit:

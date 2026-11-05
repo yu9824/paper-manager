@@ -14,6 +14,49 @@ from paper_manager.logging import get_child_logger
 _logger = get_child_logger(__name__)
 
 
+def format_person(person: "pybtex.database.Person") -> str:
+    """BibTeX の人名を ``<名> <姓>`` の形の文字列に整形する。
+
+    名は ``first_names`` と ``middle_names``、姓は ``prelast_names``
+    （``van der`` などの前置詞）と ``last_names`` を空白でつなぎ、空でない
+    部分を ``<名> <姓>`` の順に並べます。単純な ``First Last`` と
+    ``Last, First`` の名前は ``"First Last"`` になります。
+
+    接尾辞（``lineage_names``。``Jr.`` など）があるときは、BibTeX の正規形
+    ``von Last, Jr, First`` にします。``<名> <姓>`` の形ではエクスポート時の
+    再解析で接尾辞が姓として読まれ、姓と名が入れ替わるためです。名か姓が
+    空でも区切りの ``,`` は残します（接尾辞が名や姓として読まれないように
+    するため）。
+
+    Parameters
+    ----------
+    person : pybtex.database.Person
+        整形する人名
+
+    Returns
+    -------
+    str
+        整形した人名。名・姓・接尾辞のすべてが空なら空文字列
+
+    Examples
+    --------
+    >>> from pybtex.database import Person
+    >>> format_person(Person("Smith, John"))
+    'John Smith'
+    >>> format_person(Person("van der Waals, Johannes Diderik"))
+    'Johannes Diderik van der Waals'
+    >>> format_person(Person("King, Jr., Martin Luther"))
+    'King, Jr., Martin Luther'
+
+    """
+    first = " ".join(person.first_names + person.middle_names)
+    last = " ".join(person.prelast_names + person.last_names)
+    lineage = " ".join(person.lineage_names)
+    if lineage:
+        return "{}, {},{}".format(last, lineage, f" {first}" if first else "")
+    return " ".join(part for part in (first, last) if part)
+
+
 def load_bib(
     bibtexfile_or_buffer: Union[os.PathLike, str, io.BytesIO, io.StringIO],
 ) -> "MappingProxyType[str, MappingProxyType[str, str]]":
@@ -51,7 +94,10 @@ def load_bib(
 
     Notes
     -----
-    - 著者名は自動的に "First Last" 形式に変換され、" and " で結合されます
+    - 著者名は :func:`format_person` で整形され、" and " で結合されます。
+      整形した結果が空の人名は捨てます
+    - 著者が 1 人もいないエントリ（著者のない BibTeX など）には ``author``
+      の項目を作りません（空文字列の著者は必須項目の判定を通ってしまうため）
     - エントリタイプは ``ENTRYTYPE`` フィールドに追加されます
 
     """
@@ -81,14 +127,14 @@ def load_bib(
         assert isinstance(entry, pybtex.database.Entry)
         dict_entry: dict[str, str] = dict(entry.fields)
 
-        list_authors: list[str] = list()
-        author: pybtex.database.Person
-        for author in entry.persons["author"]:
-            first_name = author.first_names[0] if author.first_names else ""
-            last_name = author.last_names[0]
-            list_authors.append("{} {}".format(first_name, last_name))
-
-        dict_entry["author"] = " and ".join(list_authors)
+        # 著者のない BibTeX では persons に "author" がない
+        list_authors: list[str] = [
+            name
+            for name in map(format_person, entry.persons.get("author", ()))
+            if name
+        ]
+        if list_authors:
+            dict_entry["author"] = " and ".join(list_authors)
         dict_entry["ENTRYTYPE"] = entry.type
 
         dict_entries[key] = MappingProxyType(dict_entry)

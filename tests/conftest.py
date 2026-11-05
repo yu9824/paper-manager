@@ -11,6 +11,7 @@
 まま確定してしまう (ガードが検出してセッションを止める)。
 """
 
+import builtins
 import copy
 import importlib
 import io
@@ -18,9 +19,12 @@ import json
 import os
 import shutil
 import socket
+import struct
 import sys
 import tempfile
 import warnings
+import zipfile
+import zlib
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import ExitStack
 from pathlib import Path
@@ -176,6 +180,7 @@ from streamlit.runtime.pages_manager import PagesManager  # noqa: E402
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 import paper_manager  # noqa: E402
+import paper_manager.helper._path as _path_adapter  # noqa: E402
 from paper_manager import _constants  # noqa: E402
 from paper_manager.entry import Entry, PaperList  # noqa: E402
 from paper_manager.logging import get_library_root_logger  # noqa: E402
@@ -342,6 +347,45 @@ def _isolate_each_test(
         yield
 
 
+@pytest.fixture
+def caplog(
+    caplog: pytest.LogCaptureFixture,
+) -> Iterator[pytest.LogCaptureFixture]:
+    """ライブラリのログも確実に記録する ``caplog``.
+
+    ライブラリのルートロガー (``paper_manager``) は ``propagate = False``
+    なので、pytest の標準の ``caplog`` はルートロガーにだけハンドラを付ける
+    版 (pytest 8.4 など。Python 3.9 の CI で入る版) では、ライブラリのログを
+    記録できない。pytest 9 以降は ``propagate = False`` のロガーにもハン
+    ドラを付けるため、手元では記録できて版によって結果が変わる。
+
+    このフィクスチャは、記録に使うハンドラ (``caplog.handler``) をライブラリの
+    ルートロガーにも付けて、どの版でも ``caplog.records`` と ``caplog.text`` に
+    ライブラリのログが入るようにする。すでに付いているとき (pytest 9 以降)
+    や、ログがルートロガーへ伝播するときは、何もしない (同じ記録が重複しない)。
+    テストの後に、付けたハンドラを外す。
+
+    Parameters
+    ----------
+    caplog : pytest.LogCaptureFixture
+        pytest 標準の ``caplog``。
+
+    Yields
+    ------
+    pytest.LogCaptureFixture
+        ライブラリのログも記録する ``caplog``。
+    """
+    logger = get_library_root_logger()
+    attach = not logger.propagate and caplog.handler not in logger.handlers
+    if attach:
+        logger.addHandler(caplog.handler)
+    try:
+        yield caplog
+    finally:
+        if attach:
+            logger.removeHandler(caplog.handler)
+
+
 # --- TestDataFactory ------------------------------------------------------
 # エントリ・PDF・サンプルデータを、隔離されたデータディレクトリに作る。
 
@@ -391,6 +435,10 @@ class FakeUpload(io.BytesIO):
     ``getvalue()`` などのバイト列の読み出しは ``io.BytesIO`` のものを使い、
     アップロードされたファイルと同じく ``name`` を持つ。
 
+    ``size`` (中身のバイト数) も ``UploadedFile`` と同じく持つ。画面が
+    ``uploaded_file.size`` を表示する (復元ページ) ので、画面テストで
+    差し替えるときに要る。
+
     Parameters
     ----------
     name : str
@@ -404,6 +452,11 @@ class FakeUpload(io.BytesIO):
     def __init__(self, name: str, content: bytes) -> None:
         super().__init__(content)
         self.name = name
+
+    @property
+    def size(self) -> int:
+        """中身のバイト数 (``UploadedFile.size`` と同じ)."""
+        return len(self.getvalue())
 
 
 class SampleData(NamedTuple):
@@ -684,6 +737,537 @@ def st_messages(monkeypatch: pytest.MonkeyPatch) -> StMessages:
     for name in StMessages._fields:
         monkeypatch.setattr(st, name, _make_recorder(getattr(messages, name)))
     return messages
+
+
+@pytest.fixture
+def rerun_calls(monkeypatch: pytest.MonkeyPatch) -> list[None]:
+    """``st.rerun`` を、呼ばれた回数を記録するだけの処理に差し替える.
+
+    実際には再実行しない。操作が成功したときに画面を再描画するか (再描画
+    するとエラーなどの表示が消える) を、呼び出しの回数で確かめる。
+    ``AppTest`` で実画面を動かすテストも、関数を直接呼ぶテストも使える。
+    ``AppTest`` はスクリプトの再実行で画面を作り直すため、成功の表示を
+    確かめたいテストはこの fixture で再実行を止める。
+
+    Returns
+    -------
+    list[None]
+        ``st.rerun`` が呼ばれるたびに ``None`` が 1 つ加わる一覧。差し替えは
+        テストの後に元へ戻る。
+    """
+    calls: list[None] = []
+    monkeypatch.setattr(st, "rerun", lambda *a, **k: calls.append(None))
+    return calls
+
+
+def failing_open_on_call(
+    failing_call: int, error: OSError
+) -> Callable[..., Any]:
+    """``failing_call`` 回目の呼び出しだけ ``error`` を送出する ``open`` を返す.
+
+    ほかの呼び出しは組み込みの ``open`` に渡す。``_common`` のモジュール
+    変数 ``open`` として差し替えて、``save_pdfs`` の書き込みの失敗を
+    再現する (権限に頼らないので、root でも同じ結果になる)。
+
+    Parameters
+    ----------
+    failing_call : int
+        失敗させる呼び出しの順番 (1 から数える)。
+    error : OSError
+        送出する例外。
+    """
+    calls = 0
+
+    def fake_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == failing_call:
+            raise error
+        return builtins.open(file, *args, **kwargs)
+
+    return fake_open
+
+
+# --- UnreadableZips -------------------------------------------------------
+# 読み出せないメンバーを含む zip を、バイト列を直接書き換えて独立に作る。
+# ``create_backup_zip`` と ``restore_from_zip`` には頼らない。``zipfile`` で
+# 正常な zip を作ってから、対象のメンバーの中身またはヘッダの 1 か所だけを
+# 書き換える (中央ディレクトリは壊さないので、zip 自体は開ける)。作った
+# zip は、対象のメンバーだけが期待どおりの例外で読み出せず、ほかのメンバー
+# は正常に読み出せることを、その場で確かめてから返す (再現になっていない
+# zip でテストが空振りしないため)。
+
+# 読み出せない原因の種類 -> 読み出したときの例外と、メッセージの一部.
+# ``NotImplementedError`` は ``RuntimeError`` の派生なので、暗号化との区別は
+# メッセージで行う
+UNREADABLE_KINDS: dict[str, tuple[type[Exception], str]] = {
+    # 保存方式 ZIP_STORED の中身を 1 バイト書き換える (CRC が合わない)
+    "crc": (zipfile.BadZipFile, "Bad CRC-32"),
+    # 圧縮なしのブロックの deflate (``compresslevel=0``) の中身を 1 バイト
+    # 書き換える。展開は成功し、CRC だけが合わない
+    "deflate-crc": (zipfile.BadZipFile, "Bad CRC-32"),
+    # 圧縮データの先頭のブロックの種類を、予約の値に書き換える。展開で
+    # ``zlib.error`` になる
+    "deflate-error": (zlib.error, "invalid block type"),
+    # 汎用目的ビットフラグの bit 0 (暗号化) を立てる。``zipfile`` は暗号化の
+    # 書き込みに未対応なので、バイト列を書き換えて作る
+    "encrypted": (RuntimeError, "is encrypted"),
+    # 圧縮方式を、``zipfile`` が扱えない値 (99) にする
+    "unsupported": (
+        NotImplementedError,
+        "compression method is not supported",
+    ),
+}
+# 破損させる対象 (役割) -> zip のメンバー名. ``pdf`` が最後のメンバー
+UNREADABLE_ROLES = {
+    "version": "version.json",
+    "list": "list.json",
+    "config": "config.json",
+    "pdf": "pdf/2021 - A - T/00.pdf",
+}
+# 破損させる前の、各メンバーの中身 (キーの順が zip のメンバーの順)。
+# サンプルデータとは異なる値で、書き込まれれば検出できる
+UNREADABLE_MEMBERS = {
+    "version.json": json.dumps(
+        {"version": "0.0.0-test", "backup_date": "2020-01-02T03:04:05"}
+    ).encode("utf-8"),
+    "list.json": b'{"from-unreadable-zip": "list"}\n',
+    "config.json": b'{"from-unreadable-zip": "config"}\n',
+    "pdf/2021 - A - T/00.pdf": PDF_BYTES + b"%from-unreadable-zip\n",
+}
+# ``version.json`` 以外のメンバーを 1 つずつ、種類ごとに破損させる組み合わせ
+UNREADABLE_CASES = [
+    pytest.param(kind, role, id=f"{kind}-{role}")
+    for kind in UNREADABLE_KINDS
+    for role in ("list", "config", "pdf")
+]
+
+_ENCRYPTED_FLAG = 0x1
+_UNSUPPORTED_METHOD = 99
+
+
+class UnreadableZip(NamedTuple):
+    """``make_unreadable_zip`` が作った zip."""
+
+    data: bytes
+    unreadable: tuple[str, ...]  # 読み出せないメンバー名
+    readable: tuple[str, ...]  # 読み出せるメンバー名
+
+
+def _central_headers(data: bytes) -> dict[str, tuple[int, int]]:
+    """zip の各メンバーのヘッダの位置を、バイト列から直接読み取る.
+
+    ``zipfile`` を使わず、末尾の終端レコードから中央ディレクトリをたどる
+    (``zipfile`` は書き込みにだけ使う)。
+
+    Parameters
+    ----------
+    data : bytes
+        コメントも zip64 も持たない zip。
+
+    Returns
+    -------
+    dict[str, tuple[int, int]]
+        メンバー名 -> (ローカルヘッダの位置, 中央ディレクトリのヘッダの位置)。
+    """
+    end = data.rindex(b"PK\x05\x06")
+    (count,) = struct.unpack_from("<H", data, end + 10)
+    (position,) = struct.unpack_from("<I", data, end + 16)
+    headers = {}
+    for _ in range(count):
+        assert data[position : position + 4] == b"PK\x01\x02"
+        name_length, extra_length, comment_length = struct.unpack_from(
+            "<HHH", data, position + 28
+        )
+        (local,) = struct.unpack_from("<I", data, position + 42)
+        name = data[position + 46 : position + 46 + name_length]
+        headers[name.decode("utf-8")] = (local, position)
+        position += 46 + name_length + extra_length + comment_length
+    return headers
+
+
+def corrupt_zip_member(data: bytes, name: str, kind: str) -> bytes:
+    """zip のメンバー ``name`` を、``kind`` の原因で読み出せなくする.
+
+    ``kind`` に合う方式で作った zip を渡すこと: ``crc`` は ``ZIP_STORED``、
+    ``deflate-crc`` は ``compresslevel=0`` の ``ZIP_DEFLATED``、それ以外は
+    ``ZIP_DEFLATED``。書き換えるのは 1 か所 (1 バイト、またはヘッダの
+    2 バイト) だけ。
+
+    Parameters
+    ----------
+    data : bytes
+        正常な zip のバイト列。
+    name : str
+        読み出せなくするメンバーの名前。中身は空であってはならない。
+    kind : str
+        ``UNREADABLE_KINDS`` のキー。
+
+    Returns
+    -------
+    bytes
+        書き換えた zip のバイト列 (``data`` は変えない)。
+    """
+    local, central = _central_headers(data)[name]
+    name_length, extra_length = struct.unpack_from("<HH", data, local + 26)
+    start = local + 30 + name_length + extra_length
+    out = bytearray(data)
+    if kind == "crc":
+        out[start] ^= 0xFF
+    elif kind == "deflate-crc":
+        # 圧縮なしのブロックは、1 バイトのヘッダと LEN・NLEN (各 2 バイト)
+        # の後に中身が続く
+        out[start + 5] ^= 0xFF
+    elif kind == "deflate-error":
+        out[start] = 0x07  # BFINAL=1、BTYPE=3 (予約)
+    elif kind == "encrypted":
+        for offset in (local + 6, central + 8):
+            (flags,) = struct.unpack_from("<H", out, offset)
+            struct.pack_into("<H", out, offset, flags | _ENCRYPTED_FLAG)
+    elif kind == "unsupported":
+        for offset in (local + 8, central + 10):
+            struct.pack_into("<H", out, offset, _UNSUPPORTED_METHOD)
+    else:
+        raise ValueError(f"unknown kind of unreadable member: {kind!r}")
+    return bytes(out)
+
+
+def make_unreadable_zip(corruptions: Mapping[str, str]) -> UnreadableZip:
+    """読み出せないメンバーを含む、バックアップ形式の zip を作る.
+
+    メンバーは ``UNREADABLE_MEMBERS`` (``version.json``・``list.json``・
+    ``config.json``・PDF の順)。``corruptions`` で挙げた役割のメンバーだけが
+    読み出せない。
+
+    Parameters
+    ----------
+    corruptions : Mapping[str, str]
+        役割 (``UNREADABLE_ROLES`` のキー) -> 原因の種類
+        (``UNREADABLE_KINDS`` のキー)。
+
+    Returns
+    -------
+    UnreadableZip
+        zip のバイト列と、読み出せるメンバー・読み出せないメンバーの名前。
+    """
+    names = {
+        UNREADABLE_ROLES[role]: kind for role, kind in corruptions.items()
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        for name, content in UNREADABLE_MEMBERS.items():
+            kind = names.get(name)
+            zf.writestr(
+                name,
+                content,
+                compress_type=(
+                    zipfile.ZIP_STORED
+                    if kind == "crc"
+                    else zipfile.ZIP_DEFLATED
+                ),
+                compresslevel=0 if kind == "deflate-crc" else None,
+            )
+    data = buffer.getvalue()
+    for name, kind in names.items():
+        data = corrupt_zip_member(data, name, kind)
+
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        for name, content in UNREADABLE_MEMBERS.items():
+            if name in names:
+                exception, message = UNREADABLE_KINDS[names[name]]
+                with pytest.raises(exception, match=message):
+                    zf.read(name)
+            else:
+                assert zf.read(name) == content
+    return UnreadableZip(
+        data=data,
+        unreadable=tuple(names),
+        readable=tuple(n for n in UNREADABLE_MEMBERS if n not in names),
+    )
+
+
+TreeState = dict[str, tuple[str, Optional[bytes], int]]
+
+
+def tree_state(root: Path) -> TreeState:
+    """``root`` 配下のすべてのファイル・ディレクトリの状態を返す.
+
+    変更の有無を厳密に比べるための記録。中身のバイト列だけでなく、一覧
+    (増減)、種類、更新時刻 (ナノ秒) も含む。同じ中身で書き直されたファイルも
+    更新時刻で検出できる。
+
+    Parameters
+    ----------
+    root : Path
+        調べるディレクトリ。
+
+    Returns
+    -------
+    TreeState
+        ``root`` からの相対パス (``/`` 区切り。``root`` 自身は ``.``) ->
+        (種類 ``file`` / ``dir`` / ``link``、ファイルは中身・リンクは
+        リンク先、ディレクトリは ``None``、更新時刻)。
+    """
+    state: TreeState = {}
+    for path in [root, *sorted(root.rglob("*"))]:
+        if path.is_symlink():
+            kind, content = "link", os.fsencode(os.readlink(path))
+        elif path.is_dir():
+            kind, content = "dir", None
+        else:
+            kind, content = "file", path.read_bytes()
+        state[path.relative_to(root).as_posix()] = (
+            kind,
+            content,
+            path.lstat().st_mtime_ns,
+        )
+    return state
+
+
+# --- WindowsLikePaths -----------------------------------------------------
+# ファイル操作用のパスへの変換 (paper_manager.helper._path の差し替え口
+# ``_convert`` / ``_unconvert``) を、Windows を模した別名変換に差し替える。
+
+# POSIX は先頭のちょうど 2 つの ``/`` を処理系定義とし、3 つ以上は 1 つと
+# 同じに扱う (``os.path.normpath`` も同じ規則)
+_ALIAS_ROOT = "//"
+
+
+def _to_windows_like_path(path: str) -> str:
+    r"""絶対パスに正規化してから、前に ``/`` を 1 つ足す (別名変換).
+
+    Windows の変換 (``ntpath.abspath`` で正規化してから ``\\?\`` を
+    付ける) を模す。``/x/y`` は ``//x/y`` になる。相対パスと ``..`` は
+    ``os.path.abspath`` で解決してから足す。
+
+    Parameters
+    ----------
+    path : str
+        変換するパス。
+
+    Returns
+    -------
+    str
+        ``//`` で始まる絶対パス。既に ``//`` で始まるパスは正規化だけ
+        して返す (冪等)。
+    """
+    full = os.path.abspath(path)
+    if full.startswith(_ALIAS_ROOT):
+        return full
+    return "/" + full
+
+
+def _from_windows_like_path(path: str) -> str:
+    """:func:`_to_windows_like_path` の逆変換 (先頭の ``//`` を ``/`` に戻す).
+
+    Parameters
+    ----------
+    path : str
+        元に戻すパス。
+
+    Returns
+    -------
+    str
+        先頭がちょうど ``//`` のパスは ``/`` で始まるパス。それ以外の
+        パスはそのまま返す。
+    """
+    if path.startswith(_ALIAS_ROOT) and not path.startswith("///"):
+        return path[1:]
+    return path
+
+
+@pytest.fixture
+def windows_like_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    r"""ファイル操作用のパスの扱いを、Windows を模した別名変換に差し替える.
+
+    autouse ではない。必要なテストで ``windows_like_paths`` を引数に取るか、
+    ``@pytest.mark.usefixtures("windows_like_paths")`` で有効にする。
+    差し替えはテストの後に元へ戻る。
+
+    模すもの: Windows では ``to_fs_path`` の結果 (``\\?\C:\...``) が、
+    同じ場所を指すのに変換前のパス (``C:\...``) と形が異なる。そのため、
+    変換後のパスと変換前のパス (``DIRPATH_PDF`` など) を比べたり
+    (``==``、集合への所属)、``relative_to`` で相対パスを求めたりすると
+    一致しない (prefix の混在による不具合)。この fixture は
+    ``paper_manager.helper._path._convert`` を、絶対パスの前に ``/`` を
+    1 つ足す別名変換 (``/x`` を ``//x`` にする。相対パスと ``..`` は
+    ``os.path.abspath`` で解決してから) に、``_unconvert`` をその逆
+    (先頭の ``//`` を ``/`` に戻す) に差し替える。
+
+    - Linux と macOS では ``//x`` は ``/x`` と同じ場所を指すため、変換後の
+      パスへのファイル操作 (作成、書き込み、一覧、改名、削除、zip の
+      読み書き) は成功する
+    - pathlib では ``//`` は別のルート (``Path("//x").root == "//"``) で、
+      ``Path("//x") != Path("/x")``、``Path("//x/a").relative_to("/x")`` は
+      ``ValueError`` になる。``glob`` や ``iterdir`` で得た子のパスも
+      ``//`` で始まるため、混在の不具合を CI の Linux で再現できる
+    - ``to_display_path(to_fs_path(p)) == os.path.abspath(p)`` になる
+      (Windows の変換と同じ形の事後条件)
+
+    模さないもの: 本物の ``\\?\`` のパスの入出力 (``/`` 区切りや ``..`` を
+    解釈しないこと、ドライブと UNC の扱い)、MAX_PATH (260 文字) の上限、
+    大文字小文字を区別しないファイルシステム。また ``Path.resolve()`` と
+    ``os.path.realpath`` は ``//x`` を ``/x`` に戻す (別名が外れる) ため、
+    変換後のパスの空間にとどまるかの確認には使えない。
+    ``os.path.relpath`` と ``os.path.commonpath`` も空の成分を無視するので、
+    別名では混在を再現しない (Windows の ``ntpath`` では ValueError になる)。
+
+    Windows では、``//`` が UNC のパスを意味して別名にならず、本物の変換が
+    既に働いているため、この fixture を使うテストはスキップする。
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        差し替えに使う。テストの後に元へ戻る。
+    """
+    if os.name == "nt":
+        pytest.skip(
+            "windows_like_paths models Windows paths on POSIX; on Windows "
+            "the real extended-length conversion is already active"
+        )
+    monkeypatch.setattr(_path_adapter, "_convert", _to_windows_like_path)
+    monkeypatch.setattr(_path_adapter, "_unconvert", _from_windows_like_path)
+
+
+# --- RedirectedDataDir ----------------------------------------------------
+# 別名変換 (``windows_like_paths``) は、変換前のパスでも同じ場所を指すので、
+# 変換後のパスを使わずに変換前のパスで読み書きする実装を見逃す。変換後の
+# パスが別のディレクトリを指す状態を作る関数と、その上で 2 つの空間を同じ
+# テストで通す fixture を用意する。
+
+
+def redirect_data_dir(
+    monkeypatch: pytest.MonkeyPatch, data_root: Path, redirected: Path
+) -> None:
+    """変換を、``data_root`` の下を ``redirected`` の下へ写すものに差し替える.
+
+    ``paper_manager.helper._path`` の ``_convert`` を、``data_root`` の下の
+    パスを同じ相対位置の ``redirected`` の下へ写すものに、``_unconvert`` を
+    その逆 (``redirected`` の下を ``data_root`` の下へ戻す) に差し替える。
+    ``data_root`` の外のパスは、``os.path.abspath`` で絶対パスにするだけで
+    写さない。
+
+    変換後のパスでファイルを読み書きする実装は ``redirected`` の下を使い、
+    変換前のパスで読み書きする実装は ``data_root`` の下を使う。どちらの
+    パスを使ったかが、ファイルの置き場所から分かる。別名変換の
+    ``windows_like_paths`` は、変換後のパスも変換前のパスも同じ場所を指す
+    ので、変換前のパスを使う旧実装でも成功してしまい、この違いを検出
+    できない。変換後のパスを起点にしているかの確認には、この関数を使う。
+
+    fixture ではなく関数にしているのは、差し替える時点をテストが選ぶため。
+    ``sample_data`` などの fixture は ``Entry.get_pdf_dir`` で PDF の置き場所
+    を決めるので、差し替えの後に作ると ``redirected`` の下に書かれる。
+    変換前の場所にデータを作ってから差し替える使い方もある。両方の空間を
+    同じテストで通す場合は ``converted_space`` を使う。
+
+    ``redirected`` は作らない (必要なテストが作る)。Windows でも、
+    ``os.path.abspath`` と ``os.sep`` だけで動く。
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        差し替えに使う。テストの後に元へ戻る。
+    data_root : Path
+        データディレクトリ (変換前のパス)。
+    redirected : Path
+        写し先のディレクトリ。``data_root`` の下にあってはならない。
+    """
+    real, target = str(data_root), str(redirected)
+
+    def convert(path: str) -> str:
+        full = os.path.abspath(path)
+        if full == real or full.startswith(real + os.sep):
+            return target + full[len(real) :]
+        return full
+
+    def unconvert(path: str) -> str:
+        if path == target or path.startswith(target + os.sep):
+            return real + path[len(target) :]
+        return path
+
+    monkeypatch.setattr(_path_adapter, "_convert", convert)
+    monkeypatch.setattr(_path_adapter, "_unconvert", unconvert)
+
+
+class ConvertedSpace(NamedTuple):
+    """変換後のパスが実際に指す場所 (``converted_space`` が返す).
+
+    ``root`` と ``pdf`` は、テストがファイルを置いたり中身を調べたりする
+    ための、普通の (変換していない) パス。アプリのコードが ``to_fs_path``
+    で得るパス (``to_fs_path(DIRPATH_PDF)`` など) とは別物で、
+    ``windows_like_paths`` では同じ場所を指す別の形、``redirected`` では
+    別のディレクトリになる。
+    """
+
+    name: str  # ``"windows-like"`` または ``"redirected"``
+    root: Path  # 変換後のデータディレクトリの実体
+
+    @property
+    def pdf(self) -> Path:
+        """変換後の PDF ルートの実体 (``root`` の下の ``pdf``)."""
+        return self.root / _constants.DIRPATH_PDF.relative_to(
+            _constants.DIRPATH_DATA
+        )
+
+    @property
+    def redirected(self) -> bool:
+        """変換後の場所が、変換前のデータディレクトリと別の場所か."""
+        return self.name == "redirected"
+
+
+@pytest.fixture(params=["windows-like", "redirected"])
+def converted_space(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    data_paths: DataPaths,
+) -> ConvertedSpace:
+    """変換後のパスの空間を 2 通りに切り替えて、同じテストを通す.
+
+    autouse ではない。この fixture を引数に取ったテストは、次の 2 つの空間
+    のそれぞれで 1 回ずつ実行される。
+
+    - ``windows-like``: ``windows_like_paths`` を有効にする。変換後の
+      パスは ``//`` で始まる別名で、変換前のパスと同じ場所を指す。変換後の
+      パスと変換前のパスを混ぜた比較と ``relative_to`` が壊れる (混在の
+      検出)。Windows ではスキップする
+    - ``redirected``: ``redirect_data_dir`` で、変換後のパスを
+      ``tmp_path / "converted"`` の下へ写す。変換前のパスのデータ
+      ディレクトリには何も置かれず、変換前のパスで読み書きする実装は
+      何も見つけられない (変換の取りこぼしの検出)
+
+    2 つの空間の両方で成功すれば、変換後のパスを起点にしていて、変換後と
+    変換前のパスを混ぜていないと言える。
+
+    この fixture は引数に取った時点で変換を差し替える。``sample_data`` の
+    ように PDF の置き場所を ``Entry.get_pdf_dir`` で決める fixture より
+    後に要求すること (先に差し替えると、そちらのデータも変換後の場所に
+    作られる)。この fixture を使うテストは、通常は ``sample_data`` を
+    使わずに、アプリの関数 (``save_pdfs`` など) でデータを作る。
+
+    Parameters
+    ----------
+    request : pytest.FixtureRequest
+        パラメータ (空間の名前) の取得と、``windows_like_paths`` の要求に
+        使う。
+    monkeypatch : pytest.MonkeyPatch
+        ``redirected`` で変換を差し替えるのに使う。
+    tmp_path : Path
+        ``redirected`` の写し先を作る場所。
+    data_paths : DataPaths
+        変換前のデータの保存先。
+
+    Returns
+    -------
+    ConvertedSpace
+        この空間で変換後のパスが指す場所。
+    """
+    if request.param == "windows-like":
+        request.getfixturevalue("windows_like_paths")
+        return ConvertedSpace(name="windows-like", root=data_paths.root)
+    redirected = tmp_path / "converted"
+    redirect_data_dir(monkeypatch, data_paths.root, redirected)
+    return ConvertedSpace(name="redirected", root=redirected)
 
 
 # --- PageRunner -----------------------------------------------------------

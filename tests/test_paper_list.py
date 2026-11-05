@@ -6,10 +6,23 @@
   エントリ内容・非 ASCII 文字が保たれること (要件 3.1)
 - ファイルがない場合は空の論文リストになること (要件 3.2)
 - JSON が壊れている場合は空の論文リストになり、壊れている旨の警告が通知
-  されること (要件 3.3)
+  されること (要件 3.3)。UTF-8 として読めない、論文の一覧の形をしていない
+  (値が辞書でない、フィールドの値が文字列でないなど) 場合も同じであること
+  (known-bug-fixes 要件 10.1)
 - 画面の状態 (``st.session_state``) への書き込み (``to_session_state``) と
   読み出し (``from_session_state``) の往復、および未設定時に空になること
   (要件 3.4)
+- 読み込みの状態の判定 (``load_paper_list``) が、正常・ファイルなし・壊れて
+  いるを返し、画面の処理を呼ばないこと。修正前に作られた形の正常なファイル
+  を正常と判定すること (known-bug-fixes 要件 10.1、12.5)
+- 壊れたファイルの退避 (``backup_broken_paper_list``) が、元のファイルを
+  残したまま日時入りの名前 (衝突時は連番) へ複製すること (known-bug-fixes
+  要件 10.3)
+- 先頭に BOM の付いた UTF-8 のファイルは、BOM の後が正しい形なら正常と
+  して読み込み (退避もしない)、BOM の後が壊れていれば壊れているとみなす
+  こと。保存は BOM なしの UTF-8 で書くこと (known-bug-fixes 要件 10.4)
+
+要件の番号は、注記がなければ test-suite spec のもの。
 
 保存先は ``tmp_path`` か、隔離された ``data_paths.list_file`` を使う。画面の
 状態は bare mode の ``st.session_state`` で、各テストの後に conftest が空に
@@ -17,14 +30,28 @@
 記録して検証する (``AppTest`` を使うテストとは併用しない)。
 """
 
+import codecs
+import json
+import os
+import re
+import shutil
+import stat
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 import streamlit as st
 from conftest import DataPaths, SampleData, StMessages
 
-from paper_manager.entry import Entry, PaperList
+from paper_manager.entry import (
+    Entry,
+    PaperList,
+    PaperListLoad,
+    PaperListStatus,
+    backup_broken_paper_list,
+    load_paper_list,
+)
 from paper_manager.entry._entry import KEY_PAPER_LIST
 
 # ``from_file`` が JSON の破損時に通知する警告の本文.
@@ -43,6 +70,62 @@ HAND_WRITTEN_JSON = """{
     }
 }
 """
+_HAND_WRITTEN_BYTES = HAND_WRITTEN_JSON.encode("utf-8")
+# 最初の多バイト文字 (``山``) の 1 バイト目までで切った UTF-8 のバイト列.
+_TRUNCATED_UTF8 = _HAND_WRITTEN_BYTES[
+    : _HAND_WRITTEN_BYTES.index("山".encode("utf-8")) + 1
+]
+# UTF-8 の BOM (U+FEFF) のバイト列. 古いメモ帳や PowerShell 5 の
+# ``Out-File -Encoding utf8`` が、ファイルの先頭に付ける.
+UTF8_BOM = "\ufeff".encode("utf-8")
+# 文字列から整数への変換の桁数の上限 (既定は 4300 桁) を超える整数.
+# 上限のある版 (3.11 以降、3.9.14 / 3.10.7 以降) の ``json.loads`` は
+# ``ValueError`` を送出し、上限のない版は整数として読む (どちらでも
+# 壊れているとみなす).
+_HUGE_INTEGER = b"1" * 5000
+
+# JSON として解析できないファイル.
+BROKEN_JSON: list[tuple[str, bytes]] = [
+    ("truncated", b'{"AliceSmith2020_0": {"title": "A St'),
+    ("plain-text", b"this is not json"),
+    ("empty-file", b""),
+    ("trailing-comma", b'{"AliceSmith2020_0": {"title": "x"},}'),
+]
+# JSON の構文の破損 (``BROKEN_JSON``) 以外の壊れ方.
+# 修正前の ``from_file`` は、これらで例外を送出するか (UTF-8 として読めない、
+# 一覧の形をしていない)、警告を出さずに空の論文リストを返していた (``null``)。
+BROKEN_BEYOND_JSON: list[tuple[str, bytes]] = [
+    # UTF-8 として読めない
+    ("utf8-cut-mid-character", _TRUNCATED_UTF8),
+    ("shift-jis", HAND_WRITTEN_JSON.encode("shift_jis")),
+    ("invalid-byte", b'{"a": {"title": "\xff"}}'),
+    # トップレベルが辞書でない
+    ("top-array", b"[]"),
+    ("top-string", b'"x"'),
+    ("top-number", b"1"),
+    ("top-null", b"null"),
+    ("top-boolean", b"true"),
+    ("top-array-of-entries", b'[{"title": "x"}]'),
+    # 値 (1 つの論文) が辞書でない
+    ("entry-string", b'{"a": "str"}'),
+    ("entry-array", b'{"a": ["title", "x"]}'),
+    ("entry-null", b'{"a": null}'),
+    ("entry-number", b'{"a": 1}'),
+    # フィールドの値が文字列でない
+    ("field-number", b'{"a": {"title": 1}}'),
+    ("field-year-number", b'{"a": {"title": "x", "year": 2021}}'),
+    ("field-null", b'{"a": {"title": null}}'),
+    ("field-boolean", b'{"a": {"title": true}}'),
+    ("field-array", b'{"a": {"tags": ["x", "y"]}}'),
+    ("field-object", b'{"a": {"title": {"x": "y"}}}'),
+    (
+        "one-bad-entry-among-good",
+        b'{"good": {"title": "ok"}, "bad": {"title": "x", "year": 2021}}',
+    ),
+    ("field-huge-integer", b'{"a": {"year": ' + _HUGE_INTEGER + b"}}"),
+    # 解析で再帰の上限を超える入れ子
+    ("deeply-nested", b"[" * 100_000),
+]
 
 
 @pytest.fixture
@@ -289,13 +372,7 @@ def test_missing_default_file_gives_empty_paper_list(
 
 @pytest.mark.parametrize(
     "broken",
-    [
-        b'{"AliceSmith2020_0": {"title": "A St',
-        b"this is not json",
-        b"",
-        b'{"AliceSmith2020_0": {"title": "x"},}',
-    ],
-    ids=["truncated", "plain-text", "empty-file", "trailing-comma"],
+    [pytest.param(content, id=name) for name, content in BROKEN_JSON],
 )
 def test_broken_json_gives_empty_paper_list_and_warning(
     tmp_path: Path, st_messages: StMessages, broken: bytes
@@ -325,6 +402,843 @@ def test_broken_default_file_gives_empty_paper_list_and_warning(
 
     assert as_dicts(loaded) == {}
     assert st_messages.warning == [BROKEN_WARNING]
+
+
+# --- 文字コードや形が壊れている場合 (known-bug-fixes 要件 10.1) -----------
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [pytest.param(content, id=name) for name, content in BROKEN_BEYOND_JSON],
+)
+def test_from_file_treats_undecodable_or_misshapen_file_as_broken(
+    tmp_path: Path, st_messages: StMessages, broken: bytes
+) -> None:
+    """文字コードや形が壊れたファイルも、空の論文リスト + 警告になる.
+
+    UTF-8 として読めない、論文の一覧の形をしていない (トップレベルが
+    辞書でない、値が辞書でない、フィールドの値が文字列でない) ファイルを、
+    JSON の破損と同じく、例外を送出せずに従来の警告 1 回で知らせる
+    (known-bug-fixes 要件 10.1)。読み込みはファイルを変えない。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(broken)
+
+    loaded = PaperList.from_file(filepath)
+
+    assert isinstance(loaded, PaperList)
+    assert as_dicts(loaded) == {}
+    assert st_messages.warning == [BROKEN_WARNING]
+    assert st_messages.error == []
+    assert filepath.read_bytes() == broken
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["list.json"]
+
+
+def test_from_file_treats_directory_at_path_as_missing(
+    tmp_path: Path, st_messages: StMessages
+) -> None:
+    """パスがファイルでなくディレクトリなら、ファイルがないときと同じになる.
+
+    修正前の読み込みと同じく、空の論文リストを返し、警告は出さない。
+    """
+    directory = tmp_path / "list.json"
+    directory.mkdir()
+
+    loaded = PaperList.from_file(directory)
+
+    assert as_dicts(loaded) == {}
+    assert st_messages.warning == []
+    assert st_messages.error == []
+
+
+# --- 読み込みの状態の判定 (known-bug-fixes 要件 10.1、12.5) ---------------
+
+
+def test_paper_list_status_values() -> None:
+    """状態は文字列の値を持つ 3 種類 (正常・ファイルなし・壊れている)."""
+    assert [(s.name, s.value) for s in PaperListStatus] == [
+        ("OK", "ok"),
+        ("MISSING", "missing"),
+        ("BROKEN", "broken"),
+    ]
+    assert all(isinstance(s, str) for s in PaperListStatus)
+    assert PaperListStatus("broken") is PaperListStatus.BROKEN
+
+
+@pytest.mark.parametrize("to_arg", [Path, str], ids=["path", "str"])
+def test_load_saved_file_is_ok(
+    mixed_paper_list: PaperList,
+    tmp_path: Path,
+    st_messages: StMessages,
+    to_arg: Callable,
+) -> None:
+    """保存処理で書いたファイルは正常で、保存前と同じ論文リストになる."""
+    filepath = tmp_path / "list.json"
+    mixed_paper_list.to_file(filepath)
+
+    result = load_paper_list(to_arg(filepath))
+
+    assert isinstance(result, PaperListLoad)
+    paper_list, status, reason = result
+    assert status is PaperListStatus.OK
+    assert reason is None
+    assert isinstance(paper_list, PaperList)
+    assert as_dicts(paper_list) == as_dicts(mixed_paper_list)
+    for entry in paper_list.values():
+        assert isinstance(entry, Entry)
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+# 修正前に作られうる正常なファイル (保存処理を通さない書式を含む) と、
+# 読み込んだ論文リスト (キー → フィールドの辞書) の組 (要件 12.5).
+_EXPECTED_HAND_WRITTEN = {
+    "山田太郎2021_0": {
+        "ENTRYTYPE": "article",
+        "ID": "山田太郎2021_0",
+        "author": "山田 太郎",
+        "title": JAPANESE_TITLE,
+        "year": "2021",
+    }
+}
+VALID_FILES: list[tuple[str, bytes, dict[str, dict[str, str]]]] = [
+    ("hand-written", _HAND_WRITTEN_BYTES, _EXPECTED_HAND_WRITTEN),
+    (
+        "crlf-line-endings",
+        HAND_WRITTEN_JSON.replace("\n", "\r\n").encode("utf-8"),
+        _EXPECTED_HAND_WRITTEN,
+    ),
+    (
+        "compact-ascii-escaped",
+        json.dumps(
+            json.loads(HAND_WRITTEN_JSON), separators=(",", ":")
+        ).encode("ascii"),
+        _EXPECTED_HAND_WRITTEN,
+    ),
+    ("empty-object", b"{}", {}),
+    ("entry-without-fields", b'{"a": {}}', {"a": {}}),
+    (
+        "keys-in-other-case-and-padded-values",
+        b'{"k": {"Title": "  T  ", "entrytype": "misc", "doi": "10.1/x"}}',
+        {"k": {"title": "T", "ENTRYTYPE": "misc", "DOI": "10.1/x"}},
+    ),
+    ("empty-string-value", b'{"k": {"note": ""}}', {"k": {"note": ""}}),
+]
+
+
+@pytest.mark.parametrize(
+    "content, expected",
+    [pytest.param(c, e, id=name) for name, c, e in VALID_FILES],
+)
+def test_load_valid_file_written_outside_the_app_is_ok(
+    tmp_path: Path,
+    st_messages: StMessages,
+    content: bytes,
+    expected: dict[str, dict[str, str]],
+) -> None:
+    """修正前に作られた形の正常なファイルは、正常として読み込める.
+
+    フィールドの値がすべて文字列の、辞書の辞書であれば、書式 (改行・
+    区切りの空白・非 ASCII 文字のエスケープ) やキーの大文字小文字に
+    かかわらず正常とする (要件 12.5)。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.OK
+    assert reason is None
+    assert as_dicts(paper_list) == expected
+    assert filepath.read_bytes() == content
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+def test_load_sample_data_list_file_is_ok(sample_data: SampleData) -> None:
+    """``sample_data`` が保存した ``list.json`` は、パス省略で正常に読める."""
+    paper_list, status, reason = load_paper_list()
+
+    assert status is PaperListStatus.OK
+    assert reason is None
+    assert as_dicts(paper_list) == as_dicts(sample_data.paper_list)
+
+
+def test_load_missing_file_is_missing(
+    tmp_path: Path, st_messages: StMessages
+) -> None:
+    """ファイルがなければ、空の論文リストで状態はファイルなしになる."""
+    missing = tmp_path / "does-not-exist.json"
+
+    paper_list, status, reason = load_paper_list(missing)
+
+    assert status is PaperListStatus.MISSING
+    assert reason is None
+    assert isinstance(paper_list, PaperList)
+    assert as_dicts(paper_list) == {}
+    assert not missing.exists()
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+def test_load_missing_default_file_is_missing(data_paths: DataPaths) -> None:
+    """パスを省略し、``list.json`` がなければファイルなしになり、作らない."""
+    assert not data_paths.list_file.exists()
+
+    paper_list, status, reason = load_paper_list()
+
+    assert status is PaperListStatus.MISSING
+    assert as_dicts(paper_list) == {}
+    assert not data_paths.list_file.exists()
+
+
+def test_load_directory_at_path_is_missing(tmp_path: Path) -> None:
+    """パスがディレクトリなら、ファイルなしとする (修正前と同じ扱い)."""
+    directory = tmp_path / "list.json"
+    directory.mkdir()
+
+    paper_list, status, reason = load_paper_list(directory)
+
+    assert status is PaperListStatus.MISSING
+    assert as_dicts(paper_list) == {}
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [pytest.param(content, id=name) for name, content in BROKEN_JSON]
+    + [pytest.param(content, id=name) for name, content in BROKEN_BEYOND_JSON],
+)
+def test_load_broken_file_is_broken_without_notification(
+    tmp_path: Path, st_messages: StMessages, broken: bytes
+) -> None:
+    """壊れ方のどのパターンでも、例外を送出せず状態は壊れているになる.
+
+    論文リストは空 (壊れていない論文だけを読み込むことはしない) で、
+    理由を返す。画面には何も出さず (通知は呼び出し元の役割)、ファイルを
+    変えない (要件 10.1)。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(broken)
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.BROKEN
+    assert isinstance(paper_list, PaperList)
+    assert as_dicts(paper_list) == {}
+    assert isinstance(reason, str)
+    assert reason
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+    assert filepath.read_bytes() == broken
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["list.json"]
+
+
+def test_load_unreadable_file_raises_instead_of_broken(
+    tmp_path: Path,
+) -> None:
+    """読み取り権限がないなどの ``OSError`` は、壊れているとは区別して送出する.
+
+    中身を読めていないファイルを壊れているとみなすと、保存の前の退避で
+    退避できずに上書きされうるため、呼び出し元に失敗を伝える。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(_HAND_WRITTEN_BYTES)
+    filepath.chmod(0)
+    try:
+        if os.access(filepath, os.R_OK):
+            pytest.skip("the file stays readable (root or no POSIX modes)")
+        with pytest.raises(PermissionError):
+            load_paper_list(filepath)
+    finally:
+        filepath.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    assert filepath.read_bytes() == _HAND_WRITTEN_BYTES
+
+
+# --- 壊れたファイルの退避 (known-bug-fixes 要件 10.3) ---------------------
+
+# 退避の時刻 (テストでは固定して名前を決定的にする) と、その日時の部分.
+BACKUP_NOW = datetime(2026, 1, 2, 3, 4, 5)
+BACKUP_STAMP = "20260102_030405"
+BACKUP_NAME = f"list.json.broken-{BACKUP_STAMP}"
+# 復元が既存の ``list.json`` を退避する名前 (復元のたびに上書きされる).
+RESTORE_BACKUP_NAME = "list.json.backup"
+
+
+def file_names(directory: Path) -> list[str]:
+    """``directory`` の直下の名前を並べて返す."""
+    return sorted(p.name for p in directory.iterdir())
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        pytest.param(b'{"a": {"title": "A St', id="truncated-json"),
+        pytest.param(_TRUNCATED_UTF8, id="utf8-cut-mid-character"),
+        pytest.param(b"[]", id="top-array"),
+        pytest.param(b'{"a": {"title": 1}}', id="field-number"),
+    ],
+)
+def test_backup_copies_broken_file_to_timestamped_name(
+    tmp_path: Path, st_messages: StMessages, broken: bytes
+) -> None:
+    """壊れたファイルを、元のファイルを残したまま日時入りの名前へ複製する.
+
+    退避先は同じディレクトリの ``list.json.broken-<YYYYmmdd_HHMMSS>`` で、
+    中身は元のファイルと同じバイト列。更新時刻も元のファイルのものを
+    保つ。元のファイルのバイト列と更新時刻は変わらず、画面には何も出さない。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(broken)
+    # 複製の時刻と区別できるよう、元のファイルの更新時刻を過去にしておく
+    past_ns = 1_000_000_000 * 10**9
+    os.utime(filepath, ns=(past_ns, past_ns))
+    original_mtime_ns = filepath.stat().st_mtime_ns
+
+    backup = backup_broken_paper_list(filepath, now=BACKUP_NOW)
+
+    assert backup == tmp_path / BACKUP_NAME
+    assert backup.read_bytes() == broken
+    assert backup.stat().st_mtime == pytest.approx(
+        original_mtime_ns / 1e9, abs=1e-3
+    )
+    assert filepath.read_bytes() == broken
+    assert filepath.stat().st_mtime_ns == original_mtime_ns
+    assert file_names(tmp_path) == sorted(["list.json", BACKUP_NAME])
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+@pytest.mark.parametrize(
+    "taken, expected_suffix",
+    [
+        ([""], "-1"),
+        (["", "-1"], "-2"),
+        (["", "-1", "-2"], "-3"),
+        (["-1"], ""),
+    ],
+    ids=["base-taken", "base-and-1-taken", "up-to-2-taken", "only-1-taken"],
+)
+def test_backup_numbers_the_name_when_it_is_taken(
+    tmp_path: Path, taken: list[str], expected_suffix: str
+) -> None:
+    """退避先の名前が既にあれば ``-1``、``-2`` と連番を付け、既存を上書きしない."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(b"{ broken")
+    existing = {
+        tmp_path / f"{BACKUP_NAME}{suffix}": f"earlier {suffix!r}".encode()
+        for suffix in taken
+    }
+    for path, content in existing.items():
+        path.write_bytes(content)
+
+    backup = backup_broken_paper_list(filepath, now=BACKUP_NOW)
+
+    assert backup == tmp_path / f"{BACKUP_NAME}{expected_suffix}"
+    assert backup.read_bytes() == b"{ broken"
+    for path, content in existing.items():
+        assert path.read_bytes() == content
+    assert filepath.read_bytes() == b"{ broken"
+
+
+def test_backup_twice_in_the_same_second_keeps_both(tmp_path: Path) -> None:
+    """同じ時刻に 2 回退避すると、2 回目は連番の名前になり、1 回目を残す."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(b"{ first")
+    first = backup_broken_paper_list(filepath, now=BACKUP_NOW)
+    filepath.write_bytes(b"{ second")
+
+    second = backup_broken_paper_list(filepath, now=BACKUP_NOW)
+
+    assert first == tmp_path / BACKUP_NAME
+    assert second == tmp_path / f"{BACKUP_NAME}-1"
+    assert first.read_bytes() == b"{ first"
+    assert second.read_bytes() == b"{ second"
+
+
+def test_backup_does_not_follow_a_link_at_the_name(tmp_path: Path) -> None:
+    """退避先の名前にリンク (指す先がないものも) があれば、別の名前にする.
+
+    リンクをたどって、指す先にファイルを作ったり上書きしたりしない。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(b"{ broken")
+    target = tmp_path / "elsewhere" / "target.json"
+    link = tmp_path / BACKUP_NAME
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symbolic links are not available")
+
+    backup = backup_broken_paper_list(filepath, now=BACKUP_NOW)
+
+    assert backup == tmp_path / f"{BACKUP_NAME}-1"
+    assert backup.read_bytes() == b"{ broken"
+    assert link.is_symlink()
+    assert not os.path.lexists(target)
+
+
+def test_backup_does_not_use_the_restore_backup_name(tmp_path: Path) -> None:
+    """退避は、復元が使う ``list.json.backup`` を作らず、上書きもしない."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(b"{ broken")
+    restore_backup = tmp_path / RESTORE_BACKUP_NAME
+    restore_backup.write_bytes(b'{"kept": {}}')
+
+    backup = backup_broken_paper_list(filepath, now=BACKUP_NOW)
+
+    assert backup is not None
+    assert backup.name != RESTORE_BACKUP_NAME
+    assert restore_backup.read_bytes() == b'{"kept": {}}'
+    assert file_names(tmp_path) == sorted(
+        ["list.json", RESTORE_BACKUP_NAME, BACKUP_NAME]
+    )
+
+
+@pytest.mark.parametrize("state", ["valid", "missing", "directory"])
+def test_backup_does_nothing_unless_broken(
+    tmp_path: Path, mixed_paper_list: PaperList, state: str
+) -> None:
+    """壊れていなければ (正常・ファイルなし) 何も作らず ``None`` を返す."""
+    filepath = tmp_path / "list.json"
+    if state == "valid":
+        mixed_paper_list.to_file(filepath)
+    elif state == "directory":
+        filepath.mkdir()
+    before = file_names(tmp_path)
+    content = filepath.read_bytes() if state == "valid" else None
+
+    backup = backup_broken_paper_list(filepath, now=BACKUP_NOW)
+
+    assert backup is None
+    assert file_names(tmp_path) == before
+    if content is not None:
+        assert filepath.read_bytes() == content
+
+
+def test_backup_with_default_path_and_time(data_paths: DataPaths) -> None:
+    """パスと時刻を省略すると、データディレクトリの ``list.json`` を退避する.
+
+    名前の日時の部分は ``YYYYmmdd_HHMMSS`` の形 (値は実行時刻なので、
+    形だけを確かめる)。
+    """
+    data_paths.list_file.write_bytes(b"{ broken")
+
+    backup = backup_broken_paper_list()
+
+    assert backup is not None
+    assert backup.parent == data_paths.root
+    assert re.fullmatch(r"list\.json\.broken-\d{8}_\d{6}", backup.name)
+    assert backup.read_bytes() == b"{ broken"
+    assert data_paths.list_file.read_bytes() == b"{ broken"
+
+
+def test_backup_failure_raises_and_leaves_no_partial_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """複製に失敗したら例外を送出し、退避先の名前のファイルを残さない.
+
+    退避できなかったことを ``None`` (壊れていない) と区別して呼び出し元に
+    伝え、壊れたファイルを上書きさせない。元のファイルは変わらない。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(b"{ broken")
+
+    def failing_copy2(*args: object, **kwargs: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(shutil, "copy2", failing_copy2)
+
+    with pytest.raises(OSError, match="No space left on device"):
+        backup_broken_paper_list(filepath, now=BACKUP_NOW)
+
+    assert file_names(tmp_path) == ["list.json"]
+    assert filepath.read_bytes() == b"{ broken"
+
+
+def test_from_file_does_not_back_up_broken_file(
+    tmp_path: Path, st_messages: StMessages
+) -> None:
+    """読み込みだけでは退避しない (退避は保存の前に呼び出し元が行う)."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(b"[]")
+
+    PaperList.from_file(filepath)
+
+    assert file_names(tmp_path) == ["list.json"]
+    assert st_messages.warning == [BROKEN_WARNING]
+
+
+# --- 先頭に BOM の付いた UTF-8 (known-bug-fixes 要件 10.4) ----------------
+
+# BOM の後が正しい形のファイル. 先頭に BOM を足しても、足さない場合と同じ
+# 論文リストになる (``VALID_FILES`` の各ファイルの先頭に BOM を足す).
+VALID_FILES_WITH_BOM = [
+    pytest.param(UTF8_BOM + content, expected, id=f"bom-{name}")
+    for name, content, expected in VALID_FILES
+]
+# BOM の後が壊れているファイル (``BROKEN_JSON`` と ``BROKEN_BEYOND_JSON``
+# の各ファイルの先頭に BOM を足す). BOM を足しても壊れたままである.
+BROKEN_FILES_WITH_BOM = [
+    pytest.param(UTF8_BOM + content, id=f"bom-{name}")
+    for name, content in BROKEN_JSON + BROKEN_BEYOND_JSON
+]
+# BOM の後が JSON になっていない、または BOM が先頭以外にあるファイル.
+# BOM が 1 つ先頭にあるだけなら無視するが、それ以外の BOM は JSON の
+# 空白でも文字列の一部でもない位置にあれば、従来どおり壊れている.
+MISPLACED_BOM_FILES = [
+    pytest.param(UTF8_BOM, id="bom-only"),
+    pytest.param(UTF8_BOM + UTF8_BOM + b"{}", id="two-boms-then-empty-object"),
+    pytest.param(
+        UTF8_BOM + UTF8_BOM + _HAND_WRITTEN_BYTES, id="two-boms-then-entries"
+    ),
+    pytest.param(
+        UTF8_BOM + b" " + UTF8_BOM + b"{}", id="second-bom-after-space"
+    ),
+    pytest.param(b" " + UTF8_BOM + b"{}", id="bom-after-leading-space"),
+    pytest.param(b"\n" + UTF8_BOM + b"{}", id="bom-after-leading-newline"),
+    pytest.param(b"{" + UTF8_BOM + b"}", id="bom-inside-object"),
+    pytest.param(
+        b'{"a":' + UTF8_BOM + b' {"title": "x"}}', id="bom-before-value"
+    ),
+    pytest.param(b"{}" + UTF8_BOM, id="bom-at-the-end"),
+    pytest.param(UTF8_BOM + b"{}" + UTF8_BOM, id="bom-at-both-ends"),
+    pytest.param(UTF8_BOM[:2] + b"{}", id="truncated-bom"),
+    pytest.param(UTF8_BOM[:2], id="truncated-bom-only"),
+]
+# UTF-8 以外の BOM を持つファイル (中身はその文字コードで書いた ``{}``).
+# UTF-8 の BOM だけを無視するので、従来どおり UTF-8 として読めず壊れている.
+OTHER_BOM_FILES = [
+    pytest.param(
+        codecs.BOM_UTF16_LE + "{}".encode("utf-16-le"), id="utf16-le"
+    ),
+    pytest.param(
+        codecs.BOM_UTF16_BE + "{}".encode("utf-16-be"), id="utf16-be"
+    ),
+    pytest.param(
+        codecs.BOM_UTF16_LE + HAND_WRITTEN_JSON.encode("utf-16-le"),
+        id="utf16-le-entries",
+    ),
+    pytest.param(
+        codecs.BOM_UTF32_LE + "{}".encode("utf-32-le"), id="utf32-le"
+    ),
+    pytest.param(
+        codecs.BOM_UTF32_BE + "{}".encode("utf-32-be"), id="utf32-be"
+    ),
+    pytest.param(codecs.BOM_UTF16_LE, id="utf16-le-bom-only"),
+    pytest.param(codecs.BOM_UTF16_BE + b"{}", id="utf16-be-bom-ascii-body"),
+]
+
+
+def test_utf8_bom_constant_is_the_three_byte_utf8_signature() -> None:
+    """テストの BOM は UTF-8 の署名 (``EF BB BF``) である."""
+    assert UTF8_BOM == b"\xef\xbb\xbf"
+    assert UTF8_BOM == codecs.BOM_UTF8
+
+
+@pytest.mark.parametrize("content, expected", VALID_FILES_WITH_BOM)
+def test_load_valid_file_with_bom_is_ok(
+    tmp_path: Path,
+    st_messages: StMessages,
+    content: bytes,
+    expected: dict[str, dict[str, str]],
+) -> None:
+    """BOM の後が正しい形なら、壊れているとみなさず正常として読み込む.
+
+    論文リストの中身は、BOM を付けない同じ内容を読んだ結果と一致する。
+    読み込みはファイルを変えない (BOM も残す) (要件 10.4)。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+    plain = tmp_path / "plain.json"
+    plain.write_bytes(content[len(UTF8_BOM) :])
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.OK
+    assert reason is None
+    assert as_dicts(paper_list) == expected
+    assert as_dicts(paper_list) == as_dicts(load_paper_list(plain).paper_list)
+    for entry in paper_list.values():
+        assert isinstance(entry, Entry)
+    assert filepath.read_bytes() == content
+    assert file_names(tmp_path) == ["list.json", "plain.json"]
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+def test_load_file_written_by_to_file_with_bom_added_is_ok(
+    mixed_paper_list: PaperList, tmp_path: Path, st_messages: StMessages
+) -> None:
+    """``to_file`` が書いたファイルに BOM を足したものは、正常で中身が一致する."""
+    filepath = tmp_path / "list.json"
+    mixed_paper_list.to_file(filepath)
+    filepath.write_bytes(UTF8_BOM + filepath.read_bytes())
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.OK
+    assert reason is None
+    assert as_dicts(paper_list) == as_dicts(mixed_paper_list)
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+def test_load_file_with_bom_at_default_path_is_ok(
+    mixed_paper_list: PaperList, data_paths: DataPaths
+) -> None:
+    """パスを省略した場合も、BOM 付きの ``list.json`` は正常に読める."""
+    mixed_paper_list.to_file()
+    data_paths.list_file.write_bytes(
+        UTF8_BOM + data_paths.list_file.read_bytes()
+    )
+
+    paper_list, status, reason = load_paper_list()
+
+    assert status is PaperListStatus.OK
+    assert reason is None
+    assert as_dicts(paper_list) == as_dicts(mixed_paper_list)
+
+
+@pytest.mark.parametrize("content", BROKEN_FILES_WITH_BOM)
+def test_load_broken_file_with_bom_is_broken(
+    tmp_path: Path, st_messages: StMessages, content: bytes
+) -> None:
+    """BOM の後が壊れていれば、BOM が付いていても壊れているとみなす.
+
+    JSON として解析できない、UTF-8 として読めない、論文の一覧の形をして
+    いない、値が文字列でない、のどれでも従来どおりである (要件 10.1、10.4)。
+    論文リストは空で、ファイルを変えない。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.BROKEN
+    assert as_dicts(paper_list) == {}
+    assert isinstance(reason, str)
+    assert reason
+    assert filepath.read_bytes() == content
+    assert file_names(tmp_path) == ["list.json"]
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+def test_broken_reason_for_bom_file_keeps_the_wording(tmp_path: Path) -> None:
+    """BOM 付きで壊れたファイルの理由は、従来と同じ文言の始まりになる.
+
+    UTF-8 として読めなければ ``not valid utf-8: ...``、JSON として解析
+    できなければ ``not valid JSON: ...`` で、復号に ``utf-8-sig`` を使う
+    ことによる文言の変化はない。
+    """
+    undecodable = tmp_path / "undecodable.json"
+    undecodable.write_bytes(UTF8_BOM + HAND_WRITTEN_JSON.encode("shift_jis"))
+    not_json = tmp_path / "not-json.json"
+    not_json.write_bytes(UTF8_BOM + b"this is not json")
+
+    assert load_paper_list(undecodable).reason.startswith("not valid utf-8: ")
+    assert load_paper_list(not_json).reason.startswith("not valid JSON: ")
+
+
+@pytest.mark.parametrize("content", MISPLACED_BOM_FILES)
+def test_load_file_with_misplaced_or_bom_only_content_is_broken(
+    tmp_path: Path, st_messages: StMessages, content: bytes
+) -> None:
+    """BOM の後が JSON になっていない、または BOM が先頭以外にあれば壊れている.
+
+    BOM だけのファイル、BOM が 2 つ続くファイル、先頭の空白の後や JSON の
+    途中・末尾にある BOM は、従来どおり壊れている。無視するのは先頭の
+    BOM 1 つだけである (要件 10.4)。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.BROKEN
+    assert as_dicts(paper_list) == {}
+    assert isinstance(reason, str)
+    assert reason
+    assert filepath.read_bytes() == content
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+@pytest.mark.parametrize("content", OTHER_BOM_FILES)
+def test_load_file_with_other_bom_is_broken(
+    tmp_path: Path, st_messages: StMessages, content: bytes
+) -> None:
+    """UTF-16・UTF-32 の BOM を持つファイルは、従来どおり壊れている.
+
+    受け入れる BOM は UTF-8 のものだけで、他の文字コードの BOM を持つ
+    ファイルを正常にはしない (要件 10.4)。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    paper_list, status, reason = load_paper_list(filepath)
+
+    assert status is PaperListStatus.BROKEN
+    assert as_dicts(paper_list) == {}
+    assert isinstance(reason, str)
+    assert reason
+    assert filepath.read_bytes() == content
+    assert st_messages == StMessages(error=[], warning=[], success=[])
+
+
+@pytest.mark.parametrize("with_leading_bom", [False, True])
+def test_load_keeps_a_bom_character_inside_a_value(
+    tmp_path: Path, with_leading_bom: bool
+) -> None:
+    """値の中の U+FEFF は文字として残り、先頭の BOM だけが無視される.
+
+    先頭の BOM の有無にかかわらず、フィールドの値に含まれる U+FEFF (JSON
+    の文字列の一部) は、読み込んだ値にそのまま残る。
+    """
+    body = '{"a": {"title": "\ufeffT\ufeff"}}'.encode("utf-8")
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes((UTF8_BOM if with_leading_bom else b"") + body)
+
+    paper_list, status, _ = load_paper_list(filepath)
+
+    assert status is PaperListStatus.OK
+    assert as_dicts(paper_list) == {"a": {"title": "\ufeffT\ufeff"}}
+
+
+@pytest.mark.parametrize("content, expected", VALID_FILES_WITH_BOM)
+def test_from_file_reads_file_with_bom_without_warning(
+    tmp_path: Path,
+    st_messages: StMessages,
+    content: bytes,
+    expected: dict[str, dict[str, str]],
+) -> None:
+    """``from_file`` は BOM 付きの正常なファイルを、警告なしで読み込む."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    loaded = PaperList.from_file(filepath)
+
+    assert as_dicts(loaded) == expected
+    assert st_messages.warning == []
+    assert st_messages.error == []
+    assert filepath.read_bytes() == content
+
+
+@pytest.mark.parametrize("content", BROKEN_FILES_WITH_BOM)
+def test_from_file_warns_for_broken_file_with_bom(
+    tmp_path: Path, st_messages: StMessages, content: bytes
+) -> None:
+    """BOM の後が壊れたファイルは、従来の警告 1 回と空の論文リストになる."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    loaded = PaperList.from_file(filepath)
+
+    assert as_dicts(loaded) == {}
+    assert st_messages.warning == [BROKEN_WARNING]
+    assert st_messages.error == []
+    assert filepath.read_bytes() == content
+
+
+def test_to_file_writes_utf8_without_bom(
+    mixed_paper_list: PaperList, tmp_path: Path
+) -> None:
+    """保存したファイルの先頭に BOM はない (空の論文リストでも同じ)."""
+    filled = tmp_path / "filled.json"
+    empty = tmp_path / "empty.json"
+
+    mixed_paper_list.to_file(filled)
+    PaperList({}).to_file(empty)
+
+    for filepath in (filled, empty):
+        content = filepath.read_bytes()
+        assert not content.startswith(UTF8_BOM)
+        assert content.startswith(b"{")
+        # BOM を無視しない素の UTF-8 として復号しても BOM は現れない
+        assert "\ufeff" not in content.decode("utf-8")
+        json.loads(content.decode("utf-8"))
+
+
+def test_from_file_then_to_file_drops_the_bom_and_keeps_content(
+    mixed_paper_list: PaperList, tmp_path: Path, st_messages: StMessages
+) -> None:
+    """BOM 付きのファイルを読んで書き戻すと、中身は同じで BOM なしになる.
+
+    読み込みだけではファイルを書き換えず、書き戻した後のバイト列は、
+    同じ論文リストを BOM のない状態から保存したものと一致する。
+    """
+    reference = tmp_path / "reference.json"
+    mixed_paper_list.to_file(reference)
+    plain = reference.read_bytes()
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(UTF8_BOM + plain)
+
+    loaded = PaperList.from_file(filepath)
+
+    assert as_dicts(loaded) == as_dicts(mixed_paper_list)
+    assert filepath.read_bytes() == UTF8_BOM + plain
+
+    loaded.to_file(filepath)
+
+    saved = filepath.read_bytes()
+    assert not saved.startswith(UTF8_BOM)
+    assert saved == plain
+    assert as_dicts(PaperList.from_file(filepath)) == as_dicts(
+        mixed_paper_list
+    )
+    assert load_paper_list(filepath).status is PaperListStatus.OK
+    assert st_messages.warning == []
+    assert st_messages.error == []
+
+
+def test_from_file_then_to_file_of_hand_written_file_with_bom(
+    tmp_path: Path,
+) -> None:
+    """手書きの日本語を含む BOM 付きのファイルも、往復で中身が変わらない."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(UTF8_BOM + _HAND_WRITTEN_BYTES)
+
+    PaperList.from_file(filepath).to_file(filepath)
+
+    saved = filepath.read_bytes()
+    assert not saved.startswith(UTF8_BOM)
+    assert json.loads(saved.decode("utf-8")) == json.loads(HAND_WRITTEN_JSON)
+    assert as_dicts(PaperList.from_file(filepath)) == _EXPECTED_HAND_WRITTEN
+
+
+@pytest.mark.parametrize("content, expected", VALID_FILES_WITH_BOM)
+def test_backup_does_not_copy_valid_file_with_bom(
+    tmp_path: Path, content: bytes, expected: dict[str, dict[str, str]]
+) -> None:
+    """BOM 付きの正常なファイルは退避されず、何も作らず ``None`` を返す.
+
+    保存の前に呼ばれる ``backup_broken_paper_list`` が BOM 付きの正常な
+    ファイルを壊れたものとして退避すると、保存のたびに退避ファイルが
+    増える (要件 10.3、10.4)。
+    """
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    backup = backup_broken_paper_list(filepath, now=BACKUP_NOW)
+
+    assert backup is None
+    assert file_names(tmp_path) == ["list.json"]
+    assert filepath.read_bytes() == content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(UTF8_BOM + b'{"a": {"title": 1}}', id="bom-field-number"),
+        pytest.param(UTF8_BOM + b"[]", id="bom-top-array"),
+        pytest.param(UTF8_BOM + b'{"a": {"title": "A St', id="bom-truncated"),
+        pytest.param(UTF8_BOM, id="bom-only"),
+        pytest.param(UTF8_BOM + UTF8_BOM + b"{}", id="two-boms"),
+    ],
+)
+def test_backup_copies_broken_file_with_bom_byte_for_byte(
+    tmp_path: Path, content: bytes
+) -> None:
+    """BOM 付きで壊れたファイルは、BOM も含めて同じバイト列を退避する."""
+    filepath = tmp_path / "list.json"
+    filepath.write_bytes(content)
+
+    backup = backup_broken_paper_list(filepath, now=BACKUP_NOW)
+
+    assert backup == tmp_path / BACKUP_NAME
+    assert backup.read_bytes() == content
+    assert filepath.read_bytes() == content
 
 
 # --- 画面の状態との往復 (要件 3.4) ----------------------------------------
